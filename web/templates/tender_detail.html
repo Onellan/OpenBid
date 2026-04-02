@@ -1,0 +1,60 @@
+
+{{define "tender_detail.html"}}{{template "base" .}}{{end}}{{define "content"}}
+{{template "page_hero" (dict
+  "eyebrow" "Opportunity detail"
+  "title" .Item.Title
+  "copy" "Review extracted document details, workflow state, and change history for this opportunity."
+)}}
+<div style="margin:14px 0">{{template "flash_messages" .}}</div>
+<div class="split">
+  <section class="card">
+    {{template "card_header" (dict "title" "Opportunity summary" "subtitle" "Core source and tender information.")}}
+    <div class="list" style="margin-top:14px">
+      <div class="card-soft"><strong>Issuer</strong><div class="footer-note">{{.Item.Issuer}}</div></div>
+      <div class="card-soft"><strong>Category</strong><div class="footer-note">{{.Item.Category}}</div></div>
+      <div class="card-soft"><strong>Closing date</strong><div class="footer-note">{{.Item.ClosingDate}}</div></div>
+      <div class="card-soft"><strong>Document status</strong><div class="footer-note">{{.Item.DocumentStatus}}</div></div>
+    </div>
+    {{if .Item.Excerpt}}
+    <div class="card-soft" style="margin-top:14px"><strong>Extracted summary</strong><p class="footer-note" style="margin-top:8px">{{.Item.Excerpt}}</p></div>
+    {{end}}
+    {{if .Item.ExtractedFacts}}
+    <div class="card-soft" style="margin-top:14px">
+      <strong>Extracted facts</strong>
+      <div class="table-wrap" style="margin-top:10px">
+        <table>
+          <tr><th>Field</th><th>Value</th></tr>
+          {{range $k, $v := .Item.ExtractedFacts}}
+          <tr><td>{{$k}}</td><td>{{$v}}</td></tr>
+          {{end}}
+        </table>
+      </div>
+    </div>
+    {{else}}
+    {{template "empty_state" "No extracted facts are available yet for this document."}}
+    {{end}}
+  </section>
+  <section class="card">
+    {{template "card_header" (dict "title" "Current workflow" "subtitle" "Live workflow state for this opportunity.")}}
+    <div class="list" style="margin-top:14px">
+      <div class="card-soft"><strong>Status</strong><div class="footer-note">{{.Workflow.Status}}</div></div>
+      <div class="card-soft"><strong>Priority</strong><div class="footer-note">{{.Workflow.Priority}}</div></div>
+      <div class="card-soft"><strong>Assigned user</strong><div class="footer-note">{{.Workflow.AssignedUser}}</div></div>
+      <div class="card-soft"><strong>Notes</strong><div class="footer-note">{{.Workflow.Notes}}</div></div>
+    </div>
+  </section>
+</div>
+<section class="card" style="margin-top:18px">
+  {{template "card_header" (dict "title" "Workflow history" "subtitle" "Chronological record of workflow updates.")}}
+  <div class="table-wrap" style="margin-top:14px">
+    <table>
+      <tr><th>When</th><th>Status</th><th>Priority</th><th>Assigned</th><th>Notes</th><th>Changed by</th></tr>
+      {{range .WorkflowHistory}}
+      <tr><td>{{.CreatedAt}}</td><td>{{.Status}}</td><td>{{.Priority}}</td><td>{{.AssignedUser}}</td><td>{{.Notes}}</td><td>{{.ChangedBy}}</td></tr>
+      {{else}}
+      <tr><td colspan="6">{{template "empty_state" "No workflow history yet."}}</td></tr>
+      {{end}}
+    </table>
+  </div>
+</section>
+{{end}}

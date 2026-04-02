@@ -1,0 +1,114 @@
+package models
+
+import "time"
+
+type Role string
+
+const (
+	RoleAdmin            Role = "admin"
+	RolePortfolioManager Role = "portfolio_manager"
+	RoleTenantAdmin      Role = "tenant_admin"
+	RoleAnalyst          Role = "analyst"
+	RoleReviewer         Role = "reviewer"
+	RoleOperator         Role = "operator"
+	RoleViewer           Role = "viewer"
+)
+
+type ExtractionState string
+
+const (
+	ExtractionQueued     ExtractionState = "queued"
+	ExtractionProcessing ExtractionState = "processing"
+	ExtractionRetry      ExtractionState = "retry"
+	ExtractionCompleted  ExtractionState = "completed"
+	ExtractionFailed     ExtractionState = "failed"
+)
+
+type Tender struct {
+	ID, SourceKey, ExternalID, Title, Issuer, Province, Category, TenderNumber, PublishedDate, ClosingDate, Status, CIDBGrading, Summary, OriginalURL, DocumentURL, Excerpt string
+	EngineeringRelevant                                                                                                                                                     bool
+	RelevanceScore                                                                                                                                                          float64
+	DocumentStatus                                                                                                                                                          ExtractionState
+	ExtractedFacts                                                                                                                                                          map[string]string
+	CreatedAt, UpdatedAt                                                                                                                                                    time.Time
+}
+type User struct {
+	ID, Username, DisplayName, Email, PasswordHash, PasswordSalt, MFASecret string
+	IsActive, MFAEnabled                                                    bool
+	FailedLogins                                                            int
+	LockedUntil                                                             time.Time
+	RecoveryCodes                                                           []string
+	CreatedAt, UpdatedAt                                                    time.Time
+}
+type Tenant struct {
+	ID, Name, Slug       string
+	CreatedAt, UpdatedAt time.Time
+}
+type Membership struct {
+	ID, UserID, TenantID, Responsibilities string
+	Role                                   Role
+	CreatedAt, UpdatedAt                   time.Time
+}
+type Workflow struct {
+	ID, TenantID, TenderID, Status, Priority, AssignedUser, Notes string
+	UpdatedAt                                                     time.Time
+}
+type Bookmark struct {
+	ID, TenantID, UserID, TenderID, Note string
+	CreatedAt, UpdatedAt                 time.Time
+}
+type SavedSearch struct {
+	ID, TenantID, UserID, Name, Query, Filters string
+	CreatedAt, UpdatedAt                       time.Time
+}
+type SyncRun struct {
+	ID, SourceKey, Status, Message string
+	StartedAt, FinishedAt          time.Time
+}
+type ExtractionJob struct {
+	ID, TenderID, DocumentURL, LastError string
+	State                                ExtractionState
+	Attempts                             int
+	NextAttemptAt, CreatedAt, UpdatedAt  time.Time
+}
+type SourceHealth struct {
+	SourceKey, LastStatus, LastMessage string
+	LastSyncAt                         time.Time
+	LastItemCount                      int
+}
+type Session struct {
+	UserID, TenantID, CSRF string
+	Expires                time.Time
+}
+type Dashboard struct {
+	TotalTenders, EngineeringRelevant, WithDocuments, ExtractedDocuments, QueuedDocuments, OpenTenders int
+	RecentTenders                                                                                      []Tender
+	SyncHistory                                                                                        []SyncRun
+	SourceHealth                                                                                       []SourceHealth
+	LowMemoryMode, AnalyticsEnabled                                                                    bool
+}
+
+
+type AuditEntry struct {
+	ID        string            `json:"id"`
+	TenantID  string            `json:"tenant_id"`
+	UserID    string            `json:"user_id"`
+	Action    string            `json:"action"`
+	Entity    string            `json:"entity"`
+	EntityID  string            `json:"entity_id"`
+	Summary   string            `json:"summary"`
+	Metadata  map[string]string `json:"metadata,omitempty"`
+	CreatedAt time.Time         `json:"created_at"`
+}
+
+type WorkflowEvent struct {
+	ID           string    `json:"id"`
+	TenantID     string    `json:"tenant_id"`
+	TenderID     string    `json:"tender_id"`
+	ChangedBy    string    `json:"changed_by"`
+	Status       string    `json:"status"`
+	Priority     string    `json:"priority"`
+	AssignedUser string    `json:"assigned_user"`
+	Notes        string    `json:"notes"`
+	CreatedAt    time.Time `json:"created_at"`
+}

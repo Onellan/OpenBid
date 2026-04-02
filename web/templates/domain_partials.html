@@ -1,0 +1,87 @@
+{{define "saved_search_table_typed"}}
+<table>
+  <tr><th>Name</th><th>Query</th><th>Actions</th></tr>
+  {{range .Items}}
+  <tr>
+    <td>{{.Name}}</td>
+    <td class="small mono">{{.Query}}</td>
+    <td>
+      <div class="actions">
+        <a class="button secondary" href="/tenders?{{.Query}}">Open search</a>
+        {{template "confirm_destructive_action" (dict
+          "action" "/saved-searches/delete"
+          "confirm" (printf "Delete saved search '%s'?" .Name)
+          "csrf" $.CSRFToken
+          "inline" true
+          "hidden" (slice (dict "name" "id" "value" .ID))
+          "label" "Delete"
+        )}}
+      </div>
+    </td>
+  </tr>
+  {{else}}
+  <tr><td colspan="3">{{template "empty_state" "No saved searches yet."}}</td></tr>
+  {{end}}
+</table>
+{{end}}
+
+{{define "saved_search_form_typed"}}
+<form method="post" action="/saved-searches" class="form-grid">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <label>Name<input name="name" required></label>
+  <label>Query string<input name="query" placeholder="q=engineering&province=Gauteng"></label>
+  <label>Filters JSON or notes<textarea name="filters"></textarea></label>
+  <div class="actions"><button type="submit">Save search</button></div>
+</form>
+{{end}}
+
+{{define "pipeline_jobs_table_typed"}}
+<table>
+  <tr><th>Opportunity</th><th>State</th><th>Attempts</th><th>Next attempt</th><th>Last error</th><th>Actions</th></tr>
+  {{range .QueueItems}}
+  <tr>
+    <td><a href="/tenders/{{.Tender.ID}}">{{.Tender.Title}}</a></td>
+    <td>{{template "status_badge" (dict "tone" (condTone .Job.State) "label" .Job.State)}}</td>
+    <td>{{.Job.Attempts}}</td>
+    <td>{{.Job.NextAttemptAt}}</td>
+    <td class="small mono">{{.Job.LastError}}</td>
+    <td>
+      {{template "confirm_destructive_action" (dict
+        "action" "/queue/requeue"
+        "confirm" (printf "Requeue processing for '%s'?" .Tender.Title)
+        "csrf" $.CSRFToken
+        "inline" true
+        "hidden" (slice (dict "name" "tender_id" "value" .Tender.ID))
+        "label" "Retry"
+      )}}
+    </td>
+  </tr>
+  {{else}}
+  <tr><td colspan="6">{{template "empty_state" "No pipeline items yet."}}</td></tr>
+  {{end}}
+</table>
+{{end}}
+
+{{define "opportunity_danger_zone"}}
+<div class="card-soft" style="padding:16px;border-color:#f2caca;background:#fffafa">
+  {{template "card_header" (dict "title" "Danger zone" "subtitle" "Use caution with destructive or reset actions on this opportunity.")}}
+  <div class="actions" style="margin-top:14px">
+    {{template "confirm_destructive_action" (dict
+      "action" "/tenders/workflow/reset"
+      "confirm" (printf "Reset workflow for '%s'?" .Title)
+      "csrf" $.CSRFToken
+      "inline" true
+      "hidden" (slice (dict "name" "tender_id" "value" .ID))
+      "label" "Reset workflow"
+    )}}
+    {{template "confirm_destructive_action" (dict
+      "action" "/tenders/bookmark/remove"
+      "confirm" (printf "Remove saved note/bookmark for '%s'?" .Title)
+      "csrf" $.CSRFToken
+      "inline" true
+      "hidden" (slice (dict "name" "tender_id" "value" .ID))
+      "label" "Remove saved"
+    )}}
+  </div>
+</div>
+{{end}}

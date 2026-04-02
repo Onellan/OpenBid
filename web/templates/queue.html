@@ -1,0 +1,21 @@
+
+{{define "queue.html"}}{{template "base" .}}{{end}}{{define "content"}}
+{{template "page_hero" (dict
+  "eyebrow" "Pipeline"
+  "title" "Track extraction activity and document readiness across your pipeline"
+  "copy" "Monitor retries, failures, and document processing so submission preparation stays visible and manageable."
+)}}
+<div style="margin:14px 0">{{template "flash_messages" .}}</div>
+<section class="kpi-band" style="margin-bottom:18px">
+  {{template "metric_card" (dict "label" "Queued" "value" .QueueSummary.Queued)}}
+  {{template "metric_card" (dict "label" "Processing" "value" .QueueSummary.Processing)}}
+  {{template "metric_card" (dict "label" "Failed" "value" .QueueSummary.Failed)}}
+  {{template "metric_card" (dict "label" "Completed" "value" .QueueSummary.Completed)}}
+</section>
+{{template "entity_table_card" (dict
+  "title" "Processing queue"
+  "subtitle" "A live view of extraction jobs and their current state."
+  "inner" "pipeline_jobs_table_typed"
+  "context" .
+)}}
+{{end}}

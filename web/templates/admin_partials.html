@@ -1,0 +1,97 @@
+{{define "create_user_form"}}
+<form method="post" action="/admin/users/create" class="form-grid">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <label>Username<input name="username" required></label>
+  <label>Display name<input name="display_name" required></label>
+  <label>Email<input name="email" type="email" required></label>
+  <label>Password<input name="password" type="password" required></label>
+  <label>Tenant<select name="tenant_id">{{range .Tenants}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></label>
+  <label>Role<select name="role"><option>admin</option><option>portfolio_manager</option><option>tenant_admin</option><option>analyst</option><option>reviewer</option><option>operator</option><option>viewer</option></select></label>
+  <label>Responsibilities<textarea name="responsibilities"></textarea></label>
+  <div class="actions"><button type="submit">Create user</button></div>
+</form>
+{{end}}
+
+{{define "membership_upsert_form"}}
+<form method="post" action="/admin/memberships/upsert" class="form-grid">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <div class="row-4">
+    <label>User ID<input name="user_id" required></label>
+    <label>Tenant<select name="tenant_id">{{range .Tenants}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></label>
+    <label>Role<select name="role"><option>admin</option><option>portfolio_manager</option><option>tenant_admin</option><option>analyst</option><option>reviewer</option><option>operator</option><option>viewer</option></select></label>
+    <label>Responsibilities<input name="responsibilities"></label>
+  </div>
+  <div class="actions"><button type="submit">Save membership</button></div>
+</form>
+{{end}}
+
+{{define "user_table_typed"}}
+<table>
+  <tr><th>Username</th><th>Email</th><th>Active</th><th>Actions</th></tr>
+  {{range .Items}}
+  <tr>
+    <td>{{.Username}}</td>
+    <td>{{.Email}}</td>
+    <td>{{.IsActive}}</td>
+    <td>
+      {{template "confirm_destructive_action" (dict
+        "action" "/admin/users/toggle"
+        "confirm" (printf "Toggle active status for %s?" .Username)
+        "csrf" $.CSRFToken
+        "inline" true
+        "hidden" (slice (dict "name" "user_id" "value" .ID))
+        "label" "Toggle active"
+      )}}
+      {{template "confirm_destructive_action" (dict
+        "action" "/admin/users/reset-password"
+        "confirm" (printf "Reset password for %s?" .Username)
+        "csrf" $.CSRFToken
+        "inline" true
+        "hidden" (slice (dict "name" "user_id" "value" .ID))
+        "text_input" (dict "name" "new_password" "placeholder" "Reset!2026Pass")
+        "label" "Reset password"
+      )}}
+    </td>
+  </tr>
+  {{else}}
+  <tr><td colspan="4">{{template "empty_state" "No users available."}}</td></tr>
+  {{end}}
+</table>
+{{end}}
+
+{{define "membership_table_typed"}}
+<table>
+  <tr><th>User</th><th>Tenant</th><th>Role</th><th>Responsibilities</th><th>Actions</th></tr>
+  {{range .Memberships}}
+  <tr>
+    <td class="mono small">{{.UserID}}</td>
+    <td class="mono small">{{.TenantID}}</td>
+    <td>{{.Role}}</td>
+    <td>{{.Responsibilities}}</td>
+    <td>
+      {{template "confirm_destructive_action" (dict
+        "action" "/admin/memberships/delete"
+        "confirm" (printf "Delete membership for user %s in tenant %s?" .UserID .TenantID)
+        "csrf" $.CSRFToken
+        "inline" true
+        "hidden" (slice (dict "name" "id" "value" .ID))
+        "label" "Delete"
+      )}}
+    </td>
+  </tr>
+  {{else}}
+  <tr><td colspan="5">{{template "empty_state" "No memberships available."}}</td></tr>
+  {{end}}
+</table>
+{{end}}
+
+{{define "tenant_table_typed"}}
+<table>
+  <tr><th>Name</th><th>Slug</th></tr>
+  {{range .Items}}
+  <tr><td>{{.Name}}</td><td>{{.Slug}}</td></tr>
+  {{else}}
+  <tr><td colspan="2">{{template "empty_state" "No tenants created yet."}}</td></tr>
+  {{end}}
+</table>
+{{end}}

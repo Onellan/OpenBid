@@ -1,0 +1,35 @@
+{{define "login.html"}}{{template "base" .}}{{end}}{{define "content"}}
+<div class="split">
+  {{template "page_hero" (dict
+    "eyebrow" "South African tender management"
+    "title" "Find, manage, and win tenders with confidence"
+    "copy" "OpenBid helps businesses discover opportunities, track submissions, manage bid documents, and organise procurement workflows from one professional platform."
+    "actions" (slice
+      (dict "label" "Get started" "href" "#signin")
+      (dict "label" "Book a demo" "href" "#signin" "secondary" true)
+    )
+  )}}
+
+  <section id="signin" class="card">
+    {{template "card_header" (dict "title" "Welcome back" "subtitle" "Smarter tendering starts here.")}}
+    <div style="margin-top:10px">{{template "flash_messages" .}}</div>
+    <form method="post" action="/login" class="form-grid" style="margin-top:14px">
+      <label>Username<input name="username" required></label>
+      <label>Password<input type="password" name="password" required></label>
+      <label>MFA code (only if enabled)<input name="mfa_code"></label>
+      <button type="submit">Sign in to OpenBid</button>
+    </form>
+    <div class="card-soft" style="margin-top:16px">
+      <strong>Demo access</strong>
+      <div class="footer-note" style="margin-top:6px">Username: <span class="mono">admin</span> · Password: <span class="mono">TenderHub!2026</span></div>
+    </div>
+  </section>
+</div>
+
+<section class="cards" style="margin-top:20px">
+  {{template "soft_list_item" (dict "title" "Tender discovery" "meta" "Bring relevant opportunities into one organised workspace.")}}
+  {{template "soft_list_item" (dict "title" "Submission tracking" "meta" "Stay ahead of deadlines, reviews, and readiness checks.")}}
+  {{template "soft_list_item" (dict "title" "Document control" "meta" "Manage certificates, bid packs, and supporting files with structure.")}}
+  {{template "soft_list_item" (dict "title" "Team coordination" "meta" "Work across contributors, reviewers, and managers with clarity.")}}
+</section>
+{{end}}

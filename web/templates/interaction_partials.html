@@ -1,0 +1,118 @@
+{{define "queue_table"}}
+<table>
+  <tr><th>Opportunity</th><th>State</th><th>Attempts</th><th>Next attempt</th><th>Last error</th></tr>
+  {{range .QueueItems}}
+  <tr>
+    <td>{{.Tender.Title}}</td>
+    <td>{{template "status_badge" (dict "tone" (condTone .Job.State) "label" .Job.State)}}</td>
+    <td>{{.Job.Attempts}}</td>
+    <td>{{.Job.NextAttemptAt}}</td>
+    <td class="small mono">{{.Job.LastError}}</td>
+  </tr>
+  {{else}}
+  <tr><td colspan="5">{{template "empty_state" "No pipeline items yet."}}</td></tr>
+  {{end}}
+</table>
+{{end}}
+
+{{define "saved_search_list"}}
+<div class="list">
+  {{range .Items}}
+  <div class="card-soft">
+    <strong>{{.Name}}</strong>
+    <div class="footer-note" style="margin-top:6px">{{.Query}}</div>
+    <div class="actions" style="margin-top:12px">
+      <a class="button secondary" href="/tenders?{{.Query}}">Open search</a>
+      <form method="post" action="/saved-searches/delete">
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <input type="hidden" name="id" value="{{.ID}}">
+        <button type="submit">Delete</button>
+      </form>
+    </div>
+  </div>
+  {{else}}
+  {{template "empty_state" "No saved searches yet."}}
+  {{end}}
+</div>
+{{end}}
+
+{{define "tenant_table"}}
+<table>
+  <tr><th>Name</th><th>Slug</th></tr>
+  {{range .Items}}
+  <tr><td>{{.Name}}</td><td>{{.Slug}}</td></tr>
+  {{else}}
+  <tr><td colspan="2">{{template "empty_state" "No tenants created yet."}}</td></tr>
+  {{end}}
+</table>
+{{end}}
+
+{{define "user_table"}}
+<table>
+  <tr><th>Username</th><th>Email</th><th>Active</th><th>Actions</th></tr>
+  {{range .Items}}
+  <tr>
+    <td>{{.Username}}</td>
+    <td>{{.Email}}</td>
+    <td>{{.IsActive}}</td>
+    <td>
+      <form method="post" action="/admin/users/toggle" style="display:inline-flex;gap:8px;align-items:center">
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <input type="hidden" name="user_id" value="{{.ID}}">
+        <button type="submit">Toggle active</button>
+      </form>
+      <form method="post" action="/admin/users/reset-password" style="display:inline-flex;gap:8px;align-items:center;margin-top:6px">
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <input type="hidden" name="user_id" value="{{.ID}}">
+        <input name="new_password" placeholder="Reset!2026Pass">
+        <button type="submit">Reset password</button>
+      </form>
+    </td>
+  </tr>
+  {{else}}
+  <tr><td colspan="4">{{template "empty_state" "No users available."}}</td></tr>
+  {{end}}
+</table>
+{{end}}
+
+{{define "membership_table"}}
+<table>
+  <tr><th>User</th><th>Tenant</th><th>Role</th><th>Responsibilities</th><th>Actions</th></tr>
+  {{range .Memberships}}
+  <tr>
+    <td class="mono small">{{.UserID}}</td>
+    <td class="mono small">{{.TenantID}}</td>
+    <td>{{.Role}}</td>
+    <td>{{.Responsibilities}}</td>
+    <td>
+      <form method="post" action="/admin/memberships/delete">
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <input type="hidden" name="id" value="{{.ID}}">
+        <button type="submit">Delete</button>
+      </form>
+    </td>
+  </tr>
+  {{else}}
+  <tr><td colspan="5">{{template "empty_state" "No memberships available."}}</td></tr>
+  {{end}}
+</table>
+{{end}}
+
+{{define "saved_search_form"}}
+<form method="post" action="/saved-searches" class="form-grid">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <label>Name<input name="name" required></label>
+  <label>Query string<input name="query" placeholder="q=engineering&province=Gauteng"></label>
+  <label>Filters JSON or notes<textarea name="filters"></textarea></label>
+  <div class="actions"><button type="submit">Save search</button></div>
+</form>
+{{end}}
+
+{{define "tenant_form"}}
+<form method="post" action="/admin/tenants/create" class="form-grid">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <label>Name<input name="name" required></label>
+  <label>Slug<input name="slug" required></label>
+  <div class="actions"><button type="submit">Create tenant</button></div>
+</form>
+{{end}}

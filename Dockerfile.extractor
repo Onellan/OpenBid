@@ -1,0 +1,6 @@
+FROM python:3.13-alpine
+RUN apk add --no-cache poppler-utils
+WORKDIR /app
+COPY extractor/app.py /app/app.py
+EXPOSE 9090
+CMD ["python3","/app/app.py"]

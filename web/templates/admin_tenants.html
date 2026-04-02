@@ -1,0 +1,15 @@
+{{define "admin_tenants.html"}}{{template "base" .}}{{end}}{{define "content"}}
+<div class="split">
+  <section class="card">
+    {{template "card_header" (dict "title" "Create tenant" "subtitle" "Set up new business units, client environments, or portfolio spaces inside OpenBid.")}}
+    <div style="margin-top:14px">{{template "tenant_form" .}}</div>
+  </section>
+
+  {{template "entity_table_card" (dict
+    "title" "Tenant list"
+    "subtitle" "All configured workspaces in your OpenBid environment."
+    "inner" "tenant_table_typed"
+    "context" .
+  )}}
+</div>
+{{end}}

@@ -1,0 +1,48 @@
+{{define "page_hero"}}
+<section class="page-hero">
+  {{with .eyebrow}}<span class="page-eyebrow">{{.}}</span>{{end}}
+  <h1 class="page-title">{{.title}}</h1>
+  {{with .copy}}<p class="page-copy">{{.}}</p>{{end}}
+  {{with .actions}}
+  <div class="actions">
+    {{range .}}
+      <a class="button {{if .secondary}}secondary{{end}}" href="{{.href}}">{{.label}}</a>
+    {{end}}
+  </div>
+  {{end}}
+</section>
+{{end}}
+
+{{define "card_header"}}
+<div class="toolbar">
+  <div>
+    <h2 class="card-title">{{.title}}</h2>
+    {{with .subtitle}}<p class="card-subtitle">{{.}}</p>{{end}}
+  </div>
+  {{with .meta}}<div>{{.}}</div>{{end}}
+</div>
+{{end}}
+
+{{define "flash_messages"}}
+  {{with .Error}}<div class="notice"><span class="badge danger">Error</span> <span style="margin-left:8px">{{.}}</span></div>{{end}}
+  {{with .Message}}<div class="notice"><span class="badge success">Success</span> <span style="margin-left:8px">{{.}}</span></div>{{end}}
+{{end}}
+
+{{define "empty_state"}}
+<div class="empty-state">{{.}}</div>
+{{end}}
+
+{{define "metric_card"}}
+<div class="card metric-card">
+  <div class="metric-label">{{.label}}</div>
+  <div class="metric">{{.value}}</div>
+</div>
+{{end}}
+
+{{define "soft_list_item"}}
+<div class="card-soft">
+  {{with .title}}<strong>{{.}}</strong>{{end}}
+  {{with .meta}}<div class="footer-note" style="margin-top:6px">{{.}}</div>{{end}}
+  {{with .body}}<div style="margin-top:10px">{{.}}</div>{{end}}
+</div>
+{{end}}

@@ -1,0 +1,21 @@
+
+{{define "audit_log.html"}}{{template "base" .}}{{end}}{{define "content"}}
+{{template "page_hero" (dict
+  "eyebrow" "Operations"
+  "title" "Audit log"
+  "copy" "Track administrative and workflow actions across the workspace."
+)}}
+<section class="card">
+  {{template "card_header" (dict "title" "Recent actions" "subtitle" "Latest audited actions in this tenant.")}}
+  <div class="table-wrap" style="margin-top:14px">
+    <table>
+      <tr><th>When</th><th>Action</th><th>Entity</th><th>Summary</th><th>User</th></tr>
+      {{range .Items}}
+      <tr><td>{{.CreatedAt}}</td><td>{{.Action}}</td><td>{{.Entity}} / {{.EntityID}}</td><td>{{.Summary}}</td><td>{{.UserID}}</td></tr>
+      {{else}}
+      <tr><td colspan="5">{{template "empty_state" "No audit entries yet."}}</td></tr>
+      {{end}}
+    </table>
+  </div>
+</section>
+{{end}}

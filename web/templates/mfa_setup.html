@@ -1,0 +1,13 @@
+{{define "mfa_setup.html"}}{{template "base" .}}{{end}}{{define "content"}}
+<section class="card" style="max-width:760px">
+  {{template "card_header" (dict "title" "Enable multi-factor authentication" "subtitle" "Add this secret to your authenticator app, then confirm the 6-digit code below.")}}
+  <div style="margin-top:10px">{{template "flash_messages" .}}</div>
+  <div class="card-soft" style="margin-top:14px"><div class="mono" style="font-size:22px">{{.Message}}</div></div>
+  <form method="post" action="/mfa/setup" class="form-grid" style="margin-top:14px">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <input type="hidden" name="secret" value="{{.Message}}">
+    <label>Authenticator code<input name="code" required></label>
+    <div class="actions"><button type="submit">Enable MFA</button></div>
+  </form>
+</section>
+{{end}}

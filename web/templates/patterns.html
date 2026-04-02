@@ -1,0 +1,48 @@
+{{define "section_shell"}}
+<section class="card">
+  {{template "card_header" .header}}
+  {{with .body}}<div style="margin-top:14px">{{.}}</div>{{end}}
+</section>
+{{end}}
+
+{{define "auth_form_shell"}}
+<section class="card" style="max-width:760px">
+  {{template "card_header" (dict "title" .title "subtitle" .subtitle)}}
+  <div style="margin-top:10px">{{template "flash_messages" .context}}</div>
+  {{with .body}}<div style="margin-top:14px">{{.}}</div>{{end}}
+</section>
+{{end}}
+
+{{define "entity_table_card"}}
+<section class="card">
+  {{template "card_header" (dict "title" .title "subtitle" .subtitle "meta" .meta)}}
+  <div class="table-wrap" style="margin-top:14px">
+    {{template .inner .context}}
+  </div>
+</section>
+{{end}}
+
+{{define "form_actions"}}
+<div class="actions" style="margin-top:14px">
+  {{range .}}
+    <button type="{{if .type}}{{.type}}{{else}}submit{{end}}" {{if .name}}name="{{.name}}"{{end}} {{if .value}}value="{{.value}}"{{end}} class="{{if .secondary}}button secondary{{else}}button{{end}}">{{.label}}</button>
+  {{end}}
+</div>
+{{end}}
+
+{{define "status_badge"}}
+<span class="badge {{if eq .tone "success"}}success{{else if eq .tone "warning"}}warning{{else if eq .tone "danger"}}danger{{else if eq .tone "info"}}info{{end}}">{{.label}}</span>
+{{end}}
+
+{{define "confirm_destructive_action"}}
+<form method="post" action="{{.action}}" data-confirm="{{.confirm}}" style="{{if .inline}}display:inline-flex;gap:8px;align-items:center{{else}}display:block{{end}}">
+  <input type="hidden" name="csrf_token" value="{{.csrf}}">
+  {{range .hidden}}
+    <input type="hidden" name="{{.name}}" value="{{.value}}">
+  {{end}}
+  {{if .text_input}}
+    <input name="{{.text_input.name}}" placeholder="{{.text_input.placeholder}}">
+  {{end}}
+  <button type="submit">{{.label}}</button>
+</form>
+{{end}}

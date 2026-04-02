@@ -1,0 +1,12 @@
+SQLite cleanup completed.
+
+Repository intent:
+- one runtime store
+- one default data file format
+- fewer dead code paths
+- simpler maintenance
+
+Next best validation:
+1. go mod tidy
+2. go test ./...
+3. docker compose up --build

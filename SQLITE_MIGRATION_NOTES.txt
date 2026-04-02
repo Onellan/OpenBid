@@ -1,0 +1,14 @@
+This bundle migrates the runtime store completely to SQLite.
+
+Changes made:
+- app startup now uses SQLiteStore directly
+- docker-compose now points DATA_PATH to /app/data/store.db
+- local run script now defaults to ./data/store.db
+- added internal/store/sqlitestore.go
+- added cmd/json_to_sqlite for one-time migration from JSON to SQLite
+- added SQLite store test scaffold
+
+Important:
+- JSON store code still exists in the repository only to support the migration utility.
+- The runtime app and worker now use SQLite only.
+- This environment could not reliably fetch and validate the new external Go SQLite driver dependency, so the bundle is implemented but not fully compile-verified here.

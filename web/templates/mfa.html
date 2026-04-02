@@ -1,0 +1,19 @@
+{{define "mfa.html"}}{{template "base" .}}{{end}}{{define "content"}}
+<div class="split">
+  <section class="card">
+    {{template "card_header" (dict "title" "Multi-factor authentication" "subtitle" "Add an extra layer of security for serious procurement workflows.")}}
+    <div style="margin-top:10px">{{template "flash_messages" .}}</div>
+    <div class="actions" style="margin-top:14px">
+      <a class="button" href="/mfa/setup">Set up MFA</a>
+    </div>
+  </section>
+  <section class="card">
+    {{template "card_header" (dict "title" "Disable MFA" "subtitle" "Confirm your password before removing multi-factor protection.")}}
+    <form method="post" action="/mfa/disable" class="form-grid" style="margin-top:14px">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <label>Password confirmation<input type="password" name="password" required></label>
+      <div class="actions"><button type="submit">Disable MFA</button></div>
+    </form>
+  </section>
+</div>
+{{end}}
