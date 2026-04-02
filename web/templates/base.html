@@ -15,6 +15,7 @@
   --color-warning:#D98E04;
   --color-danger:#D64545;
   --color-info:#2F80ED;
+  --control-height:42px;
   --radius-card:18px;
   --radius-control:12px;
   --radius-badge:999px;
@@ -28,29 +29,38 @@ a{text-decoration:none;color:inherit}
 header{background:rgba(255,255,255,0.96);backdrop-filter:blur(10px);border-bottom:1px solid var(--color-border);position:sticky;top:0;z-index:20}
 main{padding-bottom:32px}
 .shell{max-width:1280px;margin:0 auto;padding:20px}
-.app-header{display:grid;gap:16px}
-.app-header-row{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;flex-wrap:wrap}
-.brand{display:flex;align-items:flex-start;gap:12px}
-.logo-mark{width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,var(--color-primary),var(--color-secondary));display:grid;place-items:center;box-shadow:var(--shadow-soft)}
-.logo-mark span{display:block;width:20px;height:20px;border:3px solid #fff;border-right-color:#9CEAE3;border-bottom-color:#9CEAE3;border-radius:999px;transform:rotate(-18deg)}
+.app-header{padding-top:12px;padding-bottom:12px}
+.app-header-row{display:flex;justify-content:space-between;gap:16px;align-items:center;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px;min-width:0}
+.logo-mark{width:36px;height:36px;border-radius:12px;background:linear-gradient(135deg,var(--color-primary),var(--color-secondary));display:grid;place-items:center;box-shadow:var(--shadow-soft);flex:0 0 auto}
+.logo-mark span{display:block;width:16px;height:16px;border:3px solid #fff;border-right-color:#9CEAE3;border-bottom-color:#9CEAE3;border-radius:999px;transform:rotate(-18deg)}
 .brand-wordmark{display:flex;align-items:baseline;gap:4px}
 .brand-wordmark .open{font-weight:600;color:var(--color-text)}
 .brand-wordmark .bid{font-weight:800;color:var(--color-primary)}
-.brand-tag{font-size:12px;color:var(--color-text-muted)}
-.workspace-meta{display:grid;gap:6px}
+.brand-tag{font-size:11px;color:var(--color-text-muted)}
+.workspace-meta{display:grid;gap:4px}
 .workspace-label{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--color-text-muted)}
-.workspace-title{font-size:18px;font-weight:700}
-.header-tools{display:grid;gap:10px;justify-items:end}
+.workspace-title{font-size:16px;font-weight:700;line-height:1.2}
+.header-tools{display:grid;gap:8px;justify-items:end;align-items:center}
 .tenant-switch{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.tenant-switch form{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.desktop-nav{display:grid;gap:10px}
-.nav-group{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.tenant-switch form{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.tenant-switch select{width:auto;min-width:220px;max-width:min(42vw,320px);padding:10px 12px}
+.tenant-switch button{min-height:var(--control-height);padding:0 14px}
+.desktop-nav{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:flex-end}
+.nav-group{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .nav-label{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--color-text-muted);margin-right:4px}
-.nav-link{padding:10px 12px;border-radius:999px;color:var(--color-text-muted);font-weight:600;border:1px solid transparent}
+.desktop-nav .nav-label{display:none}
+.nav-link{padding:8px 11px;border-radius:999px;color:var(--color-text-muted);font-weight:600;font-size:14px;line-height:1.2;border:1px solid transparent}
 .nav-link:hover,.nav-link.active{background:var(--color-primary-soft);border-color:#cfe0f1;color:var(--color-primary)}
 .nav-link.utility{background:#fff;border-color:var(--color-border)}
+.nav-overflow{position:relative}
+.nav-overflow summary{list-style:none;cursor:pointer}
+.nav-overflow summary::-webkit-details-marker{display:none}
+.nav-overflow-panel{position:absolute;top:calc(100% + 8px);right:0;min-width:220px;padding:10px;background:rgba(255,255,255,.98);border:1px solid var(--color-border);border-radius:16px;box-shadow:var(--shadow-strong);display:grid;gap:6px}
+.nav-overflow-panel .nav-link{border-radius:12px;padding:10px 12px}
+.nav-overflow-panel .nav-link.utility{background:transparent;border-color:transparent}
 .mobile-menu{display:none}
-.mobile-menu summary{list-style:none;cursor:pointer;padding:12px 14px;border-radius:14px;border:1px solid var(--color-border);background:#fff;font-weight:700;box-shadow:var(--shadow-soft)}
+.mobile-menu summary{list-style:none;cursor:pointer;padding:10px 12px;border-radius:12px;border:1px solid var(--color-border);background:#fff;font-weight:700;box-shadow:var(--shadow-soft)}
 .mobile-menu summary::-webkit-details-marker{display:none}
 .mobile-menu-panel{display:grid;gap:14px;padding:14px 0 0 0}
 .mobile-menu-section{display:grid;gap:8px}
@@ -66,13 +76,13 @@ main{padding-bottom:32px}
 .table-wrap{overflow:auto}
 .card{background:var(--color-surface);border:1px solid rgba(15,76,129,0.08);border-radius:var(--radius-card);padding:20px;box-shadow:var(--shadow-soft)}
 .card-soft{background:var(--color-surface-soft);border:1px solid var(--color-border);border-radius:16px;padding:16px}
-.page-hero{background:linear-gradient(135deg,#ffffff 0%,#f6fbff 60%,#eef9f8 100%);border:1px solid rgba(15,76,129,0.08);border-radius:24px;padding:28px;box-shadow:var(--shadow-soft)}
-.page-eyebrow{display:inline-flex;align-items:center;padding:6px 10px;border-radius:var(--radius-badge);font-size:12px;font-weight:700;background:#EAF2FF;color:var(--color-info)}
+.page-hero{background:linear-gradient(135deg,#ffffff 0%,#f6fbff 60%,#eef9f8 100%);border:1px solid rgba(15,76,129,0.08);border-radius:20px;padding:20px;box-shadow:var(--shadow-soft)}
+.page-eyebrow{display:inline-flex;align-items:center;padding:5px 9px;border-radius:var(--radius-badge);font-size:11px;font-weight:700;background:#EAF2FF;color:var(--color-info)}
 .page-title,.section-title{margin:0;letter-spacing:-0.02em}
-.page-title{font-size:42px;line-height:1.08;margin-top:12px;max-width:900px}
-.section-title{font-size:28px;line-height:1.15}
-.page-copy{font-size:18px;color:var(--color-text-muted);max-width:840px;margin:12px 0 0 0}
-.card-title{margin:0;font-size:24px;line-height:1.2;letter-spacing:-0.02em}
+.page-title{font-size:30px;line-height:1.12;margin-top:10px;max-width:760px}
+.section-title{font-size:22px;line-height:1.2}
+.page-copy{font-size:15px;color:var(--color-text-muted);max-width:720px;margin:10px 0 0 0}
+.card-title{margin:0;font-size:20px;line-height:1.25;letter-spacing:-0.02em}
 .card-subtitle{margin:6px 0 0 0;color:var(--color-text-muted);font-size:14px}
 .metric{font-size:34px;font-weight:800;letter-spacing:-0.02em;color:var(--color-primary)}
 .metric-label{font-size:13px;color:var(--color-text-muted);font-weight:700;text-transform:none}
@@ -86,7 +96,10 @@ main{padding-bottom:32px}
 .badge.warning{background:#FFF5DF;color:var(--color-warning)}
 .badge.danger{background:#FDEAEA;color:var(--color-danger)}
 .badge.info{background:#EAF2FF;color:var(--color-info)}
-.actions{display:flex;gap:10px;flex-wrap:wrap}
+.actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.actions > form{display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0}
+.actions > label{width:auto;min-width:120px;max-width:160px;margin:0}
+.actions > label select,.actions > label input{min-height:var(--control-height)}
 .toolbar{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}
 .list{display:grid;gap:12px}
 .feature-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
@@ -94,22 +107,23 @@ main{padding-bottom:32px}
 .feature-link strong{font-size:18px}
 .empty-state{padding:24px;border:1px dashed var(--color-border);border-radius:16px;background:var(--color-surface-soft);color:var(--color-text-muted);text-align:center}
 .notice{padding:12px 14px;border-radius:12px;border:1px solid var(--color-border);background:var(--color-surface-soft)}
-input,select,textarea,button{width:100%;padding:12px 14px;border:1px solid var(--color-border);border-radius:var(--radius-control);background:#fff;color:var(--color-text);font:inherit}
+input,select,textarea,button{width:100%;padding:10px 14px;border:1px solid var(--color-border);border-radius:var(--radius-control);background:#fff;color:var(--color-text);font:inherit}
+input,select,button{min-height:var(--control-height)}
 textarea{min-height:110px;resize:vertical}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--color-secondary);box-shadow:0 0 0 4px rgba(31,111,178,0.12)}
 label{display:grid;gap:8px;font-size:14px;font-weight:600;color:var(--color-text)}
-button,.button{display:inline-flex;align-items:center;justify-content:center;gap:8px;width:auto;padding:12px 16px;border:none;border-radius:12px;background:var(--color-primary);color:#fff;font-weight:700;box-shadow:var(--shadow-soft);cursor:pointer}
+button,.button{display:inline-flex;align-items:center;justify-content:center;gap:8px;width:auto;min-height:var(--control-height);padding:0 14px;border:1px solid transparent;border-radius:12px;background:var(--color-primary);color:#fff;font-size:14px;font-weight:700;line-height:1;white-space:nowrap;box-shadow:var(--shadow-soft);cursor:pointer}
 button:hover,.button:hover{background:var(--color-primary-strong)}
-.button.secondary{background:#fff;color:var(--color-secondary);border:1px solid var(--color-secondary);box-shadow:none}
+.button.secondary{background:#fff;color:var(--color-secondary);border-color:var(--color-secondary);box-shadow:none}
 table{width:100%;border-collapse:collapse}
 th,td{padding:14px 12px;border-bottom:1px solid var(--color-border);text-align:left;vertical-align:top}
 th{font-size:13px;color:var(--color-text-muted);font-weight:700;background:#FBFDFF}
 tr:hover td{background:#FCFEFF}
 hr{border:none;border-top:1px solid var(--color-border);margin:18px 0}
 @media (max-width:1100px){.split{grid-template-columns:1fr}.row-4{grid-template-columns:1fr 1fr}}
-@media (max-width:900px){.desktop-nav{display:none}.mobile-menu{display:block}.header-tools{width:100%;justify-items:stretch}.tenant-switch form{display:grid}.nav-group{display:grid}}
-@media (max-width:700px){.row-4{grid-template-columns:1fr}.shell{padding:16px}.page-title{font-size:32px}.section-title{font-size:24px}.card-title{font-size:22px}.workspace-title{font-size:16px}}
-</style></head><body><header><div class="shell app-header">{{if .User}}<div class="app-header-row"><div class="brand"><div class="logo-mark" aria-hidden="true"><span></span></div><div class="workspace-meta"><div><div class="brand-wordmark"><span class="open">Open</span><span class="bid">Bid</span></div><div class="brand-tag">Open opportunities. Better bidding.</div></div><div><div class="workspace-label">Workspace</div><div class="workspace-title">{{.Tenant.Name}}</div></div></div></div><div class="header-tools"><div class="tenant-switch"><form method="post" action="/tenant/switch"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="return_to" value="{{.CurrentPath}}"><select name="tenant_id">{{range .UserTenants}}<option value="{{.Tenant.ID}}" {{if eq $.Tenant.ID .Tenant.ID}}selected{{end}}>{{.Tenant.Name}} · {{.Role}}</option>{{end}}</select><button type="submit">Switch</button></form></div><div class="desktop-nav"><nav class="nav-group" aria-label="Primary"><span class="nav-label">Explore</span><a class="nav-link {{if eq .CurrentPath "/"}}active{{end}}" href="/">Home</a><a class="nav-link {{if eq .CurrentPath "/dashboard"}}active{{end}}" href="/dashboard">Dashboard</a><a class="nav-link {{if hasPrefix .CurrentPath "/tenders"}}active{{end}}" href="/tenders">Tenders</a><a class="nav-link {{if eq .CurrentPath "/bookmarks"}}active{{end}}" href="/bookmarks">Bookmarks</a><a class="nav-link {{if hasPrefix .CurrentPath "/saved-searches"}}active{{end}}" href="/saved-searches">Saved Searches</a><a class="nav-link {{if hasPrefix .CurrentPath "/queue"}}active{{end}}" href="/queue">Queue</a><a class="nav-link {{if hasPrefix .CurrentPath "/sources"}}active{{end}}" href="/sources">Sources</a></nav><nav class="nav-group" aria-label="Workspace"><span class="nav-label">Workspace</span><a class="nav-link utility {{if or (hasPrefix .CurrentPath "/settings") (eq .CurrentPath "/password") (hasPrefix .CurrentPath "/mfa")}}active{{end}}" href="/settings">Settings</a>{{if .CanAdminUsers}}<a class="nav-link utility {{if hasPrefix .CurrentPath "/admin/users"}}active{{end}}" href="/admin/users">User Admin</a>{{end}}{{if .CanManageTenants}}<a class="nav-link utility {{if hasPrefix .CurrentPath "/admin/tenants"}}active{{end}}" href="/admin/tenants">Tenant Admin</a>{{end}}{{if .CanManageAudit}}<a class="nav-link utility {{if hasPrefix .CurrentPath "/audit-log"}}active{{end}}" href="/audit-log">Audit Log</a>{{end}}<a class="nav-link utility" href="/logout">Logout</a></nav></div><details class="mobile-menu"><summary>Menu</summary><div class="mobile-menu-panel"><div class="mobile-menu-section"><div class="nav-label">Explore</div><div class="mobile-menu-links"><a href="/">Home</a><a href="/dashboard">Dashboard</a><a href="/tenders">Tenders</a><a href="/bookmarks">Bookmarks</a><a href="/saved-searches">Saved Searches</a><a href="/queue">Queue</a><a href="/sources">Sources</a></div></div><div class="mobile-menu-section"><div class="nav-label">Workspace</div><div class="mobile-menu-links"><a href="/settings">Settings</a>{{if .CanAdminUsers}}<a href="/admin/users">User Admin</a>{{end}}{{if .CanManageTenants}}<a href="/admin/tenants">Tenant Admin</a>{{end}}{{if .CanManageAudit}}<a href="/audit-log">Audit Log</a>{{end}}<a href="/logout">Logout</a></div></div></div></details></div></div>{{else}}<div class="app-header-row"><div class="brand"><div class="logo-mark" aria-hidden="true"><span></span></div><div><div class="brand-wordmark"><span class="open">Open</span><span class="bid">Bid</span></div><div class="brand-tag">Open opportunities. Better bidding.</div></div></div></div>{{end}}</div></header><main class="shell">{{template "content" .}}
+@media (max-width:900px){.desktop-nav{display:none}.mobile-menu{display:block}.app-header{padding-top:10px;padding-bottom:10px}.header-tools{width:100%;justify-items:stretch}.tenant-switch form{display:grid;justify-content:stretch}.tenant-switch select,.tenant-switch button{width:100%;max-width:none}.nav-group{display:grid}}
+@media (max-width:700px){.row-4{grid-template-columns:1fr}.shell{padding:16px}.app-header-row{align-items:flex-start}.brand{align-items:flex-start}.page-hero{padding:16px}.page-title{font-size:24px}.section-title{font-size:20px}.card-title{font-size:18px}.workspace-title{font-size:15px}.brand-tag{display:none}}
+</style></head><body><header><div class="shell app-header">{{if .User}}<div class="app-header-row"><div class="brand"><div class="logo-mark" aria-hidden="true"><span></span></div><div class="workspace-meta"><div><div class="brand-wordmark"><span class="open">Open</span><span class="bid">Bid</span></div><div class="brand-tag">Open opportunities. Better bidding.</div></div><div><div class="workspace-label">Workspace</div><div class="workspace-title">{{.Tenant.Name}}</div></div></div></div><div class="header-tools"><div class="tenant-switch"><form method="post" action="/tenant/switch"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="return_to" value="{{.CurrentPath}}"><select name="tenant_id">{{range .UserTenants}}<option value="{{.Tenant.ID}}" {{if eq $.Tenant.ID .Tenant.ID}}selected{{end}}>{{.Tenant.Name}} · {{.Role}}</option>{{end}}</select><button type="submit">Switch</button></form></div><div class="desktop-nav"><nav class="nav-group" aria-label="Primary"><span class="nav-label">Explore</span><a class="nav-link {{if eq .CurrentPath "/"}}active{{end}}" href="/">Home</a><a class="nav-link {{if hasPrefix .CurrentPath "/tenders"}}active{{end}}" href="/tenders">Tenders</a><a class="nav-link {{if eq .CurrentPath "/bookmarks"}}active{{end}}" href="/bookmarks">Bookmarks</a><a class="nav-link {{if hasPrefix .CurrentPath "/queue"}}active{{end}}" href="/queue">Queue</a><details class="nav-overflow"><summary class="nav-link utility {{if or (eq .CurrentPath "/dashboard") (hasPrefix .CurrentPath "/saved-searches") (hasPrefix .CurrentPath "/sources") (hasPrefix .CurrentPath "/settings") (eq .CurrentPath "/password") (hasPrefix .CurrentPath "/mfa") (hasPrefix .CurrentPath "/admin/users") (hasPrefix .CurrentPath "/admin/tenants") (hasPrefix .CurrentPath "/audit-log")}}active{{end}}">More</summary><div class="nav-overflow-panel"><a class="nav-link {{if eq .CurrentPath "/dashboard"}}active{{end}}" href="/dashboard">Dashboard</a><a class="nav-link {{if hasPrefix .CurrentPath "/saved-searches"}}active{{end}}" href="/saved-searches">Saved Searches</a><a class="nav-link {{if hasPrefix .CurrentPath "/sources"}}active{{end}}" href="/sources">Sources</a><a class="nav-link utility {{if or (hasPrefix .CurrentPath "/settings") (eq .CurrentPath "/password") (hasPrefix .CurrentPath "/mfa")}}active{{end}}" href="/settings">Settings</a>{{if .CanAdminUsers}}<a class="nav-link utility {{if hasPrefix .CurrentPath "/admin/users"}}active{{end}}" href="/admin/users">User Admin</a>{{end}}{{if .CanManageTenants}}<a class="nav-link utility {{if hasPrefix .CurrentPath "/admin/tenants"}}active{{end}}" href="/admin/tenants">Tenant Admin</a>{{end}}{{if .CanManageAudit}}<a class="nav-link utility {{if hasPrefix .CurrentPath "/audit-log"}}active{{end}}" href="/audit-log">Audit Log</a>{{end}}<a class="nav-link utility" href="/logout">Logout</a></div></details></nav></div><details class="mobile-menu"><summary>Menu</summary><div class="mobile-menu-panel"><div class="mobile-menu-section"><div class="nav-label">Explore</div><div class="mobile-menu-links"><a href="/">Home</a><a href="/dashboard">Dashboard</a><a href="/tenders">Tenders</a><a href="/bookmarks">Bookmarks</a><a href="/saved-searches">Saved Searches</a><a href="/queue">Queue</a><a href="/sources">Sources</a></div></div><div class="mobile-menu-section"><div class="nav-label">Workspace</div><div class="mobile-menu-links"><a href="/settings">Settings</a>{{if .CanAdminUsers}}<a href="/admin/users">User Admin</a>{{end}}{{if .CanManageTenants}}<a href="/admin/tenants">Tenant Admin</a>{{end}}{{if .CanManageAudit}}<a href="/audit-log">Audit Log</a>{{end}}<a href="/logout">Logout</a></div></div></div></details></div></div>{{else}}<div class="app-header-row"><div class="brand"><div class="logo-mark" aria-hidden="true"><span></span></div><div><div class="brand-wordmark"><span class="open">Open</span><span class="bid">Bid</span></div><div class="brand-tag">Open opportunities. Better bidding.</div></div></div></div>{{end}}</div></header><main class="shell">{{template "content" .}}
 </main>
 <script>
 document.addEventListener('submit', function(e){
