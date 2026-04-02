@@ -73,5 +73,10 @@ type Store interface {
 	QueueJob(context.Context, models.ExtractionJob) error
 	UpdateJob(context.Context, models.ExtractionJob) error
 
+	ListAuditEntries(context.Context, string) ([]models.AuditEntry, error)
+	AddAuditEntry(context.Context, models.AuditEntry) error
+	ListWorkflowEvents(context.Context, string, string) ([]models.WorkflowEvent, error)
+	AddWorkflowEvent(context.Context, models.WorkflowEvent) error
+
 	Dashboard(context.Context, string, bool, bool) (models.Dashboard, error)
 }

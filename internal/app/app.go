@@ -8,7 +8,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
-	"net/url"
+
 	"os"
 	"sort"
 	"strconv"
@@ -30,7 +30,7 @@ type Config struct {
 type App struct {
 	Config    Config
 	Store     store.Store
-	Templates *template.Template
+	Templates map[string]*template.Template
 	Server    *http.Server
 	Sources   source.Registry
 	Extractor *extract.Client
@@ -50,17 +50,19 @@ func atoi(s string, d int) int {
 	return v
 }
 func New() (*App, error) {
-	cfg := Config{AppAddr: getenv("APP_ADDR", ":8080"), DataPath: getenv("DATA_PATH", "./data/store.json"), SecretKey: getenv("SECRET_KEY", "change-me-now"), SecureCookies: getenv("SECURE_COOKIES", "false") == "true", LowMemoryMode: getenv("LOW_MEMORY_MODE", "true") == "true", AnalyticsEnabled: getenv("ANALYTICS_ENABLED", "false") == "true", ExtractorURL: getenv("EXTRACTOR_URL", "http://extractor:9090"), SessionHours: atoi(getenv("SESSION_HOURS", "12"), 12), WorkerSyncMinutes: atoi(getenv("WORKER_SYNC_MINUTES", "360"), 360), WorkerLoopSeconds: atoi(getenv("WORKER_LOOP_SECONDS", "30"), 30)}
+	cfg := Config{AppAddr: getenv("APP_ADDR", ":8080"), DataPath: getenv("DATA_PATH", "./data/store.db"), SecretKey: getenv("SECRET_KEY", "change-me-now"), SecureCookies: getenv("SECURE_COOKIES", "false") == "true", LowMemoryMode: getenv("LOW_MEMORY_MODE", "true") == "true", AnalyticsEnabled: getenv("ANALYTICS_ENABLED", "false") == "true", ExtractorURL: getenv("EXTRACTOR_URL", "http://extractor:9090"), SessionHours: atoi(getenv("SESSION_HOURS", "12"), 12), WorkerSyncMinutes: atoi(getenv("WORKER_SYNC_MINUTES", "360"), 360), WorkerLoopSeconds: atoi(getenv("WORKER_LOOP_SECONDS", "30"), 30)}
 	st, err := store.NewSQLiteStore(cfg.DataPath)
 	if err != nil {
 		return nil, err
 	}
 	tpl, err := parseTemplates()
 	if err != nil {
+		_ = st.Close()
 		return nil, err
 	}
 	a := &App{Config: cfg, Store: st, Templates: tpl, Sources: source.NewRegistry(source.NewTreasuryAdapter(source.DefaultFeedURL()), source.StubAdapter{Source: "eskom"}, source.StubAdapter{Source: "transnet"}, source.StubAdapter{Source: "cidb"}, source.StubAdapter{Source: "dbsa"}, source.StubAdapter{Source: "dpwi"}), Extractor: extract.New(cfg.ExtractorURL)}
 	if err := a.seed(context.Background()); err != nil {
+		_ = st.Close()
 		return nil, err
 	}
 	a.Server = &http.Server{Addr: cfg.AppAddr, Handler: routes(a), ReadHeaderTimeout: 10 * time.Second}
@@ -145,10 +147,10 @@ type QueueItem struct {
 }
 
 type QueueSummary struct {
-	Queued int
+	Queued     int
 	Processing int
-	Failed int
-	Completed int
+	Failed     int
+	Completed  int
 }
 
 func (a *App) mustCSRF(r *http.Request) string { s, _ := a.currentSession(r); return s.CSRF }
@@ -182,8 +184,19 @@ func (a *App) render(w http.ResponseWriter, r *http.Request, name string, data m
 			data["UserTenants"] = a.userTenants(r.Context(), u.ID)
 		}
 	}
+	if _, exists := data["Error"]; !exists {
+		data["Error"] = r.URL.Query().Get("error")
+	}
+	if _, exists := data["Message"]; !exists {
+		data["Message"] = r.URL.Query().Get("message")
+	}
+	tpl, ok := a.Templates[name]
+	if !ok {
+		http.Error(w, fmt.Sprintf("template %s not configured", name), 500)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := a.Templates.ExecuteTemplate(w, name, data); err != nil {
+	if err := tpl.ExecuteTemplate(w, name, data); err != nil {
 		http.Error(w, err.Error(), 500)
 	}
 }
@@ -272,9 +285,14 @@ func (a *App) Dashboard(w http.ResponseWriter, r *http.Request) {
 }
 func (a *App) Tenders(w http.ResponseWriter, r *http.Request) {
 	u, t, _, ok := a.currentUserTenant(r)
-	if !ok { http.Redirect(w, r, "/login", 303); return }
+	if !ok {
+		http.Redirect(w, r, "/login", 303)
+		return
+	}
 	pageSize := atoi(r.URL.Query().Get("page_size"), 20)
-	if pageSize <= 0 || pageSize > 100 { pageSize = 20 }
+	if pageSize <= 0 || pageSize > 100 {
+		pageSize = 20
+	}
 	f := store.NormalizeFilter(store.ListFilter{
 		Query: r.URL.Query().Get("q"), Source: r.URL.Query().Get("source"), Province: r.URL.Query().Get("province"),
 		Category: r.URL.Query().Get("category"), Issuer: r.URL.Query().Get("issuer"), Status: r.URL.Query().Get("status"),
@@ -286,15 +304,25 @@ func (a *App) Tenders(w http.ResponseWriter, r *http.Request) {
 	items, total, _ := a.Store.ListTenders(r.Context(), f)
 	bm, _ := a.Store.ListBookmarks(r.Context(), t.ID, u.ID)
 	bmMap := map[string]models.Bookmark{}
-	for _, b := range bm { bmMap[b.TenderID] = b }
+	for _, b := range bm {
+		bmMap[b.TenderID] = b
+	}
 	wf, _ := a.Store.ListWorkflows(r.Context(), t.ID)
 	wfMap := map[string]models.Workflow{}
-	for _, x := range wf { wfMap[x.TenderID] = x }
+	for _, x := range wf {
+		wfMap[x.TenderID] = x
+	}
 	params := map[string]string{"q": f.Query, "source": f.Source, "province": f.Province, "category": f.Category, "issuer": f.Issuer, "status": f.Status, "cidb": f.CIDB, "workflow_status": f.WorkflowStatus, "document_status": f.DocumentStatus, "sort": f.Sort, "view": f.View, "page_size": strconv.Itoa(f.PageSize)}
-	if f.BookmarkedOnly { params["bookmarked_only"] = "1" }
+	if f.BookmarkedOnly {
+		params["bookmarked_only"] = "1"
+	}
 	totalPages := total / f.PageSize
-	if total % f.PageSize != 0 { totalPages++ }
-	if totalPages == 0 { totalPages = 1 }
+	if total%f.PageSize != 0 {
+		totalPages++
+	}
+	if totalPages == 0 {
+		totalPages = 1
+	}
 	a.render(w, r, "tenders.html", map[string]any{
 		"Title": "Tenders", "User": u, "Tenant": t, "Items": items, "Total": total,
 		"Filter": f, "Bookmarks": bmMap, "Workflows": wfMap,
@@ -339,11 +367,8 @@ func (a *App) ToggleBookmark(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = a.Store.ToggleBookmark(r.Context(), models.Bookmark{TenantID: t.ID, UserID: u.ID, TenderID: r.FormValue("tender_id"), Note: r.FormValue("note")})
-	ac := actionContext{User: models.User{}, Tenant: t, Member: m}
-	if u2, _, _, ok2 := a.currentUserTenant(r); ok2 { ac.User = u2 }
-	a.addWorkflowSnapshot(r.Context(), ac, wf)
-	a.auditAction(r.Context(), ac, "update", "workflow", wf.TenderID, "Workflow updated", map[string]string{"status": wf.Status, "priority": wf.Priority})
-	http.Redirect(w, r, "/tenders", 303)
+	a.auditAction(r.Context(), actionContext{User: u, Tenant: t}, "update", "bookmark", r.FormValue("tender_id"), "Bookmark updated", map[string]string{"note": r.FormValue("note")})
+	a.redirectAfterAction(w, r, "/tenders", "success", "Bookmark updated")
 }
 func (a *App) UpdateWorkflow(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || !a.ensureCSRF(r) {
@@ -359,15 +384,20 @@ func (a *App) UpdateWorkflow(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	_ = a.Store.UpsertWorkflow(r.Context(), models.Workflow{TenantID: t.ID, TenderID: r.FormValue("tender_id"), Status: r.FormValue("status"), Priority: r.FormValue("priority"), AssignedUser: r.FormValue("assigned_user"), Notes: r.FormValue("notes")})
-	http.Redirect(w, r, "/tenders", 303)
+	u, _, _, _ := a.currentUserTenant(r)
+	wf := models.Workflow{TenantID: t.ID, TenderID: r.FormValue("tender_id"), Status: r.FormValue("status"), Priority: r.FormValue("priority"), AssignedUser: r.FormValue("assigned_user"), Notes: r.FormValue("notes")}
+	_ = a.Store.UpsertWorkflow(r.Context(), wf)
+	ac := actionContext{User: u, Tenant: t, Member: m}
+	a.addWorkflowSnapshot(r.Context(), ac, wf)
+	a.auditAction(r.Context(), ac, "update", "workflow", wf.TenderID, "Workflow updated", map[string]string{"status": wf.Status, "priority": wf.Priority})
+	a.redirectAfterAction(w, r, "/tenders", "success", "Workflow updated")
 }
 func (a *App) QueueExtraction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || !a.ensureCSRF(r) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	_, _, m, ok := a.currentUserTenant(r)
+	_, t, m, ok := a.currentUserTenant(r)
 	if !ok {
 		http.Redirect(w, r, "/login", 303)
 		return
@@ -388,7 +418,12 @@ func (a *App) QueueExtraction(w http.ResponseWriter, r *http.Request) {
 	tender.DocumentStatus = models.ExtractionQueued
 	_ = a.Store.UpsertTender(r.Context(), tender)
 	_ = a.Store.QueueJob(r.Context(), models.ExtractionJob{TenderID: tender.ID, DocumentURL: tender.DocumentURL, State: models.ExtractionQueued})
-	http.Redirect(w, r, "/tenders", 303)
+	ac := actionContext{Tenant: t, Member: m}
+	if u, _, _, ok := a.currentUserTenant(r); ok {
+		ac.User = u
+	}
+	a.auditAction(r.Context(), ac, "create", "queue_job", tender.ID, "Extraction queued", nil)
+	a.redirectAfterAction(w, r, "/tenders", "success", "Extraction queued")
 }
 func (a *App) SavedSearches(w http.ResponseWriter, r *http.Request) {
 	u, t, _, ok := a.currentUserTenant(r)
@@ -406,7 +441,7 @@ func (a *App) SavedSearches(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = a.Store.UpsertSavedSearch(r.Context(), models.SavedSearch{ID: r.FormValue("id"), TenantID: t.ID, UserID: u.ID, Name: r.FormValue("name"), Query: r.FormValue("query"), Filters: r.FormValue("filters")})
-	a.auditAction(r.Context(), actionContext{User:u, Tenant:t}, "create", "saved_search", "", "Saved search saved", map[string]string{"name": r.FormValue("name")})
+	a.auditAction(r.Context(), actionContext{User: u, Tenant: t}, "create", "saved_search", "", "Saved search saved", map[string]string{"name": r.FormValue("name")})
 	a.redirectAfterAction(w, r, "/saved-searches", "success", "Saved search saved")
 }
 func (a *App) DeleteSavedSearch(w http.ResponseWriter, r *http.Request) {
@@ -420,7 +455,8 @@ func (a *App) DeleteSavedSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = a.Store.DeleteSavedSearch(r.Context(), t.ID, u.ID, r.FormValue("id"))
-	http.Redirect(w, r, "/saved-searches", 303)
+	a.auditAction(r.Context(), actionContext{User: u, Tenant: t}, "delete", "saved_search", r.FormValue("id"), "Saved search deleted", nil)
+	a.redirectAfterAction(w, r, "/saved-searches", "success", "Saved search deleted")
 }
 func (a *App) AdminUsers(w http.ResponseWriter, r *http.Request) {
 	u, t, m, ok := a.currentUserTenant(r)
@@ -554,34 +590,54 @@ func (a *App) BulkTenders(w http.ResponseWriter, r *http.Request) {
 				_ = a.Store.QueueJob(r.Context(), models.ExtractionJob{TenderID: tender.ID, DocumentURL: tender.DocumentURL, State: models.ExtractionQueued})
 			}
 		default:
-			_ = a.Store.UpsertWorkflow(r.Context(), models.Workflow{TenantID: t.ID, TenderID: id, Status: r.FormValue("status"), Priority: r.FormValue("priority"), AssignedUser: r.FormValue("assigned_user"), Notes: r.FormValue("notes")})
+			wf := models.Workflow{TenantID: t.ID, TenderID: id, Status: r.FormValue("status"), Priority: r.FormValue("priority"), AssignedUser: r.FormValue("assigned_user"), Notes: r.FormValue("notes")}
+			_ = a.Store.UpsertWorkflow(r.Context(), wf)
+			a.addWorkflowSnapshot(r.Context(), actionContext{User: u, Tenant: t, Member: m}, wf)
 		}
 	}
-	http.Redirect(w, r, "/tenders", 303)
+	a.redirectAfterAction(w, r, "/tenders", "success", "Bulk action applied")
 }
 func (a *App) TenderDetail(w http.ResponseWriter, r *http.Request) {
 	u, t, _, ok := a.currentUserTenant(r)
-	if !ok { http.Redirect(w, r, "/login", 303); return }
+	if !ok {
+		http.Redirect(w, r, "/login", 303)
+		return
+	}
 	id := strings.TrimPrefix(r.URL.Path, "/tenders/")
-	if id == "" || strings.Contains(id, "/") { http.NotFound(w, r); return }
+	if id == "" || strings.Contains(id, "/") {
+		http.NotFound(w, r)
+		return
+	}
 	item, err := a.Store.GetTender(r.Context(), id)
-	if err != nil { http.NotFound(w, r); return }
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
 	wf, _ := a.Store.GetWorkflow(r.Context(), t.ID, id)
 	history, _ := a.Store.ListWorkflowEvents(r.Context(), t.ID, id)
-	a.render(w, r, "tender_detail.html", map[string]any{"Title":"Opportunity detail","User":u,"Tenant":t,"Item":item,"Workflow":wf,"WorkflowHistory":history})
+	a.render(w, r, "tender_detail.html", map[string]any{"Title": "Opportunity detail", "User": u, "Tenant": t, "Item": item, "Workflow": wf, "WorkflowHistory": history})
 }
 
 func (a *App) AuditLogPage(w http.ResponseWriter, r *http.Request) {
 	u, t, m, ok := a.currentUserTenant(r)
-	if !ok { http.Redirect(w, r, "/login", 303); return }
-	if !canAdminUsers(m.Role) { http.Error(w, "forbidden", 403); return }
+	if !ok {
+		http.Redirect(w, r, "/login", 303)
+		return
+	}
+	if !canAdminUsers(m.Role) {
+		http.Error(w, "forbidden", 403)
+		return
+	}
 	items, _ := a.Store.ListAuditEntries(r.Context(), t.ID)
-	a.render(w, r, "audit_log.html", map[string]any{"Title":"Audit log","User":u,"Tenant":t,"Items":items})
+	a.render(w, r, "audit_log.html", map[string]any{"Title": "Audit log", "User": u, "Tenant": t, "Items": items})
 }
 
 func (a *App) QueuePage(w http.ResponseWriter, r *http.Request) {
 	u, t, _, ok := a.currentUserTenant(r)
-	if !ok { http.Redirect(w, r, "/login", 303); return }
+	if !ok {
+		http.Redirect(w, r, "/login", 303)
+		return
+	}
 	jobs, _ := a.Store.ListJobs(r.Context())
 	items := []QueueItem{}
 	summary := QueueSummary{}
@@ -774,42 +830,71 @@ func (a *App) AdminDeleteMembership(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin/users", 303)
 }
 
-
-
 func (a *App) QueueRequeue(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost || !a.ensureCSRF(r) { http.Error(w, "forbidden", 403); return }
+	if r.Method != http.MethodPost || !a.ensureCSRF(r) {
+		http.Error(w, "forbidden", 403)
+		return
+	}
 	_, _, m, ok := a.currentUserTenant(r)
-	if !ok { http.Redirect(w, r, "/login", 303); return }
-	if m.Role == models.RoleViewer { http.Error(w, "forbidden", 403); return }
+	if !ok {
+		http.Redirect(w, r, "/login", 303)
+		return
+	}
+	if m.Role == models.RoleViewer {
+		http.Error(w, "forbidden", 403)
+		return
+	}
 	tender, err := a.Store.GetTender(r.Context(), r.FormValue("tender_id"))
-	if err != nil { http.Error(w, err.Error(), 404); return }
-	if tender.DocumentURL == "" { http.Error(w, "no document url", 400); return }
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+	if tender.DocumentURL == "" {
+		http.Error(w, "no document url", 400)
+		return
+	}
 	tender.DocumentStatus = models.ExtractionQueued
 	_ = a.Store.UpsertTender(r.Context(), tender)
 	_ = a.Store.QueueJob(r.Context(), models.ExtractionJob{TenderID: tender.ID, DocumentURL: tender.DocumentURL, State: models.ExtractionQueued})
-	http.Redirect(w, r, "/queue", 303)
+	a.redirectAfterAction(w, r, "/queue", "success", "Job requeued")
 }
 
 func (a *App) ResetWorkflow(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost || !a.ensureCSRF(r) { http.Error(w, "forbidden", 403); return }
+	if r.Method != http.MethodPost || !a.ensureCSRF(r) {
+		http.Error(w, "forbidden", 403)
+		return
+	}
 	_, t, m, ok := a.currentUserTenant(r)
-	if !ok { http.Redirect(w, r, "/login", 303); return }
-	if m.Role == models.RoleViewer { http.Error(w, "forbidden", 403); return }
-	_ = a.Store.UpsertWorkflow(r.Context(), models.Workflow{
+	if !ok {
+		http.Redirect(w, r, "/login", 303)
+		return
+	}
+	if m.Role == models.RoleViewer {
+		http.Error(w, "forbidden", 403)
+		return
+	}
+	wf := models.Workflow{
 		TenantID: t.ID, TenderID: r.FormValue("tender_id"),
 		Status: "", Priority: "", AssignedUser: "", Notes: "",
-	})
-	http.Redirect(w, r, "/tenders", 303)
+	}
+	_ = a.Store.UpsertWorkflow(r.Context(), wf)
+	a.addWorkflowSnapshot(r.Context(), actionContext{Tenant: t, Member: m}, wf)
+	a.redirectAfterAction(w, r, "/tenders", "success", "Workflow reset")
 }
 
 func (a *App) RemoveBookmark(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost || !a.ensureCSRF(r) { http.Error(w, "forbidden", 403); return }
+	if r.Method != http.MethodPost || !a.ensureCSRF(r) {
+		http.Error(w, "forbidden", 403)
+		return
+	}
 	u, t, _, ok := a.currentUserTenant(r)
-	if !ok { http.Redirect(w, r, "/login", 303); return }
+	if !ok {
+		http.Redirect(w, r, "/login", 303)
+		return
+	}
 	_ = a.Store.ToggleBookmark(r.Context(), models.Bookmark{TenantID: t.ID, UserID: u.ID, TenderID: r.FormValue("tender_id")})
-	http.Redirect(w, r, "/tenders", 303)
+	a.redirectAfterAction(w, r, "/tenders", "success", "Bookmark removed")
 }
-
 
 func (a *App) RunWorker() error {
 	return worker.Runner{Store: a.Store, Sources: a.Sources, Extractor: a.Extractor, SyncEvery: time.Duration(a.Config.WorkerSyncMinutes) * time.Minute, LoopEvery: time.Duration(a.Config.WorkerLoopSeconds) * time.Second}.Run(context.Background())

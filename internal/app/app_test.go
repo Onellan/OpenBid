@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"tenderhub-za/internal/auth"
 	"tenderhub-za/internal/models"
@@ -12,9 +13,13 @@ import (
 )
 
 func newTestApp(t *testing.T) *App {
+	t.Setenv("DATA_PATH", filepath.Join(t.TempDir(), "store.db"))
 	a, err := New()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if closer, ok := a.Store.(interface{ Close() error }); ok {
+		t.Cleanup(func() { _ = closer.Close() })
 	}
 	return a
 }
@@ -92,5 +97,40 @@ func TestSwitchTenantRejectsUnauthorizedTenant(t *testing.T) {
 	a.SwitchTenant(w, req)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("expected forbidden, got %d", w.Code)
+	}
+}
+func TestLoginPageRendersSignInContent(t *testing.T) {
+	a := newTestApp(t)
+	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Welcome back") || !strings.Contains(body, "Sign in to OpenBid") {
+		t.Fatalf("login page missing sign-in content: %s", body)
+	}
+	if strings.Contains(body, "Filters and search") {
+		t.Fatalf("login page rendered tenders content")
+	}
+}
+
+func TestTendersPageRendersTendersContent(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := adminSession(t, a)
+	req := httptest.NewRequest(http.MethodGet, "/tenders", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Filters and search") || !strings.Contains(body, "Bulk actions") {
+		t.Fatalf("tenders page missing expected workspace content: %s", body)
+	}
+	if strings.Contains(body, "Welcome back") {
+		t.Fatalf("tenders page rendered login content")
 	}
 }

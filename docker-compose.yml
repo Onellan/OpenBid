@@ -1,11 +1,10 @@
-version: "3.9"
 services:
   app:
     build: { context: ., dockerfile: Dockerfile.app }
     environment:
       APP_ADDR: ":8080"
       DATA_PATH: "/app/data/store.db"
-      SECRET_KEY: "${SECRET_KEY}"
+      SECRET_KEY: "${SECRET_KEY:-local-dev-secret-change-me}"
       SECURE_COOKIES: "${SECURE_COOKIES:-false}"
       LOW_MEMORY_MODE: "${LOW_MEMORY_MODE:-true}"
       ANALYTICS_ENABLED: "${ANALYTICS_ENABLED:-false}"
@@ -19,7 +18,7 @@ services:
     command: [ "tenderhub-worker" ]
     environment:
       DATA_PATH: "/app/data/store.db"
-      SECRET_KEY: "${SECRET_KEY}"
+      SECRET_KEY: "${SECRET_KEY:-local-dev-secret-change-me}"
       LOW_MEMORY_MODE: "${LOW_MEMORY_MODE:-true}"
       ANALYTICS_ENABLED: "${ANALYTICS_ENABLED:-false}"
       EXTRACTOR_URL: "http://extractor:9090"

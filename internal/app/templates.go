@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
 )
 
 func dict(values ...any) (map[string]any, error) {
@@ -22,14 +25,89 @@ func dict(values ...any) (map[string]any, error) {
 	return out, nil
 }
 
-func parseTemplates() (*template.Template, error) {
-	return template.New("").
-		Funcs(template.FuncMap{
-			"dict": dict,
-			"slice": func(values ...any) []any { return values },
-			"condTone": func(state string) string { switch state { case "completed": return "success"; case "failed": return "danger"; case "processing", "queued", "retry": return "warning"; default: return "info" } },
-		}).
-		ParseGlob(filepath.Join("web", "templates", "*.html"))
+func locateTemplateDir() (string, error) {
+	candidates := []string{filepath.Join("web", "templates")}
+	if _, filename, _, ok := runtime.Caller(0); ok {
+		candidates = append(candidates, filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", "web", "templates")))
+	}
+	for _, dir := range candidates {
+		if info, err := os.Stat(filepath.Join(dir, "base.html")); err == nil && !info.IsDir() {
+			return dir, nil
+		}
+	}
+	return "", fmt.Errorf("no templates found in known locations")
+}
+
+func templateFuncs() template.FuncMap {
+	return template.FuncMap{
+		"dict":  dict,
+		"slice": func(values ...any) []any { return values },
+		"condTone": func(state string) string {
+			switch state {
+			case "completed":
+				return "success"
+			case "failed":
+				return "danger"
+			case "processing", "queued", "retry":
+				return "warning"
+			default:
+				return "info"
+			}
+		},
+	}
+}
+
+func parseTemplates() (map[string]*template.Template, error) {
+	dir, err := locateTemplateDir()
+	if err != nil {
+		return nil, err
+	}
+
+	sharedNames := []string{
+		"base.html",
+		"components.html",
+		"patterns.html",
+		"admin_partials.html",
+		"domain_partials.html",
+		"interaction_partials.html",
+		"opportunity_partials.html",
+	}
+	sharedSet := map[string]bool{}
+	sharedFiles := make([]string, 0, len(sharedNames))
+	for _, name := range sharedNames {
+		sharedSet[name] = true
+		sharedFiles = append(sharedFiles, filepath.Join(dir, name))
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	pageNames := []string{}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if filepath.Ext(name) != ".html" || sharedSet[name] {
+			continue
+		}
+		pageNames = append(pageNames, name)
+	}
+	sort.Strings(pageNames)
+
+	pages := make(map[string]*template.Template, len(pageNames))
+	for _, pageName := range pageNames {
+		files := append([]string{}, sharedFiles...)
+		files = append(files, filepath.Join(dir, pageName))
+		tpl, err := template.New("").Funcs(templateFuncs()).ParseFiles(files...)
+		if err != nil {
+			return nil, err
+		}
+		pages[pageName] = tpl
+	}
+	return pages, nil
 }
 
 func routes(a *App) http.Handler {

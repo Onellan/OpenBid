@@ -3,8 +3,8 @@ package app
 import (
 	"os"
 	"path/filepath"
-	"testing"
 	"tenderhub-za/internal/store"
+	"testing"
 )
 
 func TestSeededStartupSQLite(t *testing.T) {
@@ -16,6 +16,9 @@ func TestSeededStartupSQLite(t *testing.T) {
 	a, err := New()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if closer, ok := a.Store.(interface{ Close() error }); ok {
+		defer closer.Close()
 	}
 	users, err := a.Store.ListUsers(t.Context())
 	if err != nil || len(users) == 0 {
