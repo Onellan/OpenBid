@@ -35,7 +35,23 @@ func TestPaginationOnTendersPage(t *testing.T) {
 func TestTenderDetailAndAuditLogPages(t *testing.T) {
 	a := newTestApp(t)
 	user, tenant, cookie, _ := adminSession(t, a)
-	_ = a.Store.UpsertTender(context.Background(), models.Tender{ID: "detail1", Title: "Detail Tender", Issuer: "City", SourceKey: "treasury", ExtractedFacts: map[string]string{"briefing": "yes"}})
+	_ = a.Store.UpsertTender(context.Background(), models.Tender{
+		ID:           "detail1",
+		Title:        "Detail Tender",
+		Issuer:       "City",
+		SourceKey:    "treasury",
+		TenderNumber: "TH-001",
+		TenderType:   "Request for Bid",
+		Documents:    []models.TenderDocument{{URL: "https://example.org/doc.pdf", FileName: "doc.pdf", Role: "notice", Source: "listing"}},
+		Contacts:     []models.TenderContact{{Role: "listing_contact", Name: "Jane Doe", Email: "jane@example.com"}},
+		Briefings:    []models.TenderBriefing{{Label: "site_briefing", DateTime: "2026-04-10 10:00", Required: true}},
+		Requirements: []models.TenderRequirement{{Category: "registration", Description: "Active CSD registration", Required: true}},
+		PageFacts:    map[string]string{"briefing": "yes"},
+		DocumentFacts: map[string]string{
+			"cidb_hints": "CIDB 3GB",
+		},
+		ExtractedFacts: map[string]string{"briefing": "yes", "cidb_hints": "CIDB 3GB"},
+	})
 	_ = a.Store.UpsertWorkflow(context.Background(), models.Workflow{TenantID: tenant.ID, TenderID: "detail1", Status: "reviewing"})
 	_ = a.Store.AddWorkflowEvent(context.Background(), models.WorkflowEvent{TenantID: tenant.ID, TenderID: "detail1", ChangedBy: user.ID, Status: "reviewing"})
 	_ = a.Store.AddAuditEntry(context.Background(), models.AuditEntry{TenantID: tenant.ID, UserID: user.ID, Action: "update", Entity: "workflow", EntityID: "detail1", Summary: "Workflow updated"})
@@ -45,6 +61,10 @@ func TestTenderDetailAndAuditLogPages(t *testing.T) {
 	a.TenderDetail(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Structured tender data") || !strings.Contains(body, "Page-derived facts") || !strings.Contains(body, "Document-derived facts") || !strings.Contains(body, "Jane Doe") {
+		t.Fatalf("expected structured tender details in response: %s", body)
 	}
 	req = httptest.NewRequest(http.MethodGet, "/audit-log", nil)
 	req.AddCookie(cookie)

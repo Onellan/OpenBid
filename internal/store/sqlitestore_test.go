@@ -101,3 +101,81 @@ func TestSQLiteConcurrentWrites(t *testing.T) {
 		t.Fatalf("expected >=15 tenders, got total=%d len=%d", total, len(items))
 	}
 }
+
+func TestSQLiteTenderRoundTripsStructuredFields(t *testing.T) {
+	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	original := models.Tender{
+		ID:           "rich-1",
+		Title:        "Structured Tender",
+		Issuer:       "Example Works",
+		SourceKey:    "etenders",
+		Status:       "open",
+		TenderType:   "Request for Bid(Open-Tender)",
+		ValidityDays: 90,
+		PageFacts: map[string]string{
+			"closing_details": "2026-05-11 11:00",
+		},
+		DocumentFacts: map[string]string{
+			"cidb_hints": "CIDB 3GB",
+		},
+		Location: models.TenderLocation{
+			Town:     "Komani",
+			Province: "Eastern Cape",
+		},
+		Submission: models.TenderSubmission{
+			Method:            "physical",
+			ElectronicAllowed: false,
+			PhysicalAllowed:   true,
+		},
+		Evaluation: models.TenderEvaluation{
+			Method:                    "80/20",
+			PricePoints:               80,
+			PreferencePoints:          20,
+			MinimumFunctionalityScore: 60,
+		},
+		Contacts: []models.TenderContact{{
+			Role:      "listing_contact",
+			Name:      "Ms K Mbuqwa",
+			Email:     "khutala.mbuqwa@ecagriculture.gov.za",
+			Telephone: "083-262-2633",
+		}},
+		Briefings: []models.TenderBriefing{{
+			Label:    "site_inspection",
+			DateTime: "2026-04-16 10:00",
+			Required: true,
+		}},
+		Documents: []models.TenderDocument{{
+			URL:      "https://example.org/doc.pdf",
+			FileName: "doc.pdf",
+			Role:     "notice",
+			Source:   "listing",
+		}},
+		Requirements: []models.TenderRequirement{{
+			Category:    "registration",
+			Description: "Active CSD registration",
+			Required:    true,
+		}},
+	}
+	if err := s.UpsertTender(ctx, original); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.GetTender(ctx, "rich-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Evaluation.Method != "80/20" || stored.Location.Town != "Komani" {
+		t.Fatalf("expected structured fields to round-trip, got %#v", stored)
+	}
+	if len(stored.Documents) != 1 || stored.Documents[0].FileName != "doc.pdf" {
+		t.Fatalf("expected documents to round-trip, got %#v", stored.Documents)
+	}
+	if stored.DocumentFacts["cidb_hints"] != "CIDB 3GB" || stored.PageFacts["closing_details"] == "" {
+		t.Fatalf("expected fact maps to round-trip, got page=%#v doc=%#v", stored.PageFacts, stored.DocumentFacts)
+	}
+}

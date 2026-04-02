@@ -16,7 +16,7 @@ func TestETendersAdapterFetchMapsRowsAcrossPages(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/Home/PaginatedTenderOpportunities" && r.URL.Query().Get("start") == "0":
-			_, _ = w.Write([]byte(`{"recordsFiltered":2,"data":[{"id":101,"tender_No":"ABC-1","description":"Civil roads maintenance","category":"Services: Civil","type":"Request for Quotation","department":"City Works","organ_of_State":"City Works","status":"Published","closing_Date":"2026-04-17T11:00:00","date_Published":"2026-04-03T00:00:00","compulsory_briefing_session":"2026-04-10T09:30:00","briefingVenue":"Main Hall","conditions":"CIDB 6CE","contactPerson":"Jane Doe","email":"jane@example.org","telephone":"0123456789","fax":"0123456790","province":"Gauteng","delivery":"Pretoria Depot","briefingSession":true,"briefingCompulsory":true,"eSubmission":false,"supportDocument":[{"supportDocumentID":"doc-1","fileName":"spec.pdf","extension":".pdf"}]}]}`))
+			_, _ = w.Write([]byte(`{"recordsFiltered":2,"data":[{"id":101,"tender_No":"ABC-1","description":"Civil roads maintenance","category":"Services: Civil","type":"Request for Quotation","department":"City Works","organ_of_State":"City Works","status":"Published","closing_Date":"2026-04-17T11:00:00","date_Published":"2026-04-03T00:00:00","compulsory_briefing_session":"2026-04-10T09:30:00","briefingVenue":"Main Hall","streetname":"123 Main","surburb":"CBD","town":"Pretoria","code":"0001","conditions":"CIDB 6CE","contactPerson":"Jane Doe","email":"jane@example.org","telephone":"0123456789","fax":"0123456790","province":"Gauteng","delivery":"Pretoria Depot","briefingSession":true,"briefingCompulsory":true,"validity":90,"eSubmission":false,"twoEnvelopeSubmission":true,"supportDocument":[{"supportDocumentID":"doc-1","fileName":"spec.pdf","extension":".pdf"}]}]}`))
 		case r.URL.Path == "/Home/PaginatedTenderOpportunities" && r.URL.Query().Get("start") == "1":
 			_, _ = w.Write([]byte(`{"recordsFiltered":2,"data":[{"id":102,"tender_No":"XYZ-2","description":"Electrical substation upgrade","category":"Services: Electrical","type":"Request for Bid(Open-Tender)","department":"Provincial Works","organ_of_State":"Provincial Works","status":"Published","closing_Date":"2026-04-20T12:00:00","date_Published":"2026-04-04T00:00:00","province":"KwaZulu-Natal","delivery":"Durban","briefingSession":false,"briefingCompulsory":false,"eSubmission":true,"supportDocument":[]}]}`))
 		default:
@@ -52,6 +52,21 @@ func TestETendersAdapterFetchMapsRowsAcrossPages(t *testing.T) {
 	if first.ExtractedFacts["briefing_details"] == "" || first.ExtractedFacts["contact_details"] == "" {
 		t.Fatalf("expected extracted facts to be populated: %#v", first.ExtractedFacts)
 	}
+	if first.TenderType != "Request for Quotation" || first.ValidityDays != 90 {
+		t.Fatalf("expected typed tender metadata, got %#v", first)
+	}
+	if len(first.Documents) != 1 || first.Documents[0].FileName != "spec.pdf" {
+		t.Fatalf("expected document metadata, got %#v", first.Documents)
+	}
+	if len(first.Contacts) != 1 || first.Contacts[0].Name != "Jane Doe" {
+		t.Fatalf("expected contact metadata, got %#v", first.Contacts)
+	}
+	if len(first.Briefings) != 1 || !first.Briefings[0].Required {
+		t.Fatalf("expected briefing metadata, got %#v", first.Briefings)
+	}
+	if first.Location.Town != "Pretoria" || first.Submission.TwoEnvelope != true {
+		t.Fatalf("expected location/submission metadata, got %#v %#v", first.Location, first.Submission)
+	}
 
 	second := items[1]
 	if second.ExternalID != "102" || second.Issuer != "Provincial Works" {
@@ -62,6 +77,9 @@ func TestETendersAdapterFetchMapsRowsAcrossPages(t *testing.T) {
 	}
 	if second.ExtractedFacts["submission_details"] != "e_submission=yes; delivery=Durban" {
 		t.Fatalf("unexpected submission details: %s", second.ExtractedFacts["submission_details"])
+	}
+	if second.Submission.ElectronicAllowed != true || second.Submission.Method != "electronic" {
+		t.Fatalf("expected electronic submission metadata, got %#v", second.Submission)
 	}
 }
 

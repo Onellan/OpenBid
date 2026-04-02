@@ -103,14 +103,27 @@ func TestPasswordChangeFlow(t *testing.T) {
 func TestExportCSVIncludesWorkflowColumns(t *testing.T) {
 	a := newTestApp(t)
 	_, tenant, cookie, _ := adminSession(t, a)
-	_ = a.Store.UpsertTender(t.Context(), models.Tender{ID: "csv1", Title: "Electrical", Issuer: "City", SourceKey: "treasury", DocumentStatus: models.ExtractionCompleted, ExtractedFacts: map[string]string{"closing_details": "close soon"}})
+	_ = a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:             "csv1",
+		Title:          "Electrical",
+		Issuer:         "City",
+		SourceKey:      "treasury",
+		TenderType:     "Request for Bid",
+		ValidityDays:   90,
+		DocumentStatus: models.ExtractionCompleted,
+		ExtractedFacts: map[string]string{"closing_details": "close soon"},
+		PageFacts:      map[string]string{"briefing_details": "listing briefing"},
+		DocumentFacts:  map[string]string{"cidb_hints": "CIDB 6EP"},
+		Documents:      []models.TenderDocument{{URL: "https://example.org/doc.pdf", FileName: "doc.pdf", Role: "notice"}},
+		Contacts:       []models.TenderContact{{Name: "Jane Doe", Role: "listing_contact"}},
+	})
 	_ = a.Store.UpsertWorkflow(t.Context(), models.Workflow{TenantID: tenant.ID, TenderID: "csv1", Status: "reviewing", Priority: "high", AssignedUser: "alice"})
 	req := httptest.NewRequest(http.MethodGet, "/tenders/export.csv", nil)
 	req.AddCookie(cookie)
 	w := httptest.NewRecorder()
 	a.ExportCSV(w, req)
 	body := w.Body.String()
-	if !strings.Contains(body, "workflow_status") || !strings.Contains(body, "close soon") || !strings.Contains(body, "reviewing") {
+	if !strings.Contains(body, "workflow_status") || !strings.Contains(body, "tender_type") || !strings.Contains(body, "documents_json") || !strings.Contains(body, "close soon") || !strings.Contains(body, "reviewing") || !strings.Contains(body, "CIDB 6EP") {
 		t.Fatalf("csv missing enriched fields: %s", body)
 	}
 }
@@ -186,6 +199,38 @@ func TestAdminCreateETendersSourceStoresConfig(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected stored etenders source config, got %#v", configs)
+	}
+}
+
+func TestAdminCreatePublicWorksSourceStoresConfig(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, csrf := adminSession(t, a)
+	form := url.Values{
+		"csrf_token": {csrf},
+		"name":       {"DPWI"},
+		"feed_url":   {"http://www.publicworks.gov.za/tenders.html#gsc.tab=0"},
+		"type":       {"publicworks_portal"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/sources/create", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", w.Code)
+	}
+	configs, err := a.Store.ListSourceConfigs(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, cfg := range configs {
+		if cfg.Key == "dpwi" && cfg.Type == "publicworks_portal" && cfg.FeedURL == "http://www.publicworks.gov.za/tenders.html#gsc.tab=0" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected stored public works source config, got %#v", configs)
 	}
 }
 

@@ -3,47 +3,167 @@
 {{template "page_hero" (dict
   "eyebrow" "Opportunity detail"
   "title" .Item.Title
-  "copy" "Review extracted document details, workflow state, and change history for this opportunity."
+  "copy" "Review source metadata, document-derived fields, workflow state, and change history for this opportunity."
 )}}
 <div style="margin:14px 0">{{template "flash_messages" .}}</div>
 <div class="split">
   <section class="card">
-    {{template "card_header" (dict "title" "Opportunity summary" "subtitle" "Core source and tender information.")}}
+    {{template "card_header" (dict "title" "Opportunity summary" "subtitle" "Core normalized tender information across source and document data.")}}
     <div class="list" style="margin-top:14px">
       <div class="card-soft"><strong>Issuer</strong><div class="footer-note">{{.Item.Issuer}}</div></div>
+      <div class="card-soft"><strong>Tender number</strong><div class="footer-note">{{.Item.TenderNumber}}</div></div>
+      <div class="card-soft"><strong>Tender type</strong><div class="footer-note">{{.Item.TenderType}}</div></div>
       <div class="card-soft"><strong>Category</strong><div class="footer-note">{{.Item.Category}}</div></div>
+      <div class="card-soft"><strong>Province</strong><div class="footer-note">{{.Item.Province}}</div></div>
+      <div class="card-soft"><strong>Published date</strong><div class="footer-note">{{.Item.PublishedDate}}</div></div>
       <div class="card-soft"><strong>Closing date</strong><div class="footer-note">{{.Item.ClosingDate}}</div></div>
+      <div class="card-soft"><strong>Validity</strong><div class="footer-note">{{if .Item.ValidityDays}}{{.Item.ValidityDays}} days{{else}}Not stated{{end}}</div></div>
+      <div class="card-soft"><strong>CIDB grading</strong><div class="footer-note">{{if .Item.CIDBGrading}}{{.Item.CIDBGrading}}{{else}}Not captured yet{{end}}</div></div>
       <div class="card-soft"><strong>Document status</strong><div class="footer-note">{{.Item.DocumentStatus}}</div></div>
     </div>
+    {{if .Item.Scope}}
+    <div class="card-soft" style="margin-top:14px"><strong>Scope</strong><p class="footer-note" style="margin-top:8px">{{.Item.Scope}}</p></div>
+    {{end}}
     {{if .Item.Excerpt}}
     <div class="card-soft" style="margin-top:14px"><strong>Extracted summary</strong><p class="footer-note" style="margin-top:8px">{{.Item.Excerpt}}</p></div>
     {{end}}
-    {{if .Item.ExtractedFacts}}
     <div class="card-soft" style="margin-top:14px">
-      <strong>Extracted facts</strong>
+      <strong>Source links</strong>
+      <div class="actions" style="margin-top:10px">
+        <a class="button secondary" href="{{.Item.OriginalURL}}" target="_blank" rel="noreferrer">View source page</a>
+        {{if .Item.DocumentURL}}<a class="button secondary" href="{{.Item.DocumentURL}}" target="_blank" rel="noreferrer">View primary document</a>{{end}}
+      </div>
+    </div>
+  </section>
+  <section class="card">
+    {{template "card_header" (dict "title" "Structured tender data" "subtitle" "Typed fields captured from the listing and the extracted documents.")}}
+    <div class="list" style="margin-top:14px">
+      <div class="card-soft">
+        <strong>Submission</strong>
+        <div class="footer-note" style="margin-top:8px">
+          Method: {{if .Item.Submission.Method}}{{.Item.Submission.Method}}{{else}}Not stated{{end}}<br>
+          Electronic: {{if .Item.Submission.ElectronicAllowed}}Yes{{else}}No{{end}}<br>
+          Physical: {{if .Item.Submission.PhysicalAllowed}}Yes{{else}}No{{end}}<br>
+          Two-envelope: {{if .Item.Submission.TwoEnvelope}}Yes{{else}}No{{end}}<br>
+          {{if .Item.Submission.Address}}Address: {{.Item.Submission.Address}}<br>{{end}}
+          {{if .Item.Submission.DeliveryLocation}}Delivery/site: {{.Item.Submission.DeliveryLocation}}<br>{{end}}
+          {{if .Item.Submission.Instructions}}Instructions: {{.Item.Submission.Instructions}}{{end}}
+        </div>
+      </div>
+      <div class="card-soft">
+        <strong>Location</strong>
+        <div class="footer-note" style="margin-top:8px">
+          {{if .Item.Location.Site}}Site: {{.Item.Location.Site}}<br>{{end}}
+          {{if .Item.Location.DeliveryLocation}}Delivery: {{.Item.Location.DeliveryLocation}}<br>{{end}}
+          {{if .Item.Location.Street}}Street: {{.Item.Location.Street}}<br>{{end}}
+          {{if .Item.Location.Suburb}}Suburb: {{.Item.Location.Suburb}}<br>{{end}}
+          {{if .Item.Location.Town}}Town: {{.Item.Location.Town}}<br>{{end}}
+          {{if .Item.Location.PostalCode}}Postal code: {{.Item.Location.PostalCode}}<br>{{end}}
+          {{if .Item.Location.Province}}Province: {{.Item.Location.Province}}{{end}}
+        </div>
+      </div>
+      <div class="card-soft">
+        <strong>Evaluation</strong>
+        <div class="footer-note" style="margin-top:8px">
+          {{if .Item.Evaluation.Method}}Method: {{.Item.Evaluation.Method}}<br>{{end}}
+          {{if .Item.Evaluation.PricePoints}}Price points: {{.Item.Evaluation.PricePoints}}<br>{{end}}
+          {{if .Item.Evaluation.PreferencePoints}}Preference points: {{.Item.Evaluation.PreferencePoints}}<br>{{end}}
+          {{if .Item.Evaluation.MinimumFunctionalityScore}}Minimum functionality: {{.Item.Evaluation.MinimumFunctionalityScore}}%<br>{{end}}
+          {{if .Item.Evaluation.Notes}}Notes: {{.Item.Evaluation.Notes}}{{end}}
+        </div>
+      </div>
+    </div>
+    {{if .Item.Documents}}
+    <div class="card-soft" style="margin-top:14px">
+      <strong>Documents</strong>
       <div class="table-wrap" style="margin-top:10px">
         <table>
-          <tr><th>Field</th><th>Value</th></tr>
-          {{range $k, $v := .Item.ExtractedFacts}}
-          <tr><td>{{$k}}</td><td>{{$v}}</td></tr>
+          <tr><th>Role</th><th>Name</th><th>Source</th><th>Type</th><th>Link</th></tr>
+          {{range .Item.Documents}}
+          <tr>
+            <td>{{.Role}}</td>
+            <td>{{.FileName}}</td>
+            <td>{{.Source}}</td>
+            <td>{{.MIMEType}}</td>
+            <td><a href="{{.URL}}" target="_blank" rel="noreferrer">Open</a></td>
+          </tr>
           {{end}}
         </table>
       </div>
     </div>
+    {{end}}
+    {{if .Item.Contacts}}
+    <div class="card-soft" style="margin-top:14px">
+      <strong>Contacts</strong>
+      <div class="table-wrap" style="margin-top:10px">
+        <table>
+          <tr><th>Role</th><th>Name</th><th>Email</th><th>Telephone</th><th>Fax</th></tr>
+          {{range .Item.Contacts}}
+          <tr><td>{{.Role}}</td><td>{{.Name}}</td><td>{{.Email}}</td><td>{{.Telephone}}</td><td>{{.Fax}}</td></tr>
+          {{end}}
+        </table>
+      </div>
+    </div>
+    {{end}}
+    {{if .Item.Briefings}}
+    <div class="card-soft" style="margin-top:14px">
+      <strong>Briefing sessions</strong>
+      <div class="table-wrap" style="margin-top:10px">
+        <table>
+          <tr><th>Type</th><th>When</th><th>Venue</th><th>Required</th><th>Notes</th></tr>
+          {{range .Item.Briefings}}
+          <tr><td>{{.Label}}</td><td>{{.DateTime}}</td><td>{{.Venue}}</td><td>{{if .Required}}Yes{{else}}No{{end}}</td><td>{{.Notes}}</td></tr>
+          {{end}}
+        </table>
+      </div>
+    </div>
+    {{end}}
+    {{if .Item.Requirements}}
+    <div class="card-soft" style="margin-top:14px">
+      <strong>Requirements and compliance</strong>
+      <div class="table-wrap" style="margin-top:10px">
+        <table>
+          <tr><th>Category</th><th>Description</th><th>Required</th></tr>
+          {{range .Item.Requirements}}
+          <tr><td>{{.Category}}</td><td>{{.Description}}</td><td>{{if .Required}}Yes{{else}}No{{end}}</td></tr>
+          {{end}}
+        </table>
+      </div>
+    </div>
+    {{end}}
+    {{if .FactSections}}
+    <div class="card-soft" style="margin-top:14px">
+      <strong>Source and extraction facts</strong>
+      <div class="list" style="margin-top:10px">
+        {{range .FactSections}}
+        <div class="card-soft">
+          <strong>{{.Title}}</strong>
+          <div class="table-wrap" style="margin-top:10px">
+            <table>
+              <tr><th>Field</th><th>Value</th></tr>
+              {{range $k, $v := .Facts}}
+              <tr><td>{{$k}}</td><td>{{$v}}</td></tr>
+              {{end}}
+            </table>
+          </div>
+        </div>
+        {{end}}
+      </div>
+    </div>
     {{else}}
-    {{template "empty_state" "No extracted facts are available yet for this document."}}
+    {{template "empty_state" "No page-derived or document-derived facts are available yet for this opportunity."}}
     {{end}}
   </section>
-  <section class="card">
-    {{template "card_header" (dict "title" "Current workflow" "subtitle" "Live workflow state for this opportunity.")}}
-    <div class="list" style="margin-top:14px">
-      <div class="card-soft"><strong>Status</strong><div class="footer-note">{{.Workflow.Status}}</div></div>
-      <div class="card-soft"><strong>Priority</strong><div class="footer-note">{{.Workflow.Priority}}</div></div>
-      <div class="card-soft"><strong>Assigned user</strong><div class="footer-note">{{.Workflow.AssignedUser}}</div></div>
-      <div class="card-soft"><strong>Notes</strong><div class="footer-note">{{.Workflow.Notes}}</div></div>
-    </div>
-  </section>
 </div>
+<section class="card" style="margin-top:18px">
+  {{template "card_header" (dict "title" "Current workflow" "subtitle" "Live workflow state for this opportunity.")}}
+  <div class="list" style="margin-top:14px">
+    <div class="card-soft"><strong>Status</strong><div class="footer-note">{{.Workflow.Status}}</div></div>
+    <div class="card-soft"><strong>Priority</strong><div class="footer-note">{{.Workflow.Priority}}</div></div>
+    <div class="card-soft"><strong>Assigned user</strong><div class="footer-note">{{.Workflow.AssignedUser}}</div></div>
+    <div class="card-soft"><strong>Notes</strong><div class="footer-note">{{.Workflow.Notes}}</div></div>
+  </div>
+</section>
 <section class="card" style="margin-top:18px">
   {{template "card_header" (dict "title" "Workflow history" "subtitle" "Chronological record of workflow updates.")}}
   <div class="table-wrap" style="margin-top:14px">

@@ -11,6 +11,7 @@ import (
 const (
 	TypeJSONFeed       = "json_feed"
 	TypeETendersPortal = "etenders_portal"
+	TypePublicWorks    = "publicworks_portal"
 )
 
 type Adapter interface {
@@ -20,6 +21,17 @@ type Adapter interface {
 type Registry struct{ Adapters []Adapter }
 
 func NewRegistry(adapters ...Adapter) Registry { return Registry{Adapters: adapters} }
+
+func cloneFacts(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
 
 func NormalizeKey(raw string) string {
 	raw = strings.ToLower(strings.TrimSpace(raw))
@@ -50,6 +62,15 @@ func DefaultConfigs(feedURL string) []models.SourceConfig {
 	}}
 }
 
+func IsSupportedType(sourceType string) bool {
+	switch strings.TrimSpace(sourceType) {
+	case "", TypeJSONFeed, TypeETendersPortal, TypePublicWorks:
+		return true
+	default:
+		return false
+	}
+}
+
 func AdapterFromConfig(cfg models.SourceConfig) (Adapter, error) {
 	key := NormalizeKey(cfg.Key)
 	if key == "" {
@@ -60,6 +81,8 @@ func AdapterFromConfig(cfg models.SourceConfig) (Adapter, error) {
 		return NewFeedAdapter(key, cfg.FeedURL), nil
 	case TypeETendersPortal:
 		return NewETendersAdapter(key, cfg.FeedURL), nil
+	case TypePublicWorks:
+		return NewPublicWorksAdapter(key, cfg.FeedURL), nil
 	default:
 		return nil, fmt.Errorf("unsupported source type %q", cfg.Type)
 	}

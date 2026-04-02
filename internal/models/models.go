@@ -24,12 +24,62 @@ const (
 	ExtractionFailed     ExtractionState = "failed"
 )
 
+type TenderDocument struct {
+	URL, FileName, MIMEType, Role, Source, LastModified string
+	SizeBytes                                           int64
+}
+
+type TenderContact struct {
+	Role, Name, Email, Telephone, Fax, Mobile string
+}
+
+type TenderBriefing struct {
+	Label, DateTime, Venue, Address, Notes string
+	Required                               bool
+}
+
+type TenderSubmission struct {
+	Method, Address, DeliveryLocation, Instructions string
+	ElectronicAllowed, PhysicalAllowed              bool
+	TwoEnvelope                                     bool
+}
+
+type TenderEvaluation struct {
+	Method                    string
+	PricePoints               int
+	PreferencePoints          int
+	MinimumFunctionalityScore float64
+	Notes                     string
+}
+
+type TenderRequirement struct {
+	Category, Description string
+	Required              bool
+}
+
+type TenderLocation struct {
+	Site, DeliveryLocation, Street, Suburb, Town, PostalCode, Province, Coordinates string
+}
+
 type Tender struct {
 	ID, SourceKey, ExternalID, Title, Issuer, Province, Category, TenderNumber, PublishedDate, ClosingDate, Status, CIDBGrading, Summary, OriginalURL, DocumentURL, Excerpt string
 	EngineeringRelevant                                                                                                                                                     bool
 	RelevanceScore                                                                                                                                                          float64
+	TenderType                                                                                                                                                              string
+	Scope                                                                                                                                                                   string
+	ValidityDays                                                                                                                                                            int
 	DocumentStatus                                                                                                                                                          ExtractionState
 	ExtractedFacts                                                                                                                                                          map[string]string
+	PageFacts                                                                                                                                                               map[string]string
+	DocumentFacts                                                                                                                                                           map[string]string
+	SourceMetadata                                                                                                                                                          map[string]string
+	Location                                                                                                                                                                TenderLocation
+	Submission                                                                                                                                                              TenderSubmission
+	Evaluation                                                                                                                                                              TenderEvaluation
+	Contacts                                                                                                                                                                []TenderContact
+	Briefings                                                                                                                                                               []TenderBriefing
+	Documents                                                                                                                                                               []TenderDocument
+	Requirements                                                                                                                                                            []TenderRequirement
 	CreatedAt, UpdatedAt                                                                                                                                                    time.Time
 }
 type User struct {

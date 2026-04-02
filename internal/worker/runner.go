@@ -88,11 +88,35 @@ func (r Runner) processJobs(ctx context.Context) {
 		if t, err := r.Store.GetTender(ctx, job.TenderID); err == nil {
 			t.DocumentStatus = models.ExtractionCompleted
 			t.Excerpt = res.Excerpt
-			t.ExtractedFacts = res.Facts
+			t.DocumentFacts = cloneFactMap(res.Facts)
+			t.ExtractedFacts = mergeFactMaps(t.ExtractedFacts, t.PageFacts, t.DocumentFacts)
 			_ = r.Store.UpsertTender(ctx, t)
 		}
 		job.State = models.ExtractionCompleted
 		job.NextAttemptAt = time.Time{}
 		_ = r.Store.UpdateJob(ctx, job)
 	}
+}
+
+func cloneFactMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func mergeFactMaps(parts ...map[string]string) map[string]string {
+	out := map[string]string{}
+	for _, part := range parts {
+		for k, v := range part {
+			if v != "" {
+				out[k] = v
+			}
+		}
+	}
+	return out
 }

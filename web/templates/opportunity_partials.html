@@ -55,18 +55,19 @@
 
 {{define "opportunity_table"}}
 <table>
-  <tr><th>ID</th><th>Opportunity</th><th>Issuer</th><th>Closing</th><th>Workflow</th><th>Document</th></tr>
+  <tr><th>ID</th><th>Opportunity</th><th>Issuer</th><th>Type</th><th>Closing</th><th>Workflow</th><th>Document</th></tr>
   {{range .Items}}
   <tr>
     <td class="small mono">{{.ID}}</td>
-    <td>{{.Title}}</td>
+    <td>{{.Title}}<div class="footer-note mono" style="margin-top:6px">{{.TenderNumber}}</div></td>
     <td>{{.Issuer}}</td>
+    <td>{{if .TenderType}}{{.TenderType}}{{else}}Not set{{end}}</td>
     <td>{{.ClosingDate}}</td>
     <td>{{with index $.Workflows .ID}}{{.Status}} / {{.Priority}}{{end}}</td>
-    <td>{{.DocumentStatus}}</td>
+    <td>{{.DocumentStatus}}<div class="footer-note" style="margin-top:6px">{{len .Documents}} docs</div></td>
   </tr>
   {{else}}
-  <tr><td colspan="6">{{template "empty_state" "No opportunities matched your filters."}}</td></tr>
+  <tr><td colspan="7">{{template "empty_state" "No opportunities matched your filters."}}</td></tr>
   {{end}}
 </table>
 {{end}}
@@ -74,7 +75,9 @@
 {{define "opportunity_status_cluster"}}
 <div class="actions">
   {{template "status_badge" (dict "tone" "info" "label" .Item.Status)}}
-  {{template "status_badge" (dict "tone" "info" "label" (printf "CIDB %s" .Item.CIDBGrading))}}
+  {{if .Item.CIDBGrading}}{{template "status_badge" (dict "tone" "info" "label" (printf "CIDB %s" .Item.CIDBGrading))}}{{end}}
+  {{if .Item.TenderType}}{{template "status_badge" (dict "tone" "info" "label" .Item.TenderType)}}{{end}}
+  {{template "status_badge" (dict "tone" "info" "label" (printf "%d docs" (len .Item.Documents)))}}
   {{template "status_badge" (dict "tone" (condTone .Item.DocumentStatus) "label" (printf "Doc %s" .Item.DocumentStatus))}}
   {{with index .Root.Workflows .Item.ID}}{{if .Status}}{{template "status_badge" (dict "tone" "success" "label" (printf "Workflow %s" .Status))}}{{end}}{{if .Priority}}{{template "status_badge" (dict "tone" "warning" "label" (printf "Priority %s" .Priority))}}{{end}}{{end}}
   <a class="button secondary" href="/tenders/{{.Item.ID}}">Details</a>
@@ -142,6 +145,7 @@
       <div class="small mono">{{.Item.ID}}</div>
       <h2 class="card-title" style="font-size:20px;margin-top:8px">{{.Item.Title}}</h2>
       <p class="card-subtitle">{{.Item.Issuer}} · {{.Item.Province}} · {{.Item.Category}} · {{.Item.TenderNumber}}</p>
+      <p class="footer-note" style="margin:8px 0 0 0">Published {{.Item.PublishedDate}} · Closing {{.Item.ClosingDate}}{{if .Item.ValidityDays}} · Validity {{.Item.ValidityDays}} days{{end}}</p>
       <p>{{.Item.Summary}}</p>
       {{template "opportunity_status_cluster" .}}
       {{if .Item.Excerpt}}

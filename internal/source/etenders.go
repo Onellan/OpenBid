@@ -42,6 +42,10 @@ type eTendersOpportunity struct {
 	DatePublished             string                    `json:"date_Published"`
 	CompulsoryBriefingSession string                    `json:"compulsory_briefing_session"`
 	BriefingVenue             string                    `json:"briefingVenue"`
+	StreetName                string                    `json:"streetname"`
+	Suburb                    string                    `json:"surburb"`
+	Town                      string                    `json:"town"`
+	PostalCode                string                    `json:"code"`
 	Conditions                string                    `json:"conditions"`
 	ContactPerson             string                    `json:"contactPerson"`
 	Email                     string                    `json:"email"`
@@ -51,7 +55,9 @@ type eTendersOpportunity struct {
 	Delivery                  string                    `json:"delivery"`
 	BriefingSession           bool                      `json:"briefingSession"`
 	BriefingCompulsory        bool                      `json:"briefingCompulsory"`
+	Validity                  int                       `json:"validity"`
 	ESubmission               bool                      `json:"eSubmission"`
+	TwoEnvelopeSubmission     bool                      `json:"twoEnvelopeSubmission"`
 	SupportDocuments          []eTendersSupportDocument `json:"supportDocument"`
 }
 
@@ -148,11 +154,12 @@ func (a *ETendersAdapter) mapOpportunity(pageURL *url.URL, item eTendersOpportun
 	if issuer == "" {
 		issuer = strings.TrimSpace(item.OrganOfState)
 	}
+	documents := eTendersDocuments(pageURL, item.SupportDocuments)
 	documentURL := ""
-	documentNames := make([]string, 0, len(item.SupportDocuments))
-	if len(item.SupportDocuments) > 0 {
-		documentURL = eTendersDownloadURL(pageURL, item.SupportDocuments[0])
-		for _, doc := range item.SupportDocuments {
+	documentNames := make([]string, 0, len(documents))
+	if len(documents) > 0 {
+		documentURL = documents[0].URL
+		for _, doc := range documents {
 			if name := strings.TrimSpace(doc.FileName); name != "" {
 				documentNames = append(documentNames, name)
 			}
@@ -160,7 +167,7 @@ func (a *ETendersAdapter) mapOpportunity(pageURL *url.URL, item eTendersOpportun
 	}
 
 	relevanceInput := strings.Join([]string{item.Description, item.Category, issuer}, " ")
-	facts := map[string]string{
+	pageFacts := map[string]string{
 		"closing_details":    eTendersDateTime(item.ClosingDate),
 		"briefing_details":   eTendersBriefingDetails(item),
 		"submission_details": eTendersSubmissionDetails(item),
@@ -169,6 +176,43 @@ func (a *ETendersAdapter) mapOpportunity(pageURL *url.URL, item eTendersOpportun
 		"special_conditions": strings.TrimSpace(item.Conditions),
 		"delivery_location":  strings.TrimSpace(item.Delivery),
 		"document_names":     strings.Join(documentNames, "; "),
+	}
+	briefings := []models.TenderBriefing{}
+	if item.BriefingSession || strings.TrimSpace(item.CompulsoryBriefingSession) != "" || strings.TrimSpace(item.BriefingVenue) != "" {
+		briefings = append(briefings, models.TenderBriefing{
+			Label:    "clarification_meeting",
+			DateTime: eTendersDateTime(item.CompulsoryBriefingSession),
+			Venue:    strings.TrimSpace(item.BriefingVenue),
+			Address:  strings.TrimSpace(item.BriefingVenue),
+			Notes:    "Listing-provided briefing/session details",
+			Required: item.BriefingCompulsory,
+		})
+	}
+	contacts := []models.TenderContact{}
+	if item.ContactPerson != "" || item.Email != "" || item.Telephone != "" || item.Fax != "" {
+		contacts = append(contacts, models.TenderContact{
+			Role:      "listing_contact",
+			Name:      strings.TrimSpace(item.ContactPerson),
+			Email:     strings.TrimSpace(item.Email),
+			Telephone: strings.TrimSpace(item.Telephone),
+			Fax:       strings.TrimSpace(item.Fax),
+		})
+	}
+	location := models.TenderLocation{
+		DeliveryLocation: strings.TrimSpace(item.Delivery),
+		Street:           strings.TrimSpace(item.StreetName),
+		Suburb:           strings.TrimSpace(item.Suburb),
+		Town:             strings.TrimSpace(item.Town),
+		PostalCode:       strings.TrimSpace(item.PostalCode),
+		Province:         strings.TrimSpace(item.Province),
+	}
+	submissionMethod := "physical"
+	if item.ESubmission {
+		submissionMethod = "electronic"
+	}
+	sourceMetadata := map[string]string{
+		"organ_of_state": strings.TrimSpace(item.OrganOfState),
+		"department":     strings.TrimSpace(item.Department),
 	}
 
 	return models.Tender{
@@ -182,14 +226,57 @@ func (a *ETendersAdapter) mapOpportunity(pageURL *url.URL, item eTendersOpportun
 		PublishedDate:       eTendersDate(item.DatePublished),
 		ClosingDate:         eTendersSortableDateTime(item.ClosingDate),
 		Status:              strings.ToLower(strings.TrimSpace(item.Status)),
+		TenderType:          strings.TrimSpace(item.Type),
+		Scope:               strings.TrimSpace(item.Description),
+		ValidityDays:        item.Validity,
 		Summary:             strings.TrimSpace(item.Description),
 		OriginalURL:         strings.TrimSpace(pageURL.String()),
 		DocumentURL:         documentURL,
 		EngineeringRelevant: score(relevanceInput) > 0.5,
 		RelevanceScore:      score(relevanceInput),
 		DocumentStatus:      models.ExtractionQueued,
-		ExtractedFacts:      facts,
+		ExtractedFacts:      cloneFacts(pageFacts),
+		PageFacts:           pageFacts,
+		SourceMetadata:      sourceMetadata,
+		Location:            location,
+		Submission: models.TenderSubmission{
+			Method:            submissionMethod,
+			DeliveryLocation:  strings.TrimSpace(item.Delivery),
+			Instructions:      "Use the source listing and tender documents for final submission requirements.",
+			ElectronicAllowed: item.ESubmission,
+			PhysicalAllowed:   true,
+			TwoEnvelope:       item.TwoEnvelopeSubmission,
+		},
+		Contacts:     contacts,
+		Briefings:    briefings,
+		Documents:    documents,
+		Requirements: eTendersRequirements(item),
 	}
+}
+
+func eTendersDocuments(pageURL *url.URL, docs []eTendersSupportDocument) []models.TenderDocument {
+	out := make([]models.TenderDocument, 0, len(docs))
+	for _, doc := range docs {
+		out = append(out, models.TenderDocument{
+			URL:      eTendersDownloadURL(pageURL, doc),
+			FileName: strings.TrimSpace(doc.FileName),
+			MIMEType: "application/pdf",
+			Role:     "support_document",
+			Source:   "listing",
+		})
+	}
+	return out
+}
+
+func eTendersRequirements(item eTendersOpportunity) []models.TenderRequirement {
+	reqs := []models.TenderRequirement{}
+	if value := strings.TrimSpace(item.Conditions); value != "" && !strings.EqualFold(value, "none") {
+		reqs = append(reqs, models.TenderRequirement{Category: "special_conditions", Description: value, Required: true})
+	}
+	if item.Validity > 0 {
+		reqs = append(reqs, models.TenderRequirement{Category: "validity", Description: fmt.Sprintf("Bid validity period: %d days", item.Validity), Required: true})
+	}
+	return reqs
 }
 
 func eTendersStatus(pageURL *url.URL) int {

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
@@ -31,6 +32,11 @@ type BookmarkedTender struct {
 	Workflow models.Workflow
 }
 
+type detailFactSection struct {
+	Title string
+	Facts map[string]string
+}
+
 func queueSummary(jobs []models.ExtractionJob) QueueSummary {
 	summary := QueueSummary{}
 	for _, job := range jobs {
@@ -46,6 +52,48 @@ func queueSummary(jobs []models.ExtractionJob) QueueSummary {
 		}
 	}
 	return summary
+}
+
+func csvJSON(value any) string {
+	data, err := json.Marshal(value)
+	if err != nil || len(data) == 0 || string(data) == "null" {
+		return ""
+	}
+	return string(data)
+}
+
+func joinedNames(contacts []models.TenderContact) string {
+	out := []string{}
+	for _, contact := range contacts {
+		if name := strings.TrimSpace(contact.Name); name != "" {
+			out = append(out, name)
+		}
+	}
+	return strings.Join(out, "; ")
+}
+
+func joinedDocumentNames(documents []models.TenderDocument) string {
+	out := []string{}
+	for _, document := range documents {
+		if name := strings.TrimSpace(document.FileName); name != "" {
+			out = append(out, name)
+		}
+	}
+	return strings.Join(out, "; ")
+}
+
+func factSectionsForTender(item models.Tender) []detailFactSection {
+	sections := []detailFactSection{}
+	if len(item.PageFacts) > 0 {
+		sections = append(sections, detailFactSection{Title: "Page-derived facts", Facts: item.PageFacts})
+	}
+	if len(item.DocumentFacts) > 0 {
+		sections = append(sections, detailFactSection{Title: "Document-derived facts", Facts: item.DocumentFacts})
+	}
+	if len(item.ExtractedFacts) > 0 {
+		sections = append(sections, detailFactSection{Title: "Combined extracted facts", Facts: item.ExtractedFacts})
+	}
+	return sections
 }
 
 func (a *App) bookmarkedTenders(ctx context.Context, tenantID, userID string) ([]BookmarkedTender, error) {
@@ -188,14 +236,38 @@ func (a *App) ExportCSV(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/csv")
 	w.Header().Set("Content-Disposition", "attachment; filename=tenders.csv")
 	cw := csv.NewWriter(w)
-	_ = cw.Write([]string{"id", "title", "issuer", "source", "province", "category", "tender_number", "published_date", "closing_date", "status", "relevance_score", "cidb_grading", "document_status", "workflow_status", "workflow_priority", "assigned_user", "document_url", "original_url", "excerpt", "closing_details", "briefing_details", "submission_details", "contact_details", "cidb_hints"})
+	_ = cw.Write([]string{
+		"id", "title", "issuer", "source", "province", "category", "tender_type", "tender_number",
+		"published_date", "closing_date", "status", "relevance_score", "cidb_grading", "validity_days",
+		"document_status", "workflow_status", "workflow_priority", "assigned_user",
+		"document_url", "original_url", "excerpt", "scope",
+		"document_count", "contact_count", "briefing_count", "requirement_count",
+		"document_names", "contact_names",
+		"submission_method", "submission_delivery_location", "submission_address", "electronic_submission", "physical_submission", "two_envelope_submission",
+		"evaluation_method", "price_points", "preference_points", "minimum_functionality_score",
+		"location_site", "location_delivery", "location_town", "location_postal_code", "location_province",
+		"closing_details", "briefing_details", "submission_details", "contact_details", "cidb_hints",
+		"documents_json", "contacts_json", "briefings_json", "requirements_json", "page_facts_json", "document_facts_json", "source_metadata_json",
+	})
 	for _, tender := range items {
 		facts := tender.ExtractedFacts
 		if facts == nil {
 			facts = map[string]string{}
 		}
 		workflow := workflowByTender[tender.ID]
-		_ = cw.Write([]string{tender.ID, tender.Title, tender.Issuer, tender.SourceKey, tender.Province, tender.Category, tender.TenderNumber, tender.PublishedDate, tender.ClosingDate, tender.Status, fmt.Sprintf("%.2f", tender.RelevanceScore), tender.CIDBGrading, string(tender.DocumentStatus), workflow.Status, workflow.Priority, workflow.AssignedUser, tender.DocumentURL, tender.OriginalURL, tender.Excerpt, facts["closing_details"], facts["briefing_details"], facts["submission_details"], facts["contact_details"], facts["cidb_hints"]})
+		_ = cw.Write([]string{
+			tender.ID, tender.Title, tender.Issuer, tender.SourceKey, tender.Province, tender.Category, tender.TenderType, tender.TenderNumber,
+			tender.PublishedDate, tender.ClosingDate, tender.Status, fmt.Sprintf("%.2f", tender.RelevanceScore), tender.CIDBGrading, strconv.Itoa(tender.ValidityDays),
+			string(tender.DocumentStatus), workflow.Status, workflow.Priority, workflow.AssignedUser,
+			tender.DocumentURL, tender.OriginalURL, tender.Excerpt, tender.Scope,
+			strconv.Itoa(len(tender.Documents)), strconv.Itoa(len(tender.Contacts)), strconv.Itoa(len(tender.Briefings)), strconv.Itoa(len(tender.Requirements)),
+			joinedDocumentNames(tender.Documents), joinedNames(tender.Contacts),
+			tender.Submission.Method, tender.Submission.DeliveryLocation, tender.Submission.Address, strconv.FormatBool(tender.Submission.ElectronicAllowed), strconv.FormatBool(tender.Submission.PhysicalAllowed), strconv.FormatBool(tender.Submission.TwoEnvelope),
+			tender.Evaluation.Method, strconv.Itoa(tender.Evaluation.PricePoints), strconv.Itoa(tender.Evaluation.PreferencePoints), fmt.Sprintf("%.2f", tender.Evaluation.MinimumFunctionalityScore),
+			tender.Location.Site, tender.Location.DeliveryLocation, tender.Location.Town, tender.Location.PostalCode, tender.Location.Province,
+			facts["closing_details"], facts["briefing_details"], facts["submission_details"], facts["contact_details"], facts["cidb_hints"],
+			csvJSON(tender.Documents), csvJSON(tender.Contacts), csvJSON(tender.Briefings), csvJSON(tender.Requirements), csvJSON(tender.PageFacts), csvJSON(tender.DocumentFacts), csvJSON(tender.SourceMetadata),
+		})
 	}
 	cw.Flush()
 }
@@ -373,7 +445,15 @@ func (a *App) TenderDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	workflow, _ := a.Store.GetWorkflow(r.Context(), t.ID, id)
 	history, _ := a.Store.ListWorkflowEvents(r.Context(), t.ID, id)
-	a.render(w, r, "tender_detail.html", map[string]any{"Title": "Opportunity detail", "User": u, "Tenant": t, "Item": item, "Workflow": workflow, "WorkflowHistory": history})
+	a.render(w, r, "tender_detail.html", map[string]any{
+		"Title":           "Opportunity detail",
+		"User":            u,
+		"Tenant":          t,
+		"Item":            item,
+		"Workflow":        workflow,
+		"WorkflowHistory": history,
+		"FactSections":    factSectionsForTender(item),
+	})
 }
 
 func (a *App) AuditLogPage(w http.ResponseWriter, r *http.Request) {
