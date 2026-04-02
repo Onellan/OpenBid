@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # OpenBid
 
 OpenBid is a lightweight, self-hosted, multi-tenant tender aggregation platform for engineering-focused South African opportunities. This bundle matches the uploaded brief's core requirements: Docker deployment, worker separation, HTMX-driven Go UX, source adapters, extraction queue, CSV export, multi-tenant workflow management, and low-memory operation.
@@ -247,3 +248,6 @@ This pass adds:
 
 See:
 - `OPERATIONAL_FEATURES_PASS.md`
+=======
+# OpenBid
+>>>>>>> a67e7b754ed1c5048a2498f20b36ceb28d5e8707
