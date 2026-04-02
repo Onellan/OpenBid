@@ -97,7 +97,7 @@
 {{end}}
 
 {{define "create_source_form"}}
-<form method="post" action="/admin/sources/create" class="form-grid">
+<form method="post" action="/sources/create" class="form-grid">
   <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
   <label>Display name<input name="name" placeholder="City of Cape Town" required></label>
   <label>Source key<input name="key" placeholder="Optional. Derived from the name if left blank."></label>
@@ -134,14 +134,18 @@
     </td>
     <td>{{.Health.LastItemCount}}</td>
     <td>
-      {{template "confirm_destructive_action" (dict
-        "action" "/admin/sources/delete"
-        "confirm" (printf "Remove source %s?" .Config.Name)
-        "csrf" $.CSRFToken
-        "inline" true
-        "hidden" (slice (dict "name" "id" "value" .Config.ID) (dict "name" "key" "value" .Config.Key))
-        "label" "Delete"
-      )}}
+      {{if $.CanManageSources}}
+        {{template "confirm_destructive_action" (dict
+          "action" "/sources/delete"
+          "confirm" (printf "Remove source %s?" .Config.Name)
+          "csrf" $.CSRFToken
+          "inline" true
+          "hidden" (slice (dict "name" "id" "value" .Config.ID) (dict "name" "key" "value" .Config.Key))
+          "label" "Delete"
+        )}}
+      {{else}}
+        <span class="footer-note">View only</span>
+      {{end}}
     </td>
   </tr>
   {{else}}

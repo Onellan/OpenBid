@@ -1,0 +1,58 @@
+{{define "home.html"}}{{template "base" .}}{{end}}{{define "content"}}
+{{template "page_hero" (dict
+  "eyebrow" "Homepage"
+  "title" "A lighter front door for daily bidding work"
+  "copy" "Start from a real homepage, jump straight into the tools you need, and keep the workspace calm even as the platform grows."
+  "actions" (slice
+    (dict "label" "Browse tenders" "href" "/tenders")
+    (dict "label" "Open dashboard" "href" "/dashboard" "secondary" true)
+  )
+)}}
+
+<section class="feature-grid" style="margin-top:18px">
+  <a class="feature-link" href="/tenders"><strong>Tenders</strong><span class="footer-note">Search, filter, and manage live opportunities.</span><span class="badge info">{{.Dashboard.TotalTenders}} total</span></a>
+  <a class="feature-link" href="/bookmarks"><strong>Bookmarks</strong><span class="footer-note">Return to the opportunities you are actively tracking.</span><span class="badge info">{{.BookmarkCount}} saved</span></a>
+  <a class="feature-link" href="/saved-searches"><strong>Saved Searches</strong><span class="footer-note">Jump back into your most useful market views.</span><span class="badge info">{{.SavedCount}} saved</span></a>
+  <a class="feature-link" href="/queue"><strong>Queue</strong><span class="footer-note">Watch extraction retries, failures, and completions.</span><span class="badge warning">{{.QueueSummary.Queued}} queued</span></a>
+  <a class="feature-link" href="/sources"><strong>Sources</strong><span class="footer-note">See what is syncing and which feeds need attention.</span><span class="badge success">{{len .Dashboard.SourceHealth}} feeds</span></a>
+  <a class="feature-link" href="/settings"><strong>Settings</strong><span class="footer-note">Manage account security and workspace preferences.</span><span class="badge">{{.Member.Role}}</span></a>
+</section>
+
+<section class="kpi-band" style="margin-top:18px">
+  {{template "metric_card" (dict "label" "Open tenders" "value" .Dashboard.OpenTenders)}}
+  {{template "metric_card" (dict "label" "Engineering relevant" "value" .Dashboard.EngineeringRelevant)}}
+  {{template "metric_card" (dict "label" "Documents ready" "value" .Dashboard.ExtractedDocuments)}}
+  {{template "metric_card" (dict "label" "Queue backlog" "value" .QueueSummary.Queued)}}
+</section>
+
+<div class="split" style="margin-top:18px;align-items:start">
+  <section class="card">
+    {{template "card_header" (dict "title" "Recent opportunities" "subtitle" "Fresh opportunities available in the workspace right now.")}}
+    <div class="table-wrap" style="margin-top:14px">
+      <table>
+        <tr><th>Opportunity</th><th>Issuer</th><th>Closing</th><th>Open</th></tr>
+        {{range .Dashboard.RecentTenders}}
+        <tr><td><a href="/tenders/{{.ID}}">{{.Title}}</a></td><td>{{.Issuer}}</td><td>{{.ClosingDate}}</td><td>{{template "status_badge" (dict "tone" "info" "label" .Status)}}</td></tr>
+        {{else}}
+        <tr><td colspan="4">{{template "empty_state" "No opportunities available yet."}}</td></tr>
+        {{end}}
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    {{template "card_header" (dict "title" "Source health" "subtitle" "A quick pulse-check on configured feeds.")}}
+    <div class="list" style="margin-top:14px">
+      {{range .Dashboard.SourceHealth}}
+      {{template "soft_list_item" (dict
+        "title" .SourceKey
+        "meta" (printf "%s · %d items" .LastStatus .LastItemCount)
+        "body" .LastMessage
+      )}}
+      {{else}}
+      {{template "empty_state" "No source health updates yet."}}
+      {{end}}
+    </div>
+  </section>
+</div>
+{{end}}

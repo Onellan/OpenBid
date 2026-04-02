@@ -61,27 +61,3 @@
   {{end}}
 </table>
 {{end}}
-
-{{define "opportunity_danger_zone"}}
-<div class="card-soft" style="padding:16px;border-color:#f2caca;background:#fffafa">
-  {{template "card_header" (dict "title" "Danger zone" "subtitle" "Use caution with destructive or reset actions on this opportunity.")}}
-  <div class="actions" style="margin-top:14px">
-    {{template "confirm_destructive_action" (dict
-      "action" "/tenders/workflow/reset"
-      "confirm" (printf "Reset workflow for '%s'?" .Title)
-      "csrf" $.CSRFToken
-      "inline" true
-      "hidden" (slice (dict "name" "tender_id" "value" .ID))
-      "label" "Reset workflow"
-    )}}
-    {{template "confirm_destructive_action" (dict
-      "action" "/tenders/bookmark/remove"
-      "confirm" (printf "Remove saved note/bookmark for '%s'?" .Title)
-      "csrf" $.CSRFToken
-      "inline" true
-      "hidden" (slice (dict "name" "tender_id" "value" .ID))
-      "label" "Remove saved"
-    )}}
-  </div>
-</div>
-{{end}}

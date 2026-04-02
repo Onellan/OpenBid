@@ -1,5 +1,14 @@
 {{define "admin_tenants.html"}}{{template "base" .}}{{end}}{{define "content"}}
-<div class="split">
+{{template "page_hero" (dict
+  "eyebrow" "Administration"
+  "title" "Tenant administration"
+  "copy" "Manage workspace boundaries, create tenant environments, and move into operational audit review when needed."
+  "actions" (slice
+    (dict "label" "Open audit log" "href" "/audit-log" "secondary" true)
+  )
+)}}
+
+<div class="split" style="margin-top:18px">
   <section class="card">
     {{template "card_header" (dict "title" "Create tenant" "subtitle" "Set up new business units, client environments, or portfolio spaces inside OpenBid.")}}
     <div style="margin-top:14px">{{template "tenant_form" .}}</div>

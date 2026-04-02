@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 )
 
 func dict(values ...any) (map[string]any, error) {
@@ -42,6 +43,9 @@ func templateFuncs() template.FuncMap {
 	return template.FuncMap{
 		"dict":  dict,
 		"slice": func(values ...any) []any { return values },
+		"hasPrefix": func(value, prefix string) bool {
+			return strings.HasPrefix(value, prefix)
+		},
 		"condTone": func(state string) string {
 			switch state {
 			case "completed":
@@ -69,7 +73,6 @@ func parseTemplates() (map[string]*template.Template, error) {
 		"patterns.html",
 		"admin_partials.html",
 		"domain_partials.html",
-		"interaction_partials.html",
 		"opportunity_partials.html",
 	}
 	sharedSet := map[string]bool{}
@@ -90,7 +93,7 @@ func parseTemplates() (map[string]*template.Template, error) {
 			continue
 		}
 		name := entry.Name()
-		if filepath.Ext(name) != ".html" || sharedSet[name] {
+		if filepath.Ext(name) != ".html" || sharedSet[name] || name == "admin_sources.html" || name == "interaction_partials.html" {
 			continue
 		}
 		pageNames = append(pageNames, name)
@@ -115,7 +118,8 @@ func routes(a *App) http.Handler {
 	mux.HandleFunc("/healthz", a.Healthz)
 	mux.HandleFunc("/login", a.Login)
 	mux.HandleFunc("/logout", a.RequireAuth(a.Logout))
-	mux.HandleFunc("/", a.RequireAuth(a.Dashboard))
+	mux.HandleFunc("/", a.RequireAuth(a.Home))
+	mux.HandleFunc("/home", a.RequireAuth(a.Home))
 	mux.HandleFunc("/dashboard", a.RequireAuth(a.Dashboard))
 	mux.HandleFunc("/tenders", a.RequireAuth(a.Tenders))
 	mux.HandleFunc("/tenders/", a.RequireAuth(a.TenderDetail))
@@ -126,11 +130,15 @@ func routes(a *App) http.Handler {
 	mux.HandleFunc("/tenders/bulk", a.RequireAuth(a.BulkTenders))
 	mux.HandleFunc("/tenders/workflow/reset", a.RequireAuth(a.ResetWorkflow))
 	mux.HandleFunc("/tenders/bookmark/remove", a.RequireAuth(a.RemoveBookmark))
+	mux.HandleFunc("/bookmarks", a.RequireAuth(a.BookmarksPage))
 	mux.HandleFunc("/queue", a.RequireAuth(a.QueuePage))
 	mux.HandleFunc("/audit-log", a.RequireAuth(a.AuditLogPage))
 	mux.HandleFunc("/queue/requeue", a.RequireAuth(a.QueueRequeue))
+	mux.HandleFunc("/settings", a.RequireAuth(a.SettingsPage))
 	mux.HandleFunc("/password", a.RequireAuth(a.PasswordPage))
+	mux.HandleFunc("/settings/password", a.RequireAuth(a.PasswordPage))
 	mux.HandleFunc("/mfa", a.RequireAuth(a.MFAPage))
+	mux.HandleFunc("/settings/mfa", a.RequireAuth(a.MFAPage))
 	mux.HandleFunc("/mfa/setup", a.RequireAuth(a.MFASetup))
 	mux.HandleFunc("/mfa/disable", a.RequireAuth(a.MFADisable))
 	mux.HandleFunc("/saved-searches", a.RequireAuth(a.SavedSearches))
@@ -143,6 +151,9 @@ func routes(a *App) http.Handler {
 	mux.HandleFunc("/admin/memberships/delete", a.RequireAuth(a.AdminDeleteMembership))
 	mux.HandleFunc("/admin/tenants", a.RequireAuth(a.AdminTenants))
 	mux.HandleFunc("/admin/tenants/create", a.RequireAuth(a.AdminCreateTenant))
+	mux.HandleFunc("/sources", a.RequireAuth(a.SourcesPage))
+	mux.HandleFunc("/sources/create", a.RequireAuth(a.AdminCreateSource))
+	mux.HandleFunc("/sources/delete", a.RequireAuth(a.AdminDeleteSource))
 	mux.HandleFunc("/admin/sources", a.RequireAuth(a.AdminSources))
 	mux.HandleFunc("/admin/sources/create", a.RequireAuth(a.AdminCreateSource))
 	mux.HandleFunc("/admin/sources/delete", a.RequireAuth(a.AdminDeleteSource))

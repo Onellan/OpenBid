@@ -1,0 +1,26 @@
+{{define "sources.html"}}{{template "base" .}}{{end}}{{define "content"}}
+{{template "page_hero" (dict
+  "eyebrow" "Sources"
+  "title" "Source configuration and sync health"
+  "copy" "Monitor feed health in one place and, when permitted, add new sources directly from the front end."
+)}}
+
+<div style="margin-top:18px">{{template "flash_messages" .}}</div>
+
+<div class="split" style="margin-top:18px">
+  <section class="card">
+    {{template "card_header" (dict "title" "Feed health" "subtitle" "See whether feeds are configured, succeeding, or failing and how many items they produced.")}}
+    <div class="table-wrap" style="margin-top:14px">{{template "source_config_table_typed" .}}</div>
+  </section>
+
+  <section class="card">
+    {{if .CanManageSources}}
+      {{template "card_header" (dict "title" "Add source" "subtitle" "Register a new feed-backed source without editing application code.")}}
+      <div style="margin-top:14px">{{template "create_source_form" .}}</div>
+    {{else}}
+      {{template "card_header" (dict "title" "Source administration" "subtitle" "Only admin-capable roles can add or remove sources.")}}
+      {{template "empty_state" "You can view source health here, but source management controls are reserved for admin-capable roles."}}
+    {{end}}
+  </section>
+</div>
+{{end}}

@@ -1,0 +1,12 @@
+{{define "settings.html"}}{{template "base" .}}{{end}}{{define "content"}}
+{{template "page_hero" (dict
+  "eyebrow" "Settings"
+  "title" "Account and security settings"
+  "copy" "Keep authentication simple, review account security, and move into password or MFA tasks from a single place."
+)}}
+
+<section class="feature-grid" style="margin-top:18px">
+  <a class="feature-link" href="/settings/password"><strong>Password</strong><span class="footer-note">Update your password and keep your account current.</span></a>
+  <a class="feature-link" href="/settings/mfa"><strong>MFA</strong><span class="footer-note">Add or remove multi-factor authentication.</span></a>
+</section>
+{{end}}

@@ -1,11 +1,11 @@
 {{define "admin_users.html"}}{{template "base" .}}{{end}}{{define "content"}}
 {{template "page_hero" (dict
   "eyebrow" "Administration"
-  "title" "Manage users, access, and tenant memberships"
-  "copy" "Control account access, team roles, and workspace assignments through a clear and structured admin flow."
+  "title" "User administration"
+  "copy" "Manage accounts, activation status, passwords, and tenant memberships from a page dedicated to user operations."
 )}}
 
-<div class="split">
+<div class="split" style="margin-top:18px">
   <section class="card">
     {{template "card_header" (dict "title" "Create user" "subtitle" "Set up new team members and assign their initial tenant role.")}}
     <div style="margin-top:14px">{{template "create_user_form" .}}</div>

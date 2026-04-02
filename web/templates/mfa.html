@@ -1,5 +1,13 @@
 {{define "mfa.html"}}{{template "base" .}}{{end}}{{define "content"}}
-<div class="split">
+{{template "page_hero" (dict
+  "eyebrow" "Settings"
+  "title" "Multi-factor authentication"
+  "copy" "Manage MFA in the same settings area as the rest of your account security."
+  "actions" (slice
+    (dict "label" "Back to settings" "href" "/settings" "secondary" true)
+  )
+)}}
+<div class="split" style="margin-top:18px">
   <section class="card">
     {{template "card_header" (dict "title" "Multi-factor authentication" "subtitle" "Add an extra layer of security for serious procurement workflows.")}}
     <div style="margin-top:10px">{{template "flash_messages" .}}</div>

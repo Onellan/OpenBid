@@ -1,11 +1,11 @@
 {{define "dashboard.html"}}{{template "base" .}}{{end}}{{define "content"}}
 {{template "page_hero" (dict
-  "eyebrow" "Overview"
-  "title" "A clearer workspace for opportunity tracking and submission readiness"
-  "copy" "Track opportunities, team actions, document readiness, and source activity from one structured operations dashboard."
+  "eyebrow" "Dashboard"
+  "title" "Operational metrics for the current workspace"
+  "copy" "Use the dashboard for the dense operational view while the homepage stays focused on navigation and next actions."
   "actions" (slice
-    (dict "label" "View opportunities" "href" "/tenders")
-    (dict "label" "Open pipeline" "href" "/queue" "secondary" true)
+    (dict "label" "Go to home" "href" "/")
+    (dict "label" "View opportunities" "href" "/tenders" "secondary" true)
   )
 )}}
 

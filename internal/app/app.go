@@ -205,6 +205,11 @@ type SourceAdminItem struct {
 	Config models.SourceConfig
 	Health models.SourceHealth
 }
+type BookmarkedTender struct {
+	Bookmark models.Bookmark
+	Tender   models.Tender
+	Workflow models.Workflow
+}
 
 type QueueSummary struct {
 	Queued     int
@@ -226,11 +231,55 @@ func (a *App) userTenants(ctx context.Context, userID string) []TenantChoice {
 	sort.Slice(out, func(i, j int) bool { return out[i].Tenant.Name < out[j].Tenant.Name })
 	return out
 }
+func queueSummary(jobs []models.ExtractionJob) QueueSummary {
+	summary := QueueSummary{}
+	for _, job := range jobs {
+		switch job.State {
+		case models.ExtractionQueued:
+			summary.Queued++
+		case models.ExtractionProcessing:
+			summary.Processing++
+		case models.ExtractionFailed:
+			summary.Failed++
+		case models.ExtractionCompleted:
+			summary.Completed++
+		}
+	}
+	return summary
+}
+func (a *App) bookmarkedTenders(ctx context.Context, tenantID, userID string) ([]BookmarkedTender, error) {
+	bookmarks, err := a.Store.ListBookmarks(ctx, tenantID, userID)
+	if err != nil {
+		return nil, err
+	}
+	workflows, _ := a.Store.ListWorkflows(ctx, tenantID)
+	workflowByTender := map[string]models.Workflow{}
+	for _, wf := range workflows {
+		workflowByTender[wf.TenderID] = wf
+	}
+	items := make([]BookmarkedTender, 0, len(bookmarks))
+	for _, bookmark := range bookmarks {
+		tender, err := a.Store.GetTender(ctx, bookmark.TenderID)
+		if err != nil {
+			continue
+		}
+		items = append(items, BookmarkedTender{
+			Bookmark: bookmark,
+			Tender:   tender,
+			Workflow: workflowByTender[tender.ID],
+		})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].Bookmark.UpdatedAt.After(items[j].Bookmark.UpdatedAt) })
+	return items, nil
+}
 func (a *App) render(w http.ResponseWriter, r *http.Request, name string, data map[string]any) {
 	if data == nil {
 		data = map[string]any{}
 	}
-	if u, t, _, ok := a.currentUserTenant(r); ok {
+	if _, exists := data["CurrentPath"]; !exists {
+		data["CurrentPath"] = r.URL.Path
+	}
+	if u, t, m, ok := a.currentUserTenant(r); ok {
 		if _, exists := data["User"]; !exists {
 			data["User"] = u
 		}
@@ -242,6 +291,18 @@ func (a *App) render(w http.ResponseWriter, r *http.Request, name string, data m
 		}
 		if _, exists := data["UserTenants"]; !exists {
 			data["UserTenants"] = a.userTenants(r.Context(), u.ID)
+		}
+		if _, exists := data["Member"]; !exists {
+			data["Member"] = m
+		}
+		if _, exists := data["CanAdminUsers"]; !exists {
+			data["CanAdminUsers"] = canAdminUsers(m.Role)
+		}
+		if _, exists := data["CanManageTenants"]; !exists {
+			data["CanManageTenants"] = m.Role == models.RoleAdmin || m.Role == models.RolePortfolioManager
+		}
+		if _, exists := data["CanManageAudit"]; !exists {
+			data["CanManageAudit"] = canAdminUsers(m.Role)
 		}
 	}
 	if _, exists := data["Error"]; !exists {
@@ -328,11 +389,31 @@ func (a *App) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	s := models.Session{UserID: u.ID, TenantID: memberships[0].TenantID, Expires: time.Now().Add(time.Duration(a.Config.SessionHours) * time.Hour), CSRF: auth.RandomString(32)}
 	_ = auth.SetSessionCookie(w, a.Config.SecretKey, s, a.Config.SecureCookies)
-	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 func (a *App) Logout(w http.ResponseWriter, r *http.Request) {
 	auth.ClearSessionCookie(w, a.Config.SecureCookies)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+func (a *App) Home(w http.ResponseWriter, r *http.Request) {
+	u, t, _, ok := a.currentUserTenant(r)
+	if !ok {
+		http.Redirect(w, r, "/login", 303)
+		return
+	}
+	d, _ := a.Store.Dashboard(r.Context(), t.ID, a.Config.LowMemoryMode, false)
+	bookmarks, _ := a.Store.ListBookmarks(r.Context(), t.ID, u.ID)
+	searches, _ := a.Store.ListSavedSearches(r.Context(), t.ID, u.ID)
+	jobs, _ := a.Store.ListJobs(r.Context())
+	a.render(w, r, "home.html", map[string]any{
+		"Title":         "Home",
+		"User":          u,
+		"Tenant":        t,
+		"Dashboard":     d,
+		"BookmarkCount": len(bookmarks),
+		"SavedCount":    len(searches),
+		"QueueSummary":  queueSummary(jobs),
+	})
 }
 func (a *App) Dashboard(w http.ResponseWriter, r *http.Request) {
 	u, t, _, ok := a.currentUserTenant(r)
@@ -342,6 +423,21 @@ func (a *App) Dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	d, _ := a.Store.Dashboard(r.Context(), t.ID, a.Config.LowMemoryMode, a.Config.AnalyticsEnabled && !a.Config.LowMemoryMode && r.URL.Query().Get("analytics") == "1")
 	a.render(w, r, "dashboard.html", map[string]any{"Title": "Dashboard", "User": u, "Tenant": t, "Dashboard": d, "CSRFToken": a.mustCSRF(r)})
+}
+func (a *App) BookmarksPage(w http.ResponseWriter, r *http.Request) {
+	u, t, _, ok := a.currentUserTenant(r)
+	if !ok {
+		http.Redirect(w, r, "/login", 303)
+		return
+	}
+	items, _ := a.bookmarkedTenders(r.Context(), t.ID, u.ID)
+	a.render(w, r, "bookmarks.html", map[string]any{
+		"Title":         "Bookmarks",
+		"User":          u,
+		"Tenant":        t,
+		"Items":         items,
+		"BookmarkCount": len(items),
+	})
 }
 func (a *App) Tenders(w http.ResponseWriter, r *http.Request) {
 	u, t, _, ok := a.currentUserTenant(r)
@@ -518,6 +614,18 @@ func (a *App) DeleteSavedSearch(w http.ResponseWriter, r *http.Request) {
 	a.auditAction(r.Context(), actionContext{User: u, Tenant: t}, "delete", "saved_search", r.FormValue("id"), "Saved search deleted", nil)
 	a.redirectAfterAction(w, r, "/saved-searches", "success", "Saved search deleted")
 }
+func (a *App) SettingsPage(w http.ResponseWriter, r *http.Request) {
+	u, t, _, ok := a.currentUserTenant(r)
+	if !ok {
+		http.Redirect(w, r, "/login", 303)
+		return
+	}
+	a.render(w, r, "settings.html", map[string]any{
+		"Title":  "Settings",
+		"User":   u,
+		"Tenant": t,
+	})
+}
 func (a *App) AdminUsers(w http.ResponseWriter, r *http.Request) {
 	u, t, m, ok := a.currentUserTenant(r)
 	if !ok {
@@ -589,13 +697,12 @@ func (a *App) AdminCreateTenant(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin/tenants", 303)
 }
 func (a *App) AdminSources(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/sources", http.StatusSeeOther)
+}
+func (a *App) SourcesPage(w http.ResponseWriter, r *http.Request) {
 	u, t, m, ok := a.currentUserTenant(r)
 	if !ok {
 		http.Redirect(w, r, "/login", 303)
-		return
-	}
-	if !canAdminUsers(m.Role) {
-		http.Error(w, "forbidden", 403)
 		return
 	}
 	configs, _ := a.Store.ListSourceConfigs(r.Context())
@@ -608,13 +715,14 @@ func (a *App) AdminSources(w http.ResponseWriter, r *http.Request) {
 	for _, cfg := range configs {
 		items = append(items, SourceAdminItem{Config: cfg, Health: healthByKey[cfg.Key]})
 	}
-	a.render(w, r, "admin_sources.html", map[string]any{
-		"Title":      "Sources",
-		"User":       u,
-		"Tenant":     t,
-		"Items":      items,
-		"CSRFToken":  a.mustCSRF(r),
-		"SourceType": source.TypeJSONFeed,
+	a.render(w, r, "sources.html", map[string]any{
+		"Title":            "Sources",
+		"User":             u,
+		"Tenant":           t,
+		"Items":            items,
+		"CSRFToken":        a.mustCSRF(r),
+		"SourceType":       source.TypeJSONFeed,
+		"CanManageSources": canAdminUsers(m.Role),
 	})
 }
 func (a *App) AdminCreateSource(w http.ResponseWriter, r *http.Request) {
@@ -670,7 +778,7 @@ func (a *App) AdminCreateSource(w http.ResponseWriter, r *http.Request) {
 		LastItemCount: 0,
 	})
 	a.auditAction(r.Context(), actionContext{User: u, Tenant: t, Member: m}, "create", "source", key, "Source added", map[string]string{"name": name, "type": source.TypeJSONFeed})
-	a.redirectAfterAction(w, r, "/admin/sources", "success", "Source added")
+	a.redirectAfterAction(w, r, "/sources", "success", "Source added")
 }
 func (a *App) AdminDeleteSource(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || !a.ensureCSRF(r) {
@@ -695,7 +803,7 @@ func (a *App) AdminDeleteSource(w http.ResponseWriter, r *http.Request) {
 	_ = a.Store.DeleteSourceConfig(r.Context(), id)
 	_ = a.Store.DeleteSourceHealth(r.Context(), key)
 	a.auditAction(r.Context(), actionContext{User: u, Tenant: t, Member: m}, "delete", "source", key, "Source removed", nil)
-	a.redirectAfterAction(w, r, "/admin/sources", "success", "Source removed")
+	a.redirectAfterAction(w, r, "/sources", "success", "Source removed")
 }
 func (a *App) SwitchTenant(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || !a.ensureCSRF(r) {
@@ -859,7 +967,12 @@ func (a *App) PasswordPage(w http.ResponseWriter, r *http.Request) {
 	a.render(w, r, "password.html", map[string]any{"Title": "Password", "Message": "Password updated"})
 }
 func (a *App) MFAPage(w http.ResponseWriter, r *http.Request) {
-	a.render(w, r, "mfa.html", map[string]any{"Title": "MFA"})
+	u, t, _, ok := a.currentUserTenant(r)
+	if !ok {
+		http.Redirect(w, r, "/login", 303)
+		return
+	}
+	a.render(w, r, "mfa.html", map[string]any{"Title": "MFA", "User": u, "Tenant": t})
 }
 func (a *App) MFASetup(w http.ResponseWriter, r *http.Request) {
 	u, _, _, ok := a.currentUserTenant(r)

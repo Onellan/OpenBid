@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"tenderhub-za/internal/auth"
 	"tenderhub-za/internal/models"
@@ -29,6 +30,32 @@ func adminSession(t *testing.T, a *App) (models.User, models.Tenant, *http.Cooki
 	ms, _ := a.Store.ListMemberships(t.Context(), user.ID)
 	tenant, _ := a.Store.GetTenant(t.Context(), ms[0].TenantID)
 	s := models.Session{UserID: user.ID, TenantID: tenant.ID, CSRF: "csrf123", Expires: time.Now().Add(time.Hour)}
+	raw, err := auth.EncodeSession(a.Config.SecretKey, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return user, tenant, &http.Cookie{Name: "th_session", Value: raw}, s.CSRF
+}
+func sessionForRole(t *testing.T, a *App, role models.Role) (models.User, models.Tenant, *http.Cookie, string) {
+	_, tenant, _, _ := adminSession(t, a)
+	if role == models.RoleAdmin {
+		return adminSession(t, a)
+	}
+	user := models.User{
+		Username:    "user-" + strconv.FormatInt(time.Now().UnixNano(), 10),
+		DisplayName: "Viewer User",
+		Email:       "viewer@example.com",
+		IsActive:    true,
+	}
+	if err := a.Store.UpsertUser(t.Context(), user); err != nil {
+		t.Fatal(err)
+	}
+	users, _ := a.Store.ListUsers(t.Context())
+	user = users[len(users)-1]
+	if err := a.Store.UpsertMembership(t.Context(), models.Membership{UserID: user.ID, TenantID: tenant.ID, Role: role, Responsibilities: "Read-only access"}); err != nil {
+		t.Fatal(err)
+	}
+	s := models.Session{UserID: user.ID, TenantID: tenant.ID, CSRF: "csrf-role", Expires: time.Now().Add(time.Hour)}
 	raw, err := auth.EncodeSession(a.Config.SecretKey, s)
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +134,7 @@ func TestAdminCreateSourceStoresConfig(t *testing.T) {
 		"name":       {"Municipal Feed"},
 		"feed_url":   {"https://example.org/municipal.json"},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/admin/sources/create", strings.NewReader(form.Encode()))
+	req := httptest.NewRequest(http.MethodPost, "/sources/create", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.AddCookie(cookie)
 	w := httptest.NewRecorder()
@@ -132,7 +159,7 @@ func TestAdminCreateSourceStoresConfig(t *testing.T) {
 func TestAdminSourcesPageRendersSourceManagementContent(t *testing.T) {
 	a := newTestApp(t)
 	_, _, cookie, _ := adminSession(t, a)
-	req := httptest.NewRequest(http.MethodGet, "/admin/sources", nil)
+	req := httptest.NewRequest(http.MethodGet, "/sources", nil)
 	req.AddCookie(cookie)
 	w := httptest.NewRecorder()
 	a.Server.Handler.ServeHTTP(w, req)
@@ -140,7 +167,7 @@ func TestAdminSourcesPageRendersSourceManagementContent(t *testing.T) {
 		t.Fatalf("expected 200 got %d", w.Code)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, "Configure opportunity sources from the front end") || !strings.Contains(body, "Configured sources") {
+	if !strings.Contains(body, "Source configuration and sync health") || !strings.Contains(body, "Add source") {
 		t.Fatalf("sources page missing expected content: %s", body)
 	}
 }
@@ -160,6 +187,21 @@ func TestLoginPageRendersSignInContent(t *testing.T) {
 		t.Fatalf("login page rendered tenders content")
 	}
 }
+func TestHomePageRendersHomepageContent(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := adminSession(t, a)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "A lighter front door for daily bidding work") || !strings.Contains(body, "Bookmarks") {
+		t.Fatalf("home page missing expected content: %s", body)
+	}
+}
 
 func TestTendersPageRendersTendersContent(t *testing.T) {
 	a := newTestApp(t)
@@ -177,5 +219,64 @@ func TestTendersPageRendersTendersContent(t *testing.T) {
 	}
 	if strings.Contains(body, "Welcome back") {
 		t.Fatalf("tenders page rendered login content")
+	}
+}
+func TestRoleBasedNavigationVisibility(t *testing.T) {
+	a := newTestApp(t)
+	_, _, adminCookie, _ := adminSession(t, a)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(adminCookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	adminBody := w.Body.String()
+	if !strings.Contains(adminBody, "User Admin") || !strings.Contains(adminBody, "Tenant Admin") {
+		t.Fatalf("admin navigation missing admin links: %s", adminBody)
+	}
+
+	_, _, viewerCookie, _ := sessionForRole(t, a, models.RoleViewer)
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(viewerCookie)
+	w = httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	viewerBody := w.Body.String()
+	if strings.Contains(viewerBody, "User Admin") || strings.Contains(viewerBody, "Tenant Admin") || strings.Contains(viewerBody, "Audit Log") {
+		t.Fatalf("viewer navigation exposed admin links: %s", viewerBody)
+	}
+	if !strings.Contains(viewerBody, "Settings") || !strings.Contains(viewerBody, "Bookmarks") {
+		t.Fatalf("viewer navigation missing core links: %s", viewerBody)
+	}
+}
+func TestRouteAccessibilityAndPageRendering(t *testing.T) {
+	a := newTestApp(t)
+	_, _, viewerCookie, _ := sessionForRole(t, a, models.RoleViewer)
+	routes := map[string]string{
+		"/dashboard":      "Operational metrics for the current workspace",
+		"/bookmarks":      "Keep active opportunities separate",
+		"/saved-searches": "Reusable market views",
+		"/queue":          "Queue and extraction monitoring",
+		"/sources":        "Source configuration and sync health",
+		"/settings":       "Account and security settings",
+	}
+	for path, marker := range routes {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.AddCookie(viewerCookie)
+		w := httptest.NewRecorder()
+		a.Server.Handler.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200 for %s got %d", path, w.Code)
+		}
+		if !strings.Contains(w.Body.String(), marker) {
+			t.Fatalf("expected marker %q in %s", marker, path)
+		}
+	}
+
+	for _, path := range []string{"/admin/users", "/admin/tenants"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.AddCookie(viewerCookie)
+		w := httptest.NewRecorder()
+		a.Server.Handler.ServeHTTP(w, req)
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("expected 403 for %s got %d", path, w.Code)
+		}
 	}
 }
