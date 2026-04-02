@@ -38,6 +38,22 @@ func canAdminUsers(role models.Role) bool {
 	return role == models.RoleAdmin || role == models.RolePortfolioManager || role == models.RoleTenantAdmin
 }
 
+func canManageTenants(role models.Role) bool {
+	return role == models.RoleAdmin || role == models.RolePortfolioManager
+}
+
+func canManageSources(role models.Role) bool {
+	return canAdminUsers(role)
+}
+
+func canManageAudit(role models.Role) bool {
+	return canAdminUsers(role)
+}
+
+func canEditWorkspace(role models.Role) bool {
+	return role != models.RoleViewer
+}
+
 func (a *App) redirectAfterAction(w http.ResponseWriter, r *http.Request, fallback, tone, message string) {
 	dest := r.FormValue("return_to")
 	if dest == "" {

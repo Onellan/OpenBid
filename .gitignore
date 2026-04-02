@@ -2,3 +2,7 @@
 data/*.db
 data/*.db-shm
 data/*.db-wal
+*.go.[0-9]*
+*.html.[0-9]*
+__pycache__/
+*.pyc

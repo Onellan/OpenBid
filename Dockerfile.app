@@ -8,7 +8,6 @@ WORKDIR /app
 COPY --from=build /out/tenderhub-server /usr/local/bin/tenderhub-server
 COPY --from=build /out/tenderhub-worker /usr/local/bin/tenderhub-worker
 COPY web ./web
-COPY migrations ./migrations
 RUN mkdir -p /app/data && chown -R app:app /app
 USER app
 EXPOSE 8080

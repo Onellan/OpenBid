@@ -1,0 +1,15 @@
+.git
+.github
+.codex
+.env
+data
+migrations
+nginx
+scripts
+*.md
+*.txt
+*.go.[0-9]*
+*.html.[0-9]*
+*.db
+*.db-shm
+*.db-wal
