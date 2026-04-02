@@ -8,7 +8,10 @@ import (
 	"tenderhub-za/internal/models"
 )
 
-const TypeJSONFeed = "json_feed"
+const (
+	TypeJSONFeed       = "json_feed"
+	TypeETendersPortal = "etenders_portal"
+)
 
 type Adapter interface {
 	Key() string
@@ -55,6 +58,8 @@ func AdapterFromConfig(cfg models.SourceConfig) (Adapter, error) {
 	switch cfg.Type {
 	case "", TypeJSONFeed:
 		return NewFeedAdapter(key, cfg.FeedURL), nil
+	case TypeETendersPortal:
+		return NewETendersAdapter(key, cfg.FeedURL), nil
 	default:
 		return nil, fmt.Errorf("unsupported source type %q", cfg.Type)
 	}

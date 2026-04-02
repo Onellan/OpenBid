@@ -157,6 +157,38 @@ func TestAdminCreateSourceStoresConfig(t *testing.T) {
 	}
 }
 
+func TestAdminCreateETendersSourceStoresConfig(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, csrf := adminSession(t, a)
+	form := url.Values{
+		"csrf_token": {csrf},
+		"name":       {"eTenders"},
+		"feed_url":   {"https://www.etenders.gov.za/Home/opportunities?id=1"},
+		"type":       {"etenders_portal"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/sources/create", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", w.Code)
+	}
+	configs, err := a.Store.ListSourceConfigs(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, cfg := range configs {
+		if cfg.Key == "etenders" && cfg.Type == "etenders_portal" && cfg.FeedURL == "https://www.etenders.gov.za/Home/opportunities?id=1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected stored etenders source config, got %#v", configs)
+	}
+}
+
 func TestAdminCreateSourceRejectsUnsupportedType(t *testing.T) {
 	a := newTestApp(t)
 	_, _, cookie, csrf := adminSession(t, a)

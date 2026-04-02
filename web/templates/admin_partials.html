@@ -105,9 +105,10 @@
   <label>Source type
     <select name="type">
       <option value="json_feed">JSON releases feed</option>
+      <option value="etenders_portal">eTenders opportunities page</option>
     </select>
   </label>
-  <div class="footer-note">The current front-end flow supports JSON feeds with a top-level <span class="mono">releases</span> array and per-item <span class="mono">original_url</span> or <span class="mono">document_url</span> values.</div>
+  <div class="footer-note">Use <span class="mono">json_feed</span> for feeds with a top-level <span class="mono">releases</span> array and per-item <span class="mono">original_url</span> or <span class="mono">document_url</span>. Use <span class="mono">etenders_portal</span> with a public opportunities page such as <span class="mono">https://www.etenders.gov.za/Home/opportunities?id=1</span>.</div>
   <div class="actions"><button type="submit">Add source</button></div>
 </form>
 {{end}}

@@ -156,7 +156,7 @@ func (a *App) AdminCreateSource(w http.ResponseWriter, r *http.Request) {
 	if sourceType == "" {
 		sourceType = source.TypeJSONFeed
 	}
-	if sourceType != source.TypeJSONFeed {
+	if sourceType != source.TypeJSONFeed && sourceType != source.TypeETendersPortal {
 		http.Error(w, "unsupported source type", 400)
 		return
 	}
