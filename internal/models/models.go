@@ -112,8 +112,9 @@ type SavedSearch struct {
 	CreatedAt, UpdatedAt                       time.Time
 }
 type SyncRun struct {
-	ID, SourceKey, Status, Message string
-	StartedAt, FinishedAt          time.Time
+	ID, SourceKey, Status, Message, Trigger string
+	ItemCount                               int
+	StartedAt, FinishedAt                   time.Time
 }
 type ExtractionJob struct {
 	ID, TenderID, DocumentURL, LastError string
@@ -122,14 +123,22 @@ type ExtractionJob struct {
 	NextAttemptAt, CreatedAt, UpdatedAt  time.Time
 }
 type SourceHealth struct {
-	SourceKey, LastStatus, LastMessage string
-	LastSyncAt                         time.Time
-	LastItemCount                      int
+	SourceKey, LastStatus, LastMessage, HealthStatus, LastTrigger          string
+	LastSyncAt, LastCheckedAt, LastSuccessfulCheckAt, NextScheduledCheckAt time.Time
+	LastItemCount, ConsecutiveFailures                                     int
+	Running, PendingManualCheck                                            bool
 }
 type SourceConfig struct {
-	ID, Key, Name, Type, FeedURL string
-	Enabled                      bool
-	CreatedAt, UpdatedAt         time.Time
+	ID, Key, Name, Type, FeedURL                   string
+	Enabled, ManualChecksEnabled, AutoCheckEnabled bool
+	IntervalMinutes                                int
+	CreatedAt, UpdatedAt                           time.Time
+}
+type SourceScheduleSettings struct {
+	ID                     string
+	DefaultIntervalMinutes int
+	Paused                 bool
+	CreatedAt, UpdatedAt   time.Time
 }
 type Session struct {
 	UserID, TenantID, CSRF string

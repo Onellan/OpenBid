@@ -1,16 +1,25 @@
 {{define "sources.html"}}{{template "base" .}}{{end}}{{define "content"}}
 {{template "page_hero" (dict
   "eyebrow" "Sources"
-  "title" "Source configuration and sync health"
-  "copy" "Monitor feed health in one place and, when permitted, add new sources directly from the front end."
+  "title" "Source checks, schedules, and sync health"
+  "copy" "Control when each source runs, trigger checks on demand, and keep operations lightweight from one admin screen."
 )}}
 
 <div style="margin-top:18px">{{template "flash_messages" .}}</div>
 
 <div class="split" style="margin-top:18px">
   <section class="card">
-    {{template "card_header" (dict "title" "Feed health" "subtitle" "See whether feeds are configured, succeeding, or failing and how many items they produced.")}}
-    <div class="table-wrap" style="margin-top:14px">{{template "source_config_table_typed" .}}</div>
+    {{template "card_header" (dict "title" "Scheduling" "subtitle" "Set the global default interval, pause scheduled checks if needed, and trigger enabled sources manually.")}}
+    {{if .CanManageSources}}
+      <div style="margin-top:14px">{{template "source_schedule_form" .}}</div>
+      <form method="post" action="/sources/check-all" style="margin-top:14px">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <button type="submit">Check all enabled sources now</button>
+      </form>
+    {{else}}
+      <div class="footer-note" style="margin-top:14px">Default interval: every {{.ScheduleSettings.DefaultIntervalMinutes}} minutes</div>
+      <div class="footer-note" style="margin-top:6px">Scheduled checks: {{if .ScheduleSettings.Paused}}Paused{{else}}Active{{end}}</div>
+    {{end}}
   </section>
 
   <section class="card">
@@ -23,4 +32,22 @@
     {{end}}
   </section>
 </div>
+
+<section class="card" style="margin-top:18px">
+  {{template "card_header" (dict "title" "Source operations" "subtitle" "Run single sources, queue selected checks, or update per-source timing without leaving this page.")}}
+  {{if .CanManageSources}}
+  <form id="bulk-source-check-form" method="post" action="/sources/check-selected" style="margin:14px 0 0">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  </form>
+  <div class="actions" style="margin-bottom:14px">
+    <button type="submit" form="bulk-source-check-form">Check selected sources</button>
+  </div>
+  {{end}}
+  <div class="table-wrap">{{template "source_config_table_typed" .}}</div>
+</section>
+
+<section class="card" style="margin-top:18px">
+  {{template "card_header" (dict "title" "Recent execution history" "subtitle" "Review the latest scheduled and manual source runs, outcomes, and item counts.")}}
+  <div class="table-wrap" style="margin-top:14px">{{template "source_recent_runs_table" .}}</div>
+</section>
 {{end}}

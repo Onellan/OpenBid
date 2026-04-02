@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 )
 
 func dict(values ...any) (map[string]any, error) {
@@ -43,16 +44,23 @@ func templateFuncs() template.FuncMap {
 	return template.FuncMap{
 		"dict":  dict,
 		"slice": func(values ...any) []any { return values },
+		"formatTime": func(value any) string {
+			t, ok := value.(time.Time)
+			if !ok || t.IsZero() {
+				return "Not scheduled"
+			}
+			return t.Local().Format("2006-01-02 15:04")
+		},
 		"hasPrefix": func(value, prefix string) bool {
 			return strings.HasPrefix(value, prefix)
 		},
 		"condTone": func(state string) string {
 			switch state {
-			case "completed":
+			case "completed", "healthy", "success":
 				return "success"
-			case "failed":
+			case "failed", "failing", "degraded", "disabled":
 				return "danger"
-			case "processing", "queued", "retry":
+			case "processing", "queued", "retry", "running", "paused", "manual-only":
 				return "warning"
 			default:
 				return "info"
@@ -152,10 +160,21 @@ func routes(a *App) http.Handler {
 	mux.HandleFunc("/admin/tenants", a.RequireAuth(a.AdminTenants))
 	mux.HandleFunc("/admin/tenants/create", a.RequireAuth(a.AdminCreateTenant))
 	mux.HandleFunc("/sources", a.RequireAuth(a.SourcesPage))
+	mux.HandleFunc("/sources/status.json", a.RequireAuth(a.SourceStatusJSON))
 	mux.HandleFunc("/sources/create", a.RequireAuth(a.AdminCreateSource))
+	mux.HandleFunc("/sources/update", a.RequireAuth(a.AdminUpdateSource))
+	mux.HandleFunc("/sources/check", a.RequireAuth(a.AdminTriggerSourceCheck))
+	mux.HandleFunc("/sources/check-selected", a.RequireAuth(a.AdminTriggerSelectedSourceChecks))
+	mux.HandleFunc("/sources/check-all", a.RequireAuth(a.AdminTriggerAllSourceChecks))
+	mux.HandleFunc("/sources/schedule", a.RequireAuth(a.AdminUpdateSourceSchedule))
 	mux.HandleFunc("/sources/delete", a.RequireAuth(a.AdminDeleteSource))
 	mux.HandleFunc("/admin/sources", a.RequireAuth(a.AdminSources))
 	mux.HandleFunc("/admin/sources/create", a.RequireAuth(a.AdminCreateSource))
+	mux.HandleFunc("/admin/sources/update", a.RequireAuth(a.AdminUpdateSource))
+	mux.HandleFunc("/admin/sources/check", a.RequireAuth(a.AdminTriggerSourceCheck))
+	mux.HandleFunc("/admin/sources/check-selected", a.RequireAuth(a.AdminTriggerSelectedSourceChecks))
+	mux.HandleFunc("/admin/sources/check-all", a.RequireAuth(a.AdminTriggerAllSourceChecks))
+	mux.HandleFunc("/admin/sources/schedule", a.RequireAuth(a.AdminUpdateSourceSchedule))
 	mux.HandleFunc("/admin/sources/delete", a.RequireAuth(a.AdminDeleteSource))
 	mux.HandleFunc("/tenant/switch", a.RequireAuth(a.SwitchTenant))
 	return a.WithSecurityHeaders(mux)

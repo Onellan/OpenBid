@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -314,8 +315,162 @@ func TestAdminSourcesPageRendersSourceManagementContent(t *testing.T) {
 		t.Fatalf("expected 200 got %d", w.Code)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, "Source configuration and sync health") || !strings.Contains(body, "Add source") {
+	if !strings.Contains(body, "Source checks, schedules, and sync health") || !strings.Contains(body, "Add source") {
 		t.Fatalf("sources page missing expected content: %s", body)
+	}
+}
+
+func TestAdminTriggerSingleSourceCheckQueuesPending(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, csrf := adminSession(t, a)
+	_ = a.Store.UpsertSourceScheduleSettings(t.Context(), models.SourceScheduleSettings{ID: "global", DefaultIntervalMinutes: 60})
+	_ = a.Store.UpsertSourceConfig(t.Context(), models.SourceConfig{Key: "metro", Name: "Metro", Type: "json_feed", FeedURL: "https://example.org/feed.json", Enabled: true, ManualChecksEnabled: true, AutoCheckEnabled: true})
+	_ = a.Store.UpsertSourceHealth(t.Context(), models.SourceHealth{SourceKey: "metro"})
+
+	form := url.Values{"csrf_token": {csrf}, "key": {"metro"}}
+	req := httptest.NewRequest(http.MethodPost, "/sources/check", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", w.Code)
+	}
+	health, err := a.Store.GetSourceHealth(t.Context(), "metro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !health.PendingManualCheck || health.LastStatus != "queued" {
+		t.Fatalf("expected queued manual check, got %#v", health)
+	}
+}
+
+func TestAdminTriggerSelectedSourceChecksQueuesMultiple(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, csrf := adminSession(t, a)
+	_ = a.Store.UpsertSourceScheduleSettings(t.Context(), models.SourceScheduleSettings{ID: "global", DefaultIntervalMinutes: 60})
+	for _, key := range []string{"one", "two"} {
+		_ = a.Store.UpsertSourceConfig(t.Context(), models.SourceConfig{Key: key, Name: key, Type: "json_feed", FeedURL: "https://example.org/" + key + ".json", Enabled: true, ManualChecksEnabled: true, AutoCheckEnabled: true})
+		_ = a.Store.UpsertSourceHealth(t.Context(), models.SourceHealth{SourceKey: key})
+	}
+	form := url.Values{"csrf_token": {csrf}, "source_keys": {"one", "two"}}
+	req := httptest.NewRequest(http.MethodPost, "/sources/check-selected", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", w.Code)
+	}
+	for _, key := range []string{"one", "two"} {
+		health, _ := a.Store.GetSourceHealth(t.Context(), key)
+		if !health.PendingManualCheck {
+			t.Fatalf("expected %s to be queued, got %#v", key, health)
+		}
+	}
+}
+
+func TestAdminTriggerAllSourceChecksQueuesEnabledOnly(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, csrf := adminSession(t, a)
+	_ = a.Store.UpsertSourceScheduleSettings(t.Context(), models.SourceScheduleSettings{ID: "global", DefaultIntervalMinutes: 60})
+	configs := []models.SourceConfig{
+		{Key: "enabled", Name: "Enabled", Type: "json_feed", FeedURL: "https://example.org/enabled.json", Enabled: true, ManualChecksEnabled: true, AutoCheckEnabled: true},
+		{Key: "disabled", Name: "Disabled", Type: "json_feed", FeedURL: "https://example.org/disabled.json", Enabled: false, ManualChecksEnabled: true, AutoCheckEnabled: true},
+	}
+	for _, cfg := range configs {
+		_ = a.Store.UpsertSourceConfig(t.Context(), cfg)
+		_ = a.Store.UpsertSourceHealth(t.Context(), models.SourceHealth{SourceKey: cfg.Key})
+	}
+	form := url.Values{"csrf_token": {csrf}}
+	req := httptest.NewRequest(http.MethodPost, "/sources/check-all", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", w.Code)
+	}
+	enabledHealth, _ := a.Store.GetSourceHealth(t.Context(), "enabled")
+	disabledHealth, _ := a.Store.GetSourceHealth(t.Context(), "disabled")
+	if !enabledHealth.PendingManualCheck || disabledHealth.PendingManualCheck {
+		t.Fatalf("expected only enabled source queued, enabled=%#v disabled=%#v", enabledHealth, disabledHealth)
+	}
+}
+
+func TestAdminUpdateSourceScheduleStoresSettings(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, csrf := adminSession(t, a)
+	form := url.Values{"csrf_token": {csrf}, "default_interval_minutes": {"90"}, "paused": {"on"}}
+	req := httptest.NewRequest(http.MethodPost, "/sources/schedule", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", w.Code)
+	}
+	settings, err := a.Store.GetSourceScheduleSettings(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.DefaultIntervalMinutes != 90 || !settings.Paused {
+		t.Fatalf("unexpected settings: %#v", settings)
+	}
+}
+
+func TestAdminUpdateSourceStoresOverrideAndFlags(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, csrf := adminSession(t, a)
+	_ = a.Store.UpsertSourceScheduleSettings(t.Context(), models.SourceScheduleSettings{ID: "global", DefaultIntervalMinutes: 60})
+	_ = a.Store.UpsertSourceConfig(t.Context(), models.SourceConfig{Key: "metro", Name: "Metro", Type: "json_feed", FeedURL: "https://example.org/feed.json", Enabled: true, ManualChecksEnabled: true, AutoCheckEnabled: true})
+	_ = a.Store.UpsertSourceHealth(t.Context(), models.SourceHealth{SourceKey: "metro"})
+	form := url.Values{"csrf_token": {csrf}, "key": {"metro"}, "enabled": {"on"}, "interval_minutes": {"15"}}
+	req := httptest.NewRequest(http.MethodPost, "/sources/update", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", w.Code)
+	}
+	cfg, err := a.Store.GetSourceConfig(t.Context(), "metro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Enabled || cfg.AutoCheckEnabled || cfg.IntervalMinutes != 15 {
+		t.Fatalf("unexpected updated config: %#v", cfg)
+	}
+	health, _ := a.Store.GetSourceHealth(t.Context(), "metro")
+	if !health.NextScheduledCheckAt.IsZero() {
+		t.Fatalf("expected no next schedule when auto-check disabled, got %#v", health)
+	}
+}
+
+func TestSourceStatusJSONReturnsSchedulingMetadata(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := adminSession(t, a)
+	_ = a.Store.UpsertSourceScheduleSettings(t.Context(), models.SourceScheduleSettings{ID: "global", DefaultIntervalMinutes: 75})
+	_ = a.Store.UpsertSourceConfig(t.Context(), models.SourceConfig{Key: "metro", Name: "Metro", Type: "json_feed", FeedURL: "https://example.org/feed.json", Enabled: true, ManualChecksEnabled: true, AutoCheckEnabled: true})
+	_ = a.Store.UpsertSourceHealth(t.Context(), models.SourceHealth{SourceKey: "metro", HealthStatus: "healthy"})
+
+	req := httptest.NewRequest(http.MethodGet, "/sources/status.json", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	var payload struct {
+		Settings models.SourceScheduleSettings `json:"settings"`
+		Configs  []models.SourceConfig         `json:"configs"`
+		Health   []models.SourceHealth         `json:"health"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Settings.DefaultIntervalMinutes != 75 || len(payload.Configs) == 0 || len(payload.Health) == 0 {
+		t.Fatalf("unexpected source status payload: %#v", payload)
 	}
 }
 func TestLoginPageRendersSignInContent(t *testing.T) {
@@ -401,7 +556,7 @@ func TestRouteAccessibilityAndPageRendering(t *testing.T) {
 		"/bookmarks":      "Keep active opportunities separate",
 		"/saved-searches": "Reusable market views",
 		"/queue":          "Queue and extraction monitoring",
-		"/sources":        "Source configuration and sync health",
+		"/sources":        "Source checks, schedules, and sync health",
 		"/settings":       "Account and security settings",
 	}
 	for path, marker := range routes {

@@ -162,3 +162,173 @@ func TestProcessJobsMergesPageAndDocumentFacts(t *testing.T) {
 		t.Fatalf("expected promoted briefing, got %#v", updated.Briefings)
 	}
 }
+
+func TestProcessSourceChecksManualSingleTrigger(t *testing.T) {
+	s, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 4, 3, 9, 0, 0, 0, time.UTC)
+	if err := s.UpsertSourceScheduleSettings(ctx, models.SourceScheduleSettings{ID: "global", DefaultIntervalMinutes: 60}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"releases": []map[string]any{{
+				"ocid":           "ocid-1",
+				"title":          "Manual check tender",
+				"issuer":         "Metro",
+				"status":         "open",
+				"original_url":   "https://example.org/t/1",
+				"document_url":   "https://example.org/d/1.pdf",
+				"published_date": "2026-04-03",
+			}},
+		})
+	}))
+	defer server.Close()
+	cfg := models.SourceConfig{
+		Key:                 "manual-feed",
+		Name:                "Manual Feed",
+		Type:                source.TypeJSONFeed,
+		FeedURL:             server.URL,
+		Enabled:             true,
+		ManualChecksEnabled: true,
+		AutoCheckEnabled:    false,
+	}
+	if err := s.UpsertSourceConfig(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertSourceHealth(ctx, models.SourceHealth{SourceKey: cfg.Key, PendingManualCheck: true, LastStatus: "queued"}); err != nil {
+		t.Fatal(err)
+	}
+	r := Runner{Store: s, Extractor: extract.New("http://127.0.0.1:1"), SyncEvery: time.Hour, LoopEvery: time.Second, Now: func() time.Time { return now }}
+	r.processSourceChecks(ctx)
+
+	health, err := s.GetSourceHealth(ctx, cfg.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if health.PendingManualCheck || health.LastStatus != "success" || health.LastTrigger != "manual" {
+		t.Fatalf("expected successful manual run, got %#v", health)
+	}
+	if !health.NextScheduledCheckAt.IsZero() {
+		t.Fatalf("manual-only source should not have next schedule, got %v", health.NextScheduledCheckAt)
+	}
+	runs, err := s.ListSyncRuns(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].Trigger != "manual" {
+		t.Fatalf("expected one manual sync run, got %#v", runs)
+	}
+	items, total, err := s.ListTenders(ctx, store.ListFilter{Page: 1, PageSize: 20})
+	if err != nil || total != 1 || len(items) != 1 {
+		t.Fatalf("expected imported tender, err=%v total=%d len=%d", err, total, len(items))
+	}
+}
+
+func TestProcessSourceChecksScheduledUsesOverrideAndSkipsDisabledOrManualOnly(t *testing.T) {
+	s, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 4, 3, 9, 0, 0, 0, time.UTC)
+	if err := s.UpsertSourceScheduleSettings(ctx, models.SourceScheduleSettings{ID: "global", DefaultIntervalMinutes: 120}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"releases": []map[string]any{}})
+	}))
+	defer server.Close()
+	configs := []models.SourceConfig{
+		{Key: "override", Name: "Override", Type: source.TypeJSONFeed, FeedURL: server.URL, Enabled: true, ManualChecksEnabled: true, AutoCheckEnabled: true, IntervalMinutes: 15},
+		{Key: "manual-only", Name: "Manual Only", Type: source.TypeJSONFeed, FeedURL: server.URL, Enabled: true, ManualChecksEnabled: true, AutoCheckEnabled: false},
+		{Key: "disabled", Name: "Disabled", Type: source.TypeJSONFeed, FeedURL: server.URL, Enabled: false, ManualChecksEnabled: true, AutoCheckEnabled: true},
+	}
+	for _, cfg := range configs {
+		if err := s.UpsertSourceConfig(ctx, cfg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = s.UpsertSourceHealth(ctx, models.SourceHealth{SourceKey: "override", NextScheduledCheckAt: now.Add(-time.Minute)})
+	_ = s.UpsertSourceHealth(ctx, models.SourceHealth{SourceKey: "manual-only", NextScheduledCheckAt: now.Add(-time.Minute)})
+	_ = s.UpsertSourceHealth(ctx, models.SourceHealth{SourceKey: "disabled", NextScheduledCheckAt: now.Add(-time.Minute)})
+
+	r := Runner{Store: s, Extractor: extract.New("http://127.0.0.1:1"), SyncEvery: 2 * time.Hour, LoopEvery: time.Second, Now: func() time.Time { return now }}
+	r.processSourceChecks(ctx)
+
+	overrideHealth, _ := s.GetSourceHealth(ctx, "override")
+	manualHealth, _ := s.GetSourceHealth(ctx, "manual-only")
+	disabledHealth, _ := s.GetSourceHealth(ctx, "disabled")
+	if overrideHealth.LastStatus != "success" {
+		t.Fatalf("expected scheduled source to run, got %#v", overrideHealth)
+	}
+	if got := overrideHealth.NextScheduledCheckAt.Sub(now); got != 15*time.Minute {
+		t.Fatalf("expected override next run in 15m, got %v", got)
+	}
+	if manualHealth.LastCheckedAt != (time.Time{}) {
+		t.Fatalf("manual-only source should not auto-run, got %#v", manualHealth)
+	}
+	if disabledHealth.LastCheckedAt != (time.Time{}) {
+		t.Fatalf("disabled source should not run, got %#v", disabledHealth)
+	}
+}
+
+func TestProcessSourceChecksPreventsDuplicateOverlap(t *testing.T) {
+	s, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 4, 3, 9, 0, 0, 0, time.UTC)
+	_ = s.UpsertSourceScheduleSettings(ctx, models.SourceScheduleSettings{ID: "global", DefaultIntervalMinutes: 60})
+	cfg := models.SourceConfig{Key: "busy", Name: "Busy", Type: source.TypeJSONFeed, Enabled: true, ManualChecksEnabled: true, AutoCheckEnabled: true}
+	_ = s.UpsertSourceConfig(ctx, cfg)
+	_ = s.UpsertSourceHealth(ctx, models.SourceHealth{SourceKey: "busy", Running: true, PendingManualCheck: true, NextScheduledCheckAt: now.Add(-time.Minute)})
+
+	r := Runner{Store: s, Extractor: extract.New("http://127.0.0.1:1"), SyncEvery: time.Hour, LoopEvery: time.Second, Now: func() time.Time { return now }}
+	r.processSourceChecks(ctx)
+
+	health, _ := s.GetSourceHealth(ctx, "busy")
+	if !health.Running || !health.PendingManualCheck {
+		t.Fatalf("expected running source to remain pending without overlap, got %#v", health)
+	}
+	runs, _ := s.ListSyncRuns(ctx)
+	if len(runs) != 0 {
+		t.Fatalf("expected no sync run while source marked running, got %#v", runs)
+	}
+}
+
+func TestProcessSourceChecksFailureBackoff(t *testing.T) {
+	s, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 4, 3, 9, 0, 0, 0, time.UTC)
+	_ = s.UpsertSourceScheduleSettings(ctx, models.SourceScheduleSettings{ID: "global", DefaultIntervalMinutes: 180})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusBadGateway)
+	}))
+	defer server.Close()
+	cfg := models.SourceConfig{Key: "failing", Name: "Failing", Type: source.TypeJSONFeed, FeedURL: server.URL, Enabled: true, ManualChecksEnabled: true, AutoCheckEnabled: true}
+	_ = s.UpsertSourceConfig(ctx, cfg)
+	_ = s.UpsertSourceHealth(ctx, models.SourceHealth{SourceKey: "failing", NextScheduledCheckAt: now.Add(-time.Minute)})
+
+	r := Runner{Store: s, Extractor: extract.New("http://127.0.0.1:1"), SyncEvery: 3 * time.Hour, LoopEvery: time.Second, Now: func() time.Time { return now }}
+	r.processSourceChecks(ctx)
+
+	health, _ := s.GetSourceHealth(ctx, "failing")
+	if health.LastStatus != "failed" || health.ConsecutiveFailures != 1 {
+		t.Fatalf("expected failed health state, got %#v", health)
+	}
+	if got := health.NextScheduledCheckAt.Sub(now); got != 5*time.Minute {
+		t.Fatalf("expected 5m retry backoff, got %v", got)
+	}
+}

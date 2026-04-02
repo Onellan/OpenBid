@@ -67,11 +67,15 @@ type Store interface {
 	ListSyncRuns(context.Context) ([]models.SyncRun, error)
 	AddSyncRun(context.Context, models.SyncRun) error
 	ListSourceConfigs(context.Context) ([]models.SourceConfig, error)
+	GetSourceConfig(context.Context, string) (models.SourceConfig, error)
 	UpsertSourceConfig(context.Context, models.SourceConfig) error
 	DeleteSourceConfig(context.Context, string) error
 	ListSourceHealth(context.Context) ([]models.SourceHealth, error)
+	GetSourceHealth(context.Context, string) (models.SourceHealth, error)
 	UpsertSourceHealth(context.Context, models.SourceHealth) error
 	DeleteSourceHealth(context.Context, string) error
+	GetSourceScheduleSettings(context.Context) (models.SourceScheduleSettings, error)
+	UpsertSourceScheduleSettings(context.Context, models.SourceScheduleSettings) error
 
 	ListJobs(context.Context) ([]models.ExtractionJob, error)
 	QueueJob(context.Context, models.ExtractionJob) error

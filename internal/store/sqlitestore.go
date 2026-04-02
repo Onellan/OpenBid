@@ -17,7 +17,7 @@ import (
 	"tenderhub-za/internal/models"
 )
 
-const currentSchemaVersion = 1
+const currentSchemaVersion = 2
 
 type SQLiteStore struct {
 	db   *sql.DB
@@ -92,12 +92,13 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		`create table if not exists saved_searches (id text primary key, payload text not null);`,
 		`create table if not exists sync_runs (id text primary key, payload text not null);`,
 		`create table if not exists source_configs (id text primary key, payload text not null);`,
+		`create table if not exists source_schedule_settings (id text primary key, payload text not null);`,
 		`create table if not exists jobs (id text primary key, payload text not null);`,
 		`create table if not exists source_health (id text primary key, payload text not null);`,
 		`create table if not exists audit_entries (id text primary key, payload text not null);`,
 		`create table if not exists workflow_events (id text primary key, payload text not null);`,
 		fmt.Sprintf(`pragma user_version = %d;`, currentSchemaVersion),
-		`insert into schema_meta(key,value) values('schema_version','1') on conflict(key) do update set value='1';`,
+		`insert into schema_meta(key,value) values('schema_version','2') on conflict(key) do update set value='2';`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
@@ -502,6 +503,19 @@ func (s *SQLiteStore) ListSourceConfigs(ctx context.Context) ([]models.SourceCon
 	})
 	return out, nil
 }
+func (s *SQLiteStore) GetSourceConfig(ctx context.Context, key string) (models.SourceConfig, error) {
+	items, err := s.ListSourceConfigs(ctx)
+	if err != nil {
+		return models.SourceConfig{}, err
+	}
+	key = strings.TrimSpace(key)
+	for _, item := range items {
+		if item.Key == key || item.ID == key {
+			return item, nil
+		}
+	}
+	return models.SourceConfig{}, ErrNotFound
+}
 func (s *SQLiteStore) UpsertSourceConfig(ctx context.Context, v models.SourceConfig) error {
 	now := time.Now().UTC()
 	if v.ID == "" {
@@ -522,6 +536,9 @@ func (s *SQLiteStore) ListSourceHealth(ctx context.Context) ([]models.SourceHeal
 	sort.Slice(out, func(i, j int) bool { return out[i].SourceKey < out[j].SourceKey })
 	return out, nil
 }
+func (s *SQLiteStore) GetSourceHealth(ctx context.Context, sourceKey string) (models.SourceHealth, error) {
+	return sqliteGetJSON[models.SourceHealth](ctx, s.db, "source_health", sourceKey)
+}
 func (s *SQLiteStore) UpsertSourceHealth(ctx context.Context, v models.SourceHealth) error {
 	key := v.SourceKey
 	if key == "" {
@@ -531,6 +548,20 @@ func (s *SQLiteStore) UpsertSourceHealth(ctx context.Context, v models.SourceHea
 }
 func (s *SQLiteStore) DeleteSourceHealth(ctx context.Context, sourceKey string) error {
 	return sqliteDelete(ctx, s.db, "source_health", sourceKey)
+}
+func (s *SQLiteStore) GetSourceScheduleSettings(ctx context.Context) (models.SourceScheduleSettings, error) {
+	return sqliteGetJSON[models.SourceScheduleSettings](ctx, s.db, "source_schedule_settings", "global")
+}
+func (s *SQLiteStore) UpsertSourceScheduleSettings(ctx context.Context, v models.SourceScheduleSettings) error {
+	now := time.Now().UTC()
+	if v.ID == "" {
+		v.ID = "global"
+	}
+	if v.CreatedAt.IsZero() {
+		v.CreatedAt = now
+	}
+	v.UpdatedAt = now
+	return sqliteUpsertJSON(ctx, s.db, "source_schedule_settings", v.ID, v)
 }
 func (s *SQLiteStore) ListJobs(ctx context.Context) ([]models.ExtractionJob, error) {
 	out, err := sqliteListJSON[models.ExtractionJob](ctx, s.db, "jobs")

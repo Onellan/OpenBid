@@ -7,6 +7,7 @@ import (
 	"sync"
 	"tenderhub-za/internal/models"
 	"testing"
+	"time"
 )
 
 func TestSQLiteStoreBasicFlow(t *testing.T) {
@@ -177,5 +178,68 @@ func TestSQLiteTenderRoundTripsStructuredFields(t *testing.T) {
 	}
 	if stored.DocumentFacts["cidb_hints"] != "CIDB 3GB" || stored.PageFacts["closing_details"] == "" {
 		t.Fatalf("expected fact maps to round-trip, got page=%#v doc=%#v", stored.PageFacts, stored.DocumentFacts)
+	}
+}
+
+func TestSQLiteSourceSchedulingRoundTrips(t *testing.T) {
+	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+
+	settings := models.SourceScheduleSettings{ID: "global", DefaultIntervalMinutes: 45, Paused: true}
+	if err := s.UpsertSourceScheduleSettings(ctx, settings); err != nil {
+		t.Fatal(err)
+	}
+	cfg := models.SourceConfig{
+		Key:                 "metro",
+		Name:                "Metro",
+		Type:                "json_feed",
+		FeedURL:             "https://example.org/feed.json",
+		Enabled:             true,
+		ManualChecksEnabled: true,
+		AutoCheckEnabled:    true,
+		IntervalMinutes:     15,
+	}
+	if err := s.UpsertSourceConfig(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	health := models.SourceHealth{
+		SourceKey:             "metro",
+		LastStatus:            "success",
+		HealthStatus:          "healthy",
+		LastItemCount:         3,
+		ConsecutiveFailures:   0,
+		LastCheckedAt:         time.Now().UTC(),
+		LastSuccessfulCheckAt: time.Now().UTC(),
+		NextScheduledCheckAt:  time.Now().UTC().Add(15 * time.Minute),
+		PendingManualCheck:    true,
+	}
+	if err := s.UpsertSourceHealth(ctx, health); err != nil {
+		t.Fatal(err)
+	}
+
+	storedSettings, err := s.GetSourceScheduleSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedSettings.DefaultIntervalMinutes != 45 || !storedSettings.Paused {
+		t.Fatalf("unexpected stored settings: %#v", storedSettings)
+	}
+	storedConfig, err := s.GetSourceConfig(ctx, "metro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !storedConfig.AutoCheckEnabled || storedConfig.IntervalMinutes != 15 {
+		t.Fatalf("unexpected stored config: %#v", storedConfig)
+	}
+	storedHealth, err := s.GetSourceHealth(ctx, "metro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !storedHealth.PendingManualCheck || storedHealth.HealthStatus != "healthy" {
+		t.Fatalf("unexpected stored health: %#v", storedHealth)
 	}
 }

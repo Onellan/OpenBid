@@ -95,6 +95,12 @@ func (a *App) seed(ctx context.Context) error {
 			return err
 		}
 	}
+	if err := a.ensureSourceScheduleSettings(ctx, seededUsers); err != nil {
+		return err
+	}
+	if err := a.ensureSourceHealthState(ctx); err != nil {
+		return err
+	}
 	registry := a.mustLoadSourceRegistry(ctx)
 	a.Sources = registry
 	if seededUsers {
@@ -125,6 +131,89 @@ func (a *App) ensureSourceConfigs(ctx context.Context) error {
 	return nil
 }
 
+func (a *App) defaultSourceScheduleSettings() models.SourceScheduleSettings {
+	return source.NormalizeScheduleSettings(models.SourceScheduleSettings{
+		ID:                     "global",
+		DefaultIntervalMinutes: a.Config.WorkerSyncMinutes,
+	}, a.Config.WorkerSyncMinutes)
+}
+
+func (a *App) loadSourceScheduleSettings(ctx context.Context) models.SourceScheduleSettings {
+	settings, err := a.Store.GetSourceScheduleSettings(ctx)
+	if err != nil {
+		return a.defaultSourceScheduleSettings()
+	}
+	return source.NormalizeScheduleSettings(settings, a.Config.WorkerSyncMinutes)
+}
+
+func (a *App) ensureSourceScheduleSettings(ctx context.Context, migrateLegacy bool) error {
+	if _, err := a.Store.GetSourceScheduleSettings(ctx); err == nil {
+		return nil
+	}
+	settings := a.defaultSourceScheduleSettings()
+	if err := a.Store.UpsertSourceScheduleSettings(ctx, settings); err != nil {
+		return err
+	}
+	if !migrateLegacy {
+		configs, err := a.Store.ListSourceConfigs(ctx)
+		if err != nil {
+			return err
+		}
+		for _, cfg := range configs {
+			cfg.ManualChecksEnabled = true
+			if !cfg.AutoCheckEnabled {
+				cfg.AutoCheckEnabled = true
+			}
+			if err := a.Store.UpsertSourceConfig(ctx, cfg); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (a *App) ensureSourceHealthState(ctx context.Context) error {
+	configs, err := a.Store.ListSourceConfigs(ctx)
+	if err != nil {
+		return err
+	}
+	settings := a.loadSourceScheduleSettings(ctx)
+	healthItems, err := a.Store.ListSourceHealth(ctx)
+	if err != nil {
+		return err
+	}
+	healthByKey := map[string]models.SourceHealth{}
+	for _, item := range healthItems {
+		item.Running = false
+		healthByKey[item.SourceKey] = item
+	}
+	now := time.Now().UTC()
+	for _, cfg := range configs {
+		if !cfg.ManualChecksEnabled {
+			cfg.ManualChecksEnabled = true
+			if err := a.Store.UpsertSourceConfig(ctx, cfg); err != nil {
+				return err
+			}
+		}
+		health := healthByKey[cfg.Key]
+		health.SourceKey = cfg.Key
+		if health.LastStatus == "" {
+			health.LastStatus = "configured"
+		}
+		if health.LastMessage == "" {
+			health.LastMessage = "Waiting for the next source check."
+		}
+		if health.NextScheduledCheckAt.IsZero() {
+			health.NextScheduledCheckAt = source.InitialNextCheckAt(now, cfg, settings)
+		}
+		health.HealthStatus = source.ComputeHealthStatus(cfg, settings, health)
+		if err := a.Store.UpsertSourceHealth(ctx, health); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (a *App) loadSourceRegistry(ctx context.Context) (source.Registry, error) {
 	configs, err := a.Store.ListSourceConfigs(ctx)
 	if err != nil {
@@ -142,6 +231,7 @@ func (a *App) mustLoadSourceRegistry(ctx context.Context) source.Registry {
 }
 
 func (a *App) syncSources(ctx context.Context, registry source.Registry) error {
+	settings := a.loadSourceScheduleSettings(ctx)
 	for _, ad := range registry.Adapters {
 		items, msg, err := ad.Fetch(ctx)
 		status := "success"
@@ -150,8 +240,25 @@ func (a *App) syncSources(ctx context.Context, registry source.Registry) error {
 			msg = err.Error()
 		}
 		now := time.Now().UTC()
-		_ = a.Store.AddSyncRun(ctx, models.SyncRun{SourceKey: ad.Key(), StartedAt: now, FinishedAt: now, Status: status, Message: msg})
-		_ = a.Store.UpsertSourceHealth(ctx, models.SourceHealth{SourceKey: ad.Key(), LastSyncAt: now, LastStatus: status, LastMessage: msg, LastItemCount: len(items)})
+		_ = a.Store.AddSyncRun(ctx, models.SyncRun{SourceKey: ad.Key(), StartedAt: now, FinishedAt: now, Status: status, Message: msg, Trigger: "startup", ItemCount: len(items)})
+		cfg, _ := a.Store.GetSourceConfig(ctx, ad.Key())
+		health, _ := a.Store.GetSourceHealth(ctx, ad.Key())
+		health.SourceKey = ad.Key()
+		health.LastSyncAt = now
+		health.LastCheckedAt = now
+		health.LastStatus = status
+		health.LastMessage = msg
+		health.LastItemCount = len(items)
+		health.LastTrigger = "startup"
+		if err != nil {
+			health.ConsecutiveFailures++
+		} else {
+			health.ConsecutiveFailures = 0
+			health.LastSuccessfulCheckAt = now
+		}
+		health.NextScheduledCheckAt = source.NextScheduledCheckAt(now, cfg, settings, health.ConsecutiveFailures, err == nil)
+		health.HealthStatus = source.ComputeHealthStatus(cfg, settings, health)
+		_ = a.Store.UpsertSourceHealth(ctx, health)
 		for _, t := range items {
 			if t.DocumentStatus == "" {
 				t.DocumentStatus = models.ExtractionQueued

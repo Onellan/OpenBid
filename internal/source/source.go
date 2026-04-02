@@ -55,11 +55,13 @@ func NormalizeKey(raw string) string {
 
 func DefaultConfigs(feedURL string) []models.SourceConfig {
 	return []models.SourceConfig{{
-		Key:     "treasury",
-		Name:    "National Treasury",
-		Type:    TypeJSONFeed,
-		FeedURL: strings.TrimSpace(feedURL),
-		Enabled: true,
+		Key:                 "treasury",
+		Name:                "National Treasury",
+		Type:                TypeJSONFeed,
+		FeedURL:             strings.TrimSpace(feedURL),
+		Enabled:             true,
+		ManualChecksEnabled: true,
+		AutoCheckEnabled:    true,
 	}}
 }
 
