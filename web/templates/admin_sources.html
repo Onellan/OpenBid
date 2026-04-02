@@ -1,0 +1,23 @@
+{{define "admin_sources.html"}}{{template "base" .}}{{end}}{{define "content"}}
+{{template "page_hero" (dict
+  "eyebrow" "Administration"
+  "title" "Configure opportunity sources from the front end"
+  "copy" "Add new feed-backed sources without editing code, then let the worker pick them up on the next sync cycle."
+)}}
+
+<div style="margin-top:18px">{{template "flash_messages" .}}</div>
+
+<div class="split" style="margin-top:18px">
+  <section class="card">
+    {{template "card_header" (dict "title" "Add source" "subtitle" "Register a new feed and OpenBid will start syncing it through the worker.")}}
+    <div style="margin-top:14px">{{template "create_source_form" .}}</div>
+  </section>
+
+  {{template "entity_table_card" (dict
+    "title" "Configured sources"
+    "subtitle" "Each saved source is available to the worker and reflected in dashboard health."
+    "inner" "source_config_table_typed"
+    "context" .
+  )}}
+</div>
+{{end}}

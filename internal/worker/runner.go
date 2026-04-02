@@ -12,6 +12,7 @@ import (
 type Runner struct {
 	Store                store.Store
 	Sources              source.Registry
+	SourceLoad           func(context.Context) (source.Registry, error)
 	Extractor            *extract.Client
 	SyncEvery, LoopEvery time.Duration
 }
@@ -34,7 +35,13 @@ func (r Runner) Run(ctx context.Context) error {
 	}
 }
 func (r Runner) syncAll(ctx context.Context) {
-	for _, ad := range r.Sources.Adapters {
+	registry := r.Sources
+	if r.SourceLoad != nil {
+		if loaded, err := r.SourceLoad(ctx); err == nil {
+			registry = loaded
+		}
+	}
+	for _, ad := range registry.Adapters {
 		started := time.Now().UTC()
 		items, msg, err := ad.Fetch(ctx)
 		status := "success"

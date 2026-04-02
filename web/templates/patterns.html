@@ -17,7 +17,7 @@
 <section class="card">
   {{template "card_header" (dict "title" .title "subtitle" .subtitle "meta" .meta)}}
   <div class="table-wrap" style="margin-top:14px">
-    {{if eq .inner "saved_search_table_typed"}}{{template "saved_search_table_typed" .context}}{{else if eq .inner "pipeline_jobs_table_typed"}}{{template "pipeline_jobs_table_typed" .context}}{{else if eq .inner "user_table_typed"}}{{template "user_table_typed" .context}}{{else if eq .inner "membership_table_typed"}}{{template "membership_table_typed" .context}}{{else if eq .inner "tenant_table_typed"}}{{template "tenant_table_typed" .context}}{{else}}{{template "empty_state" "Unknown table view."}}{{end}}
+    {{if eq .inner "saved_search_table_typed"}}{{template "saved_search_table_typed" .context}}{{else if eq .inner "pipeline_jobs_table_typed"}}{{template "pipeline_jobs_table_typed" .context}}{{else if eq .inner "user_table_typed"}}{{template "user_table_typed" .context}}{{else if eq .inner "membership_table_typed"}}{{template "membership_table_typed" .context}}{{else if eq .inner "tenant_table_typed"}}{{template "tenant_table_typed" .context}}{{else if eq .inner "source_config_table_typed"}}{{template "source_config_table_typed" .context}}{{else}}{{template "empty_state" "Unknown table view."}}{{end}}
   </div>
 </section>
 {{end}}

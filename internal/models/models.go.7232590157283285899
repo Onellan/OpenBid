@@ -93,6 +93,7 @@ type Dashboard struct {
 	LowMemoryMode, AnalyticsEnabled                                                                    bool
 }
 
+
 type AuditEntry struct {
 	ID        string            `json:"id"`
 	TenantID  string            `json:"tenant_id"`

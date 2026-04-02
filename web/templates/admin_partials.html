@@ -95,3 +95,57 @@
   {{end}}
 </table>
 {{end}}
+
+{{define "create_source_form"}}
+<form method="post" action="/admin/sources/create" class="form-grid">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <label>Display name<input name="name" placeholder="City of Cape Town" required></label>
+  <label>Source key<input name="key" placeholder="Optional. Derived from the name if left blank."></label>
+  <label>Feed URL<input name="feed_url" type="url" placeholder="https://example.org/feed.json" required></label>
+  <label>Source type
+    <select name="type">
+      <option value="json_feed">JSON releases feed</option>
+    </select>
+  </label>
+  <div class="footer-note">The current front-end flow supports JSON feeds with a top-level <span class="mono">releases</span> array and per-item <span class="mono">original_url</span> or <span class="mono">document_url</span> values.</div>
+  <div class="actions"><button type="submit">Add source</button></div>
+</form>
+{{end}}
+
+{{define "source_config_table_typed"}}
+<table>
+  <tr><th>Name</th><th>Key</th><th>Type</th><th>Feed URL</th><th>Status</th><th>Items</th><th>Actions</th></tr>
+  {{range .Items}}
+  <tr>
+    <td>
+      <strong>{{.Config.Name}}</strong>
+      <div class="footer-note" style="margin-top:6px">{{if .Config.Enabled}}Enabled{{else}}Disabled{{end}}</div>
+    </td>
+    <td class="mono small">{{.Config.Key}}</td>
+    <td>{{.Config.Type}}</td>
+    <td class="small"><a href="{{.Config.FeedURL}}" target="_blank" rel="noreferrer">{{.Config.FeedURL}}</a></td>
+    <td>
+      {{if .Health.LastStatus}}
+        {{template "status_badge" (dict "tone" (condTone .Health.LastStatus) "label" .Health.LastStatus)}}
+        <div class="footer-note" style="margin-top:6px">{{.Health.LastMessage}}</div>
+      {{else}}
+        {{template "status_badge" (dict "tone" "info" "label" "configured")}}
+      {{end}}
+    </td>
+    <td>{{.Health.LastItemCount}}</td>
+    <td>
+      {{template "confirm_destructive_action" (dict
+        "action" "/admin/sources/delete"
+        "confirm" (printf "Remove source %s?" .Config.Name)
+        "csrf" $.CSRFToken
+        "inline" true
+        "hidden" (slice (dict "name" "id" "value" .Config.ID) (dict "name" "key" "value" .Config.Key))
+        "label" "Delete"
+      )}}
+    </td>
+  </tr>
+  {{else}}
+  <tr><td colspan="7">{{template "empty_state" "No sources configured yet."}}</td></tr>
+  {{end}}
+</table>
+{{end}}

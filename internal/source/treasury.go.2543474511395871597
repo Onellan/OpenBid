@@ -13,8 +13,8 @@ import (
 
 type FeedAdapter struct {
 	SourceKey string
-	FeedURL   string
-	Client    *http.Client
+	FeedURL string
+	Client  *http.Client
 }
 
 func NewFeedAdapter(sourceKey, feedURL string) *FeedAdapter {
