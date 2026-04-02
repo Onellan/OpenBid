@@ -12,6 +12,7 @@ const (
 	TypeJSONFeed       = "json_feed"
 	TypeETendersPortal = "etenders_portal"
 	TypePublicWorks    = "publicworks_portal"
+	TypeCIDBPortal     = "cidb_portal"
 )
 
 type Adapter interface {
@@ -64,7 +65,7 @@ func DefaultConfigs(feedURL string) []models.SourceConfig {
 
 func IsSupportedType(sourceType string) bool {
 	switch strings.TrimSpace(sourceType) {
-	case "", TypeJSONFeed, TypeETendersPortal, TypePublicWorks:
+	case "", TypeJSONFeed, TypeETendersPortal, TypePublicWorks, TypeCIDBPortal:
 		return true
 	default:
 		return false
@@ -83,6 +84,8 @@ func AdapterFromConfig(cfg models.SourceConfig) (Adapter, error) {
 		return NewETendersAdapter(key, cfg.FeedURL), nil
 	case TypePublicWorks:
 		return NewPublicWorksAdapter(key, cfg.FeedURL), nil
+	case TypeCIDBPortal:
+		return NewCIDBAdapter(key, cfg.FeedURL), nil
 	default:
 		return nil, fmt.Errorf("unsupported source type %q", cfg.Type)
 	}

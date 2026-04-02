@@ -74,8 +74,27 @@ func TestProcessJobsMergesPageAndDocumentFacts(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"excerpt": "Document summary",
 			"facts": map[string]string{
-				"cidb_hints":         "CIDB 3GB",
-				"submission_details": "sealed envelope at Komani office",
+				"document_title":              "Supply, installation and maintenance of network cabling",
+				"closing_date":                "2026-05-05",
+				"issued_date":                 "2026-03-31",
+				"validity_days":               "90",
+				"cidb_hints":                  "CIDB 3GB",
+				"cidb_grade":                  "3GB",
+				"submission_details":          "sealed envelope at Komani office",
+				"submission_address":          "1267 Gordon Hood Road, Centurion, Pretoria, South Africa",
+				"contact_name":                "Ulizwi Mngoma",
+				"contact_email":               "ulizwim@cidb.org.za",
+				"contact_phone":               "012 482 7252",
+				"briefing_required":           "yes",
+				"briefing_date":               "2026-04-08",
+				"briefing_time":               "10:00",
+				"briefing_venue":              "191 Madiba Street, Pretoria",
+				"location_city":               "Centurion",
+				"location_province":           "Gauteng",
+				"evaluation_method":           "80/20",
+				"price_points":                "80",
+				"preference_points":           "20",
+				"minimum_functionality_score": "60",
 			},
 			"type": "pdf",
 		})
@@ -84,7 +103,7 @@ func TestProcessJobsMergesPageAndDocumentFacts(t *testing.T) {
 
 	tender := models.Tender{
 		ID:             "1",
-		Title:          "Civil",
+		Title:          "DPWI tender PT25/020",
 		DocumentURL:    "https://example.org/doc.pdf",
 		DocumentStatus: models.ExtractionQueued,
 		PageFacts: map[string]string{
@@ -114,5 +133,32 @@ func TestProcessJobsMergesPageAndDocumentFacts(t *testing.T) {
 	}
 	if updated.ExtractedFacts["contact_details"] == "" || updated.ExtractedFacts["cidb_hints"] == "" || updated.ExtractedFacts["legacy_fact"] == "" {
 		t.Fatalf("expected merged extracted facts, got %#v", updated.ExtractedFacts)
+	}
+	if updated.Title != "Supply, installation and maintenance of network cabling" {
+		t.Fatalf("expected promoted title, got %#v", updated.Title)
+	}
+	if updated.PublishedDate != "2026-03-31" {
+		t.Fatalf("expected issued date promotion, got %#v", updated.PublishedDate)
+	}
+	if updated.ClosingDate != "2026-05-05" {
+		t.Fatalf("expected closing date promotion, got %#v", updated.ClosingDate)
+	}
+	if updated.ValidityDays != 90 || updated.CIDBGrading != "3GB" {
+		t.Fatalf("expected validity/CIDB promotions, got days=%d cidb=%q", updated.ValidityDays, updated.CIDBGrading)
+	}
+	if updated.Submission.Address != "1267 Gordon Hood Road, Centurion, Pretoria, South Africa" || !updated.Submission.PhysicalAllowed {
+		t.Fatalf("expected submission promotion, got %#v", updated.Submission)
+	}
+	if updated.Location.Town != "Centurion" || updated.Location.Province != "Gauteng" || updated.Province != "Gauteng" {
+		t.Fatalf("expected location promotion, got location=%#v province=%q", updated.Location, updated.Province)
+	}
+	if updated.Evaluation.Method != "80/20" || updated.Evaluation.PricePoints != 80 || updated.Evaluation.PreferencePoints != 20 || updated.Evaluation.MinimumFunctionalityScore != 60 {
+		t.Fatalf("expected evaluation promotion, got %#v", updated.Evaluation)
+	}
+	if len(updated.Contacts) != 1 || updated.Contacts[0].Email != "ulizwim@cidb.org.za" {
+		t.Fatalf("expected promoted contact, got %#v", updated.Contacts)
+	}
+	if len(updated.Briefings) != 1 || updated.Briefings[0].DateTime != "2026-04-08 10:00" || updated.Briefings[0].Venue != "191 Madiba Street, Pretoria" || !updated.Briefings[0].Required {
+		t.Fatalf("expected promoted briefing, got %#v", updated.Briefings)
 	}
 }
