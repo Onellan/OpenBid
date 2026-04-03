@@ -25,17 +25,40 @@ func newTestApp(t *testing.T) *App {
 	}
 	return a
 }
-func adminSession(t *testing.T, a *App) (models.User, models.Tenant, *http.Cookie, string) {
-	users, _ := a.Store.ListUsers(t.Context())
-	user := users[0]
-	ms, _ := a.Store.ListMemberships(t.Context(), user.ID)
-	tenant, _ := a.Store.GetTenant(t.Context(), ms[0].TenantID)
-	s := models.Session{UserID: user.ID, TenantID: tenant.ID, CSRF: "csrf123", Expires: time.Now().Add(time.Hour)}
-	raw, err := auth.EncodeSession(a.Config.SecretKey, s)
+
+func persistSessionCookie(t *testing.T, a *App, session models.Session) *http.Cookie {
+	t.Helper()
+	if session.ID == "" {
+		session.ID = "sess-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	}
+	if session.CSRF == "" {
+		session.CSRF = "csrf-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	}
+	if session.Expires.IsZero() {
+		session.Expires = time.Now().Add(time.Hour)
+	}
+	if err := a.Store.UpsertSession(t.Context(), session); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := auth.EncodeSession(a.Config.SecretKey, session)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return user, tenant, &http.Cookie{Name: "th_session", Value: raw}, s.CSRF
+	return &http.Cookie{Name: "th_session", Value: raw}
+}
+
+func adminSession(t *testing.T, a *App) (models.User, models.Tenant, *http.Cookie, string) {
+	users, _ := a.Store.ListUsers(t.Context())
+	user := users[0]
+	user.MFAEnabled = true
+	user.MFASecret = "test-admin-secret"
+	if err := a.persistUser(t.Context(), user); err != nil {
+		t.Fatal(err)
+	}
+	ms, _ := a.Store.ListMemberships(t.Context(), user.ID)
+	tenant, _ := a.Store.GetTenant(t.Context(), ms[0].TenantID)
+	s := models.Session{ID: "sess-admin-" + strconv.FormatInt(time.Now().UnixNano(), 10), UserID: user.ID, TenantID: tenant.ID, CSRF: "csrf123", SessionVersion: user.SessionVersion, Expires: time.Now().Add(time.Hour)}
+	return user, tenant, persistSessionCookie(t, a, s), s.CSRF
 }
 func sessionForRole(t *testing.T, a *App, role models.Role) (models.User, models.Tenant, *http.Cookie, string) {
 	_, tenant, _, _ := adminSession(t, a)
@@ -56,12 +79,8 @@ func sessionForRole(t *testing.T, a *App, role models.Role) (models.User, models
 	if err := a.Store.UpsertMembership(t.Context(), models.Membership{UserID: user.ID, TenantID: tenant.ID, Role: role, Responsibilities: "Read-only access"}); err != nil {
 		t.Fatal(err)
 	}
-	s := models.Session{UserID: user.ID, TenantID: tenant.ID, CSRF: "csrf-role", Expires: time.Now().Add(time.Hour)}
-	raw, err := auth.EncodeSession(a.Config.SecretKey, s)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return user, tenant, &http.Cookie{Name: "th_session", Value: raw}, s.CSRF
+	s := models.Session{ID: "sess-role-" + strconv.FormatInt(time.Now().UnixNano(), 10), UserID: user.ID, TenantID: tenant.ID, CSRF: "csrf-role", SessionVersion: user.SessionVersion, Expires: time.Now().Add(time.Hour)}
+	return user, tenant, persistSessionCookie(t, a, s), s.CSRF
 }
 func TestRequireAuthRedirects(t *testing.T) {
 	a := newTestApp(t)

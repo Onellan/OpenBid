@@ -18,7 +18,7 @@ import (
 	"tenderhub-za/internal/models"
 )
 
-const currentSchemaVersion = 3
+const currentSchemaVersion = 4
 
 type SQLiteStore struct {
 	db   *sql.DB
@@ -71,7 +71,7 @@ func (s *SQLiteStore) ValidateRuntime(ctx context.Context) error {
 	if userVersion != currentSchemaVersion {
 		return fmt.Errorf("unexpected schema version: got %d want %d", userVersion, currentSchemaVersion)
 	}
-	for _, table := range []string{"tenders", "users", "tenants", "memberships", "workflows", "bookmarks", "saved_searches", "sync_runs", "source_configs", "source_schedule_settings", "jobs", "source_health", "audit_entries", "workflow_events"} {
+	for _, table := range []string{"tenders", "tenants", "sync_runs", "source_configs", "source_schedule_settings", "jobs", "source_health", "audit_entries", "workflow_events", "user_records", "membership_records", "workflow_records", "bookmark_records", "saved_search_records", "sessions"} {
 		var count int
 		if err := s.db.QueryRowContext(ctx, "select count(*) from sqlite_master where type='table' and name=?", table).Scan(&count); err != nil {
 			return err
@@ -124,14 +124,24 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		`create index if not exists idx_tenders_document_status on tenders(coalesce(json_extract(payload, '$.DocumentStatus'), ''));`,
 		`create index if not exists idx_tenders_published on tenders(coalesce(json_extract(payload, '$.PublishedDate'), ''));`,
 		`create index if not exists idx_tenders_closing on tenders(coalesce(json_extract(payload, '$.ClosingDate'), ''));`,
-		fmt.Sprintf(`pragma user_version = %d;`, currentSchemaVersion),
-		fmt.Sprintf(`insert into schema_meta(key,value) values('schema_version','%d') on conflict(key) do update set value='%d';`, currentSchemaVersion, currentSchemaVersion),
 	}
 	for _, stmt := range stmts {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
+	}
+	if err := s.migrateRelationalTables(ctx, tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`pragma user_version = %d;`, currentSchemaVersion)); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`insert into schema_meta(key,value) values('schema_version','%d') on conflict(key) do update set value='%d';`, currentSchemaVersion, currentSchemaVersion)); err != nil {
+		_ = tx.Rollback()
+		return err
 	}
 	return tx.Commit()
 }
@@ -174,12 +184,12 @@ func (s *SQLiteStore) RuntimeStats(ctx context.Context) (RuntimeStats, error) {
 		target *int
 	}{
 		{"tenders", &stats.TenderCount},
-		{"users", &stats.UserCount},
+		{"user_records", &stats.UserCount},
 		{"tenants", &stats.TenantCount},
-		{"memberships", &stats.MembershipCount},
-		{"workflows", &stats.WorkflowCount},
-		{"bookmarks", &stats.BookmarkCount},
-		{"saved_searches", &stats.SavedSearchCount},
+		{"membership_records", &stats.MembershipCount},
+		{"workflow_records", &stats.WorkflowCount},
+		{"bookmark_records", &stats.BookmarkCount},
+		{"saved_search_records", &stats.SavedSearchCount},
 		{"sync_runs", &stats.SyncRunCount},
 		{"source_configs", &stats.SourceConfigCount},
 		{"source_health", &stats.SourceHealthCount},
@@ -453,11 +463,27 @@ func (s *SQLiteStore) UpsertTender(ctx context.Context, v models.Tender) error {
 	return sqliteUpsertJSON(ctx, s.db, "tenders", v.ID, v)
 }
 func (s *SQLiteStore) ListUsers(ctx context.Context) ([]models.User, error) {
-	out, err := sqliteListJSON[models.User](ctx, s.db, "users")
+	rows, err := s.db.QueryContext(ctx, `
+		select id, username, display_name, email, password_hash, password_salt, mfa_secret, is_active, mfa_enabled,
+		       failed_logins, session_version, locked_until, recovery_codes, created_at, updated_at
+		from user_records
+		order by username asc
+	`)
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Username < out[j].Username })
+	defer rows.Close()
+	out := []models.User{}
+	for rows.Next() {
+		user, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, user)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 func (s *SQLiteStore) GetUserByUsername(ctx context.Context, username string) (models.User, error) {
@@ -465,26 +491,31 @@ func (s *SQLiteStore) GetUserByUsername(ctx context.Context, username string) (m
 	if username == "" {
 		return models.User{}, ErrNotFound
 	}
-	var raw string
-	err := s.db.QueryRowContext(
-		ctx,
-		"select payload from users where lower(coalesce(json_extract(payload, '$.Username'), '')) = ? limit 1",
-		username,
-	).Scan(&raw)
+	row := s.db.QueryRowContext(ctx, `
+		select id, username, display_name, email, password_hash, password_salt, mfa_secret, is_active, mfa_enabled,
+		       failed_logins, session_version, locked_until, recovery_codes, created_at, updated_at
+		from user_records
+		where lower(username) = ?
+		limit 1
+	`, username)
+	user, err := scanUser(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.User{}, ErrNotFound
 	}
-	if err != nil {
-		return models.User{}, err
-	}
-	var user models.User
-	if err := json.Unmarshal([]byte(raw), &user); err != nil {
-		return models.User{}, err
-	}
-	return user, nil
+	return user, err
 }
 func (s *SQLiteStore) GetUser(ctx context.Context, id string) (models.User, error) {
-	return sqliteGetJSON[models.User](ctx, s.db, "users", id)
+	row := s.db.QueryRowContext(ctx, `
+		select id, username, display_name, email, password_hash, password_salt, mfa_secret, is_active, mfa_enabled,
+		       failed_logins, session_version, locked_until, recovery_codes, created_at, updated_at
+		from user_records
+		where id = ?
+	`, id)
+	user, err := scanUser(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return models.User{}, ErrNotFound
+	}
+	return user, err
 }
 func (s *SQLiteStore) UpsertUser(ctx context.Context, v models.User) error {
 	now := time.Now().UTC()
@@ -492,8 +523,34 @@ func (s *SQLiteStore) UpsertUser(ctx context.Context, v models.User) error {
 		v.ID = newid()
 		v.CreatedAt = now
 	}
+	if v.CreatedAt.IsZero() {
+		v.CreatedAt = now
+	}
 	v.UpdatedAt = now
-	return sqliteUpsertJSON(ctx, s.db, "users", v.ID, v)
+	_, err := s.db.ExecContext(ctx, `
+		insert into user_records(
+			id, username, display_name, email, password_hash, password_salt, mfa_secret, is_active, mfa_enabled,
+			failed_logins, session_version, locked_until, recovery_codes, created_at, updated_at
+		) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		on conflict(id) do update set
+			username=excluded.username,
+			display_name=excluded.display_name,
+			email=excluded.email,
+			password_hash=excluded.password_hash,
+			password_salt=excluded.password_salt,
+			mfa_secret=excluded.mfa_secret,
+			is_active=excluded.is_active,
+			mfa_enabled=excluded.mfa_enabled,
+			failed_logins=excluded.failed_logins,
+			session_version=excluded.session_version,
+			locked_until=excluded.locked_until,
+			recovery_codes=excluded.recovery_codes,
+			updated_at=excluded.updated_at
+	`,
+		v.ID, v.Username, v.DisplayName, v.Email, v.PasswordHash, v.PasswordSalt, v.MFASecret, boolToInt(v.IsActive), boolToInt(v.MFAEnabled),
+		v.FailedLogins, v.SessionVersion, sqliteTimeString(v.LockedUntil), encodeStringSlice(v.RecoveryCodes), sqliteTimeString(v.CreatedAt), sqliteTimeString(v.UpdatedAt),
+	)
+	return err
 }
 func (s *SQLiteStore) ListTenants(ctx context.Context) ([]models.Tenant, error) {
 	out, err := sqliteListJSON[models.Tenant](ctx, s.db, "tenants")
@@ -516,180 +573,253 @@ func (s *SQLiteStore) UpsertTenant(ctx context.Context, v models.Tenant) error {
 	return sqliteUpsertJSON(ctx, s.db, "tenants", v.ID, v)
 }
 func (s *SQLiteStore) ListMemberships(ctx context.Context, userID string) ([]models.Membership, error) {
-	items, err := sqliteListJSON[models.Membership](ctx, s.db, "memberships")
+	rows, err := s.db.QueryContext(ctx, `
+		select id, user_id, tenant_id, responsibilities, role, created_at, updated_at
+		from membership_records
+		where user_id = ?
+		order by tenant_id asc
+	`, userID)
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	out := []models.Membership{}
-	for _, m := range items {
-		if m.UserID == userID {
-			out = append(out, m)
+	for rows.Next() {
+		membership, err := scanMembership(rows)
+		if err != nil {
+			return nil, err
 		}
+		out = append(out, membership)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].TenantID < out[j].TenantID })
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 func (s *SQLiteStore) ListAllMemberships(ctx context.Context) ([]models.Membership, error) {
-	out, err := sqliteListJSON[models.Membership](ctx, s.db, "memberships")
+	rows, err := s.db.QueryContext(ctx, `
+		select id, user_id, tenant_id, responsibilities, role, created_at, updated_at
+		from membership_records
+		order by user_id asc, tenant_id asc
+	`)
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].UserID == out[j].UserID {
-			return out[i].TenantID < out[j].TenantID
+	defer rows.Close()
+	out := []models.Membership{}
+	for rows.Next() {
+		membership, err := scanMembership(rows)
+		if err != nil {
+			return nil, err
 		}
-		return out[i].UserID < out[j].UserID
-	})
+		out = append(out, membership)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 func (s *SQLiteStore) GetMembership(ctx context.Context, userID, tenantID string) (models.Membership, error) {
-	items, err := s.ListAllMemberships(ctx)
-	if err != nil {
-		return models.Membership{}, err
+	row := s.db.QueryRowContext(ctx, `
+		select id, user_id, tenant_id, responsibilities, role, created_at, updated_at
+		from membership_records
+		where user_id = ? and tenant_id = ?
+	`, userID, tenantID)
+	membership, err := scanMembership(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return models.Membership{}, ErrNotFound
 	}
-	for _, m := range items {
-		if m.UserID == userID && m.TenantID == tenantID {
-			return m, nil
-		}
-	}
-	return models.Membership{}, ErrNotFound
+	return membership, err
 }
 func (s *SQLiteStore) UpsertMembership(ctx context.Context, v models.Membership) error {
 	now := time.Now().UTC()
 	if v.ID == "" {
-		items, _ := s.ListAllMemberships(ctx)
-		for _, m := range items {
-			if m.UserID == v.UserID && m.TenantID == v.TenantID {
-				v.ID = m.ID
-				v.CreatedAt = m.CreatedAt
-				break
-			}
+		existing, err := s.GetMembership(ctx, v.UserID, v.TenantID)
+		if err == nil {
+			v.ID = existing.ID
+			v.CreatedAt = existing.CreatedAt
 		}
 	}
 	if v.ID == "" {
 		v.ID = newid()
 		v.CreatedAt = now
 	}
+	if v.CreatedAt.IsZero() {
+		v.CreatedAt = now
+	}
 	v.UpdatedAt = now
-	return sqliteUpsertJSON(ctx, s.db, "memberships", v.ID, v)
+	_, err := s.db.ExecContext(ctx, `
+		insert into membership_records(id, user_id, tenant_id, responsibilities, role, created_at, updated_at)
+		values(?,?,?,?,?,?,?)
+		on conflict(user_id, tenant_id) do update set
+			responsibilities=excluded.responsibilities,
+			role=excluded.role,
+			updated_at=excluded.updated_at
+	`, v.ID, v.UserID, v.TenantID, v.Responsibilities, string(v.Role), sqliteTimeString(v.CreatedAt), sqliteTimeString(v.UpdatedAt))
+	return err
 }
 func (s *SQLiteStore) DeleteMembership(ctx context.Context, id string) error {
-	return sqliteDelete(ctx, s.db, "memberships", id)
+	_, err := s.db.ExecContext(ctx, "delete from membership_records where id = ?", id)
+	return err
 }
 func (s *SQLiteStore) GetWorkflow(ctx context.Context, tenantID, tenderID string) (models.Workflow, error) {
-	items, err := s.ListWorkflows(ctx, tenantID)
-	if err != nil {
-		return models.Workflow{}, err
+	row := s.db.QueryRowContext(ctx, `
+		select id, tenant_id, tender_id, status, priority, assigned_user, notes, updated_at
+		from workflow_records
+		where tenant_id = ? and tender_id = ?
+	`, tenantID, tenderID)
+	workflow, err := scanWorkflow(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return models.Workflow{}, ErrNotFound
 	}
-	for _, wf := range items {
-		if wf.TenderID == tenderID {
-			return wf, nil
-		}
-	}
-	return models.Workflow{}, ErrNotFound
+	return workflow, err
 }
 func (s *SQLiteStore) ListWorkflows(ctx context.Context, tenantID string) ([]models.Workflow, error) {
-	items, err := sqliteListJSON[models.Workflow](ctx, s.db, "workflows")
+	query := `
+		select id, tenant_id, tender_id, status, priority, assigned_user, notes, updated_at
+		from workflow_records
+	`
+	args := []any{}
+	if tenantID != "" {
+		query += " where tenant_id = ?"
+		args = append(args, tenantID)
+	}
+	query += " order by updated_at desc, id asc"
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	out := []models.Workflow{}
-	for _, wf := range items {
-		if tenantID == "" || wf.TenantID == tenantID {
-			out = append(out, wf)
+	for rows.Next() {
+		workflow, err := scanWorkflow(rows)
+		if err != nil {
+			return nil, err
 		}
+		out = append(out, workflow)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
 func (s *SQLiteStore) UpsertWorkflow(ctx context.Context, v models.Workflow) error {
 	if v.ID == "" {
-		items, _ := s.ListWorkflows(ctx, v.TenantID)
-		for _, wf := range items {
-			if wf.TenantID == v.TenantID && wf.TenderID == v.TenderID {
-				v.ID = wf.ID
-				break
-			}
-		}
-		if v.ID == "" {
+		existing, err := s.GetWorkflow(ctx, v.TenantID, v.TenderID)
+		if err == nil {
+			v.ID = existing.ID
+		} else {
 			v.ID = newid()
 		}
 	}
 	v.UpdatedAt = time.Now().UTC()
-	return sqliteUpsertJSON(ctx, s.db, "workflows", v.ID, v)
+	_, err := s.db.ExecContext(ctx, `
+		insert into workflow_records(id, tenant_id, tender_id, status, priority, assigned_user, notes, updated_at)
+		values(?,?,?,?,?,?,?,?)
+		on conflict(tenant_id, tender_id) do update set
+			status=excluded.status,
+			priority=excluded.priority,
+			assigned_user=excluded.assigned_user,
+			notes=excluded.notes,
+			updated_at=excluded.updated_at
+	`, v.ID, v.TenantID, v.TenderID, v.Status, v.Priority, v.AssignedUser, v.Notes, sqliteTimeString(v.UpdatedAt))
+	return err
 }
 func (s *SQLiteStore) ListBookmarks(ctx context.Context, tenantID, userID string) ([]models.Bookmark, error) {
-	items, err := sqliteListJSON[models.Bookmark](ctx, s.db, "bookmarks")
+	rows, err := s.db.QueryContext(ctx, `
+		select id, tenant_id, user_id, tender_id, note, created_at, updated_at
+		from bookmark_records
+		where tenant_id = ? and user_id = ?
+		order by updated_at desc, id asc
+	`, tenantID, userID)
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	out := []models.Bookmark{}
-	for _, b := range items {
-		if b.TenantID == tenantID && b.UserID == userID {
-			out = append(out, b)
+	for rows.Next() {
+		bookmark, err := scanBookmark(rows)
+		if err != nil {
+			return nil, err
 		}
+		out = append(out, bookmark)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
 
 func (s *SQLiteStore) UpsertBookmark(ctx context.Context, v models.Bookmark) error {
-	items, err := sqliteListJSON[models.Bookmark](ctx, s.db, "bookmarks")
-	if err != nil {
-		return err
-	}
 	now := time.Now().UTC()
-	for _, b := range items {
-		if b.TenantID == v.TenantID && b.UserID == v.UserID && b.TenderID == v.TenderID {
-			b.Note = v.Note
-			b.UpdatedAt = now
-			return sqliteUpsertJSON(ctx, s.db, "bookmarks", b.ID, b)
-		}
+	existing, err := s.bookmarkByNaturalKey(ctx, v.TenantID, v.UserID, v.TenderID)
+	if err == nil {
+		v.ID = existing.ID
+		v.CreatedAt = existing.CreatedAt
 	}
-	v.ID = newid()
-	v.CreatedAt = now
+	if v.ID == "" {
+		v.ID = newid()
+		v.CreatedAt = now
+	}
+	if v.CreatedAt.IsZero() {
+		v.CreatedAt = now
+	}
 	v.UpdatedAt = now
-	return sqliteUpsertJSON(ctx, s.db, "bookmarks", v.ID, v)
+	_, err = s.db.ExecContext(ctx, `
+		insert into bookmark_records(id, tenant_id, user_id, tender_id, note, created_at, updated_at)
+		values(?,?,?,?,?,?,?)
+		on conflict(tenant_id, user_id, tender_id) do update set
+			note=excluded.note,
+			updated_at=excluded.updated_at
+	`, v.ID, v.TenantID, v.UserID, v.TenderID, v.Note, sqliteTimeString(v.CreatedAt), sqliteTimeString(v.UpdatedAt))
+	return err
 }
 
 func (s *SQLiteStore) ToggleBookmark(ctx context.Context, v models.Bookmark) error {
-	items, err := sqliteListJSON[models.Bookmark](ctx, s.db, "bookmarks")
-	if err != nil {
+	existing, err := s.bookmarkByNaturalKey(ctx, v.TenantID, v.UserID, v.TenderID)
+	if err == nil {
+		_, err = s.db.ExecContext(ctx, "delete from bookmark_records where id = ?", existing.ID)
 		return err
-	}
-	for _, b := range items {
-		if b.TenantID == v.TenantID && b.UserID == v.UserID && b.TenderID == v.TenderID {
-			return sqliteDelete(ctx, s.db, "bookmarks", b.ID)
-		}
 	}
 	v.ID = newid()
 	v.CreatedAt = time.Now().UTC()
 	v.UpdatedAt = v.CreatedAt
-	return sqliteUpsertJSON(ctx, s.db, "bookmarks", v.ID, v)
+	_, err = s.db.ExecContext(ctx, `
+		insert into bookmark_records(id, tenant_id, user_id, tender_id, note, created_at, updated_at)
+		values(?,?,?,?,?,?,?)
+	`, v.ID, v.TenantID, v.UserID, v.TenderID, v.Note, sqliteTimeString(v.CreatedAt), sqliteTimeString(v.UpdatedAt))
+	return err
 }
 
 func (s *SQLiteStore) DeleteBookmark(ctx context.Context, tenantID, userID, tenderID string) error {
-	items, err := sqliteListJSON[models.Bookmark](ctx, s.db, "bookmarks")
-	if err != nil {
-		return err
-	}
-	for _, b := range items {
-		if b.TenantID == tenantID && b.UserID == userID && b.TenderID == tenderID {
-			return sqliteDelete(ctx, s.db, "bookmarks", b.ID)
-		}
-	}
-	return nil
+	_, err := s.db.ExecContext(ctx, `
+		delete from bookmark_records
+		where tenant_id = ? and user_id = ? and tender_id = ?
+	`, tenantID, userID, tenderID)
+	return err
 }
 func (s *SQLiteStore) ListSavedSearches(ctx context.Context, tenantID, userID string) ([]models.SavedSearch, error) {
-	items, err := sqliteListJSON[models.SavedSearch](ctx, s.db, "saved_searches")
+	rows, err := s.db.QueryContext(ctx, `
+		select id, tenant_id, user_id, name, query, filters, created_at, updated_at
+		from saved_search_records
+		where tenant_id = ? and user_id = ?
+		order by name asc, updated_at desc
+	`, tenantID, userID)
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	out := []models.SavedSearch{}
-	for _, v := range items {
-		if v.TenantID == tenantID && v.UserID == userID {
-			out = append(out, v)
+	for rows.Next() {
+		search, err := scanSavedSearch(rows)
+		if err != nil {
+			return nil, err
 		}
+		out = append(out, search)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 func (s *SQLiteStore) UpsertSavedSearch(ctx context.Context, v models.SavedSearch) error {
@@ -698,17 +828,28 @@ func (s *SQLiteStore) UpsertSavedSearch(ctx context.Context, v models.SavedSearc
 		v.ID = newid()
 		v.CreatedAt = now
 	}
+	if v.CreatedAt.IsZero() {
+		v.CreatedAt = now
+	}
 	v.UpdatedAt = now
-	return sqliteUpsertJSON(ctx, s.db, "saved_searches", v.ID, v)
+	_, err := s.db.ExecContext(ctx, `
+		insert into saved_search_records(id, tenant_id, user_id, name, query, filters, created_at, updated_at)
+		values(?,?,?,?,?,?,?,?)
+		on conflict(id) do update set
+			tenant_id=excluded.tenant_id,
+			user_id=excluded.user_id,
+			name=excluded.name,
+			query=excluded.query,
+			filters=excluded.filters,
+			updated_at=excluded.updated_at
+	`, v.ID, v.TenantID, v.UserID, v.Name, v.Query, v.Filters, sqliteTimeString(v.CreatedAt), sqliteTimeString(v.UpdatedAt))
+	return err
 }
 func (s *SQLiteStore) DeleteSavedSearch(ctx context.Context, tenantID, userID, id string) error {
-	v, err := sqliteGetJSON[models.SavedSearch](ctx, s.db, "saved_searches", id)
-	if err == nil && v.TenantID == tenantID && v.UserID == userID {
-		return sqliteDelete(ctx, s.db, "saved_searches", id)
-	}
-	if errors.Is(err, ErrNotFound) {
-		return nil
-	}
+	_, err := s.db.ExecContext(ctx, `
+		delete from saved_search_records
+		where id = ? and tenant_id = ? and user_id = ?
+	`, id, tenantID, userID)
 	return err
 }
 func (s *SQLiteStore) ListSyncRuns(ctx context.Context) ([]models.SyncRun, error) {

@@ -379,7 +379,15 @@ func (a *App) currentSession(r *http.Request) (models.Session, bool) {
 	if err != nil {
 		return models.Session{}, false
 	}
-	return auth.DecodeSession(a.Config.SecretKey, c.Value)
+	decoded, ok := auth.DecodeSession(a.Config.SecretKey, c.Value)
+	if !ok || strings.TrimSpace(decoded.ID) == "" {
+		return models.Session{}, false
+	}
+	session, err := a.Store.GetSession(r.Context(), decoded.ID)
+	if err != nil {
+		return models.Session{}, false
+	}
+	return session, true
 }
 func (a *App) currentUserTenant(r *http.Request) (models.User, models.Tenant, models.Membership, bool) {
 	sess, ok := a.currentSession(r)
@@ -388,9 +396,13 @@ func (a *App) currentUserTenant(r *http.Request) (models.User, models.Tenant, mo
 	}
 	u, err := a.Store.GetUser(r.Context(), sess.UserID)
 	if err != nil || !u.IsActive {
+		if strings.TrimSpace(sess.ID) != "" {
+			_ = a.Store.DeleteSession(r.Context(), sess.ID)
+		}
 		return models.User{}, models.Tenant{}, models.Membership{}, false
 	}
 	if sess.SessionVersion != u.SessionVersion {
+		_ = a.Store.DeleteSession(r.Context(), sess.ID)
 		return models.User{}, models.Tenant{}, models.Membership{}, false
 	}
 	u, err = a.hydrateUserSensitiveFields(r.Context(), u)
@@ -404,6 +416,7 @@ func (a *App) currentUserTenant(r *http.Request) (models.User, models.Tenant, mo
 	}
 	m, err := a.Store.GetMembership(r.Context(), sess.UserID, sess.TenantID)
 	if err != nil {
+		_ = a.Store.DeleteSession(r.Context(), sess.ID)
 		return models.User{}, models.Tenant{}, models.Membership{}, false
 	}
 	return u, t, m, true
@@ -601,7 +614,16 @@ func (a *App) serverError(w http.ResponseWriter, r *http.Request, message string
 
 func (a *App) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if _, _, _, ok := a.currentUserTenant(r); !ok {
+		u, _, m, ok := a.currentUserTenant(r)
+		if !ok {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		if !u.MFAEnabled && a.userRequiresPrivilegedMFA(r.Context(), u.ID) && !allowsMFABootstrapPath(r.URL.Path) {
+			http.Redirect(w, r, "/mfa/setup?message=MFA+is+required+for+your+role", http.StatusSeeOther)
+			return
+		}
+		if m.Role == "" {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
@@ -795,15 +817,18 @@ func (a *App) Login(w http.ResponseWriter, r *http.Request) {
 	if a.LoginRateLimiter != nil {
 		a.LoginRateLimiter.RegisterSuccess(loginKey)
 	}
-	s := models.Session{UserID: u.ID, TenantID: memberships[0].TenantID, SessionVersion: u.SessionVersion, Expires: time.Now().Add(time.Duration(a.Config.SessionHours) * time.Hour), CSRF: auth.RandomString(32)}
-	if err := auth.SetSessionCookie(w, a.Config.SecretKey, s, a.Config.SecureCookies); err != nil {
+	if _, err := a.issueSession(r.Context(), w, u, memberships[0].TenantID); err != nil {
 		a.serverError(w, r, "unable to start session", err)
+		return
+	}
+	if !u.MFAEnabled && hasPrivilegedMembership(memberships) {
+		http.Redirect(w, r, "/mfa/setup?message=MFA+is+required+for+your+role", http.StatusSeeOther)
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 func (a *App) Logout(w http.ResponseWriter, r *http.Request) {
-	auth.ClearSessionCookie(w, a.Config.SecureCookies)
+	a.clearSession(w, r)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 

@@ -69,6 +69,7 @@ type Store interface {
 	GetUserByUsername(context.Context, string) (models.User, error)
 	GetUser(context.Context, string) (models.User, error)
 	UpsertUser(context.Context, models.User) error
+	DeleteSessionsForUser(context.Context, string) error
 
 	ListTenants(context.Context) ([]models.Tenant, error)
 	GetTenant(context.Context, string) (models.Tenant, error)
@@ -115,6 +116,10 @@ type Store interface {
 	AddAuditEntry(context.Context, models.AuditEntry) error
 	ListWorkflowEvents(context.Context, string, string) ([]models.WorkflowEvent, error)
 	AddWorkflowEvent(context.Context, models.WorkflowEvent) error
+
+	GetSession(context.Context, string) (models.Session, error)
+	UpsertSession(context.Context, models.Session) error
+	DeleteSession(context.Context, string) error
 
 	Dashboard(context.Context, string, bool, bool) (models.Dashboard, error)
 }

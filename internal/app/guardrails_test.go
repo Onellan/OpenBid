@@ -131,13 +131,18 @@ func TestCurrentUserTenantRejectsStaleSessionVersion(t *testing.T) {
 	if err := a.persistUser(t.Context(), user); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := auth.EncodeSession(a.Config.SecretKey, models.Session{
+	session := models.Session{
+		ID:             "stale-session",
 		UserID:         user.ID,
 		TenantID:       tenant.ID,
 		CSRF:           "csrf-stale",
 		SessionVersion: 1,
 		Expires:        time.Now().Add(time.Hour),
-	})
+	}
+	if err := a.Store.UpsertSession(t.Context(), session); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := auth.EncodeSession(a.Config.SecretKey, session)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,5 +150,92 @@ func TestCurrentUserTenantRejectsStaleSessionVersion(t *testing.T) {
 	req.AddCookie(&http.Cookie{Name: "th_session", Value: raw})
 	if _, _, _, ok := a.currentUserTenant(req); ok {
 		t.Fatal("expected stale session version to be rejected")
+	}
+}
+
+func TestRequireAuthRedirectsPrivilegedUserWithoutMFAToSetup(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := sessionForRole(t, a, models.RolePortfolioManager)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", w.Code)
+	}
+	if location := w.Header().Get("Location"); !strings.HasPrefix(location, "/mfa/setup") {
+		t.Fatalf("expected MFA setup redirect, got %q", location)
+	}
+}
+
+func TestRequireAuthAllowsNonPrivilegedUserWithoutMFA(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := sessionForRole(t, a, models.RoleViewer)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected viewer access without MFA, got %d", w.Code)
+	}
+}
+
+func TestPrivilegedUserCannotDisableMFA(t *testing.T) {
+	a := newTestApp(t)
+	user, _, cookie, csrf := sessionForRole(t, a, models.RolePortfolioManager)
+	user.MFAEnabled = true
+	user.MFASecret = auth.NewTOTPSecret()
+	if err := a.persistUser(t.Context(), user); err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{
+		"csrf_token": {csrf},
+		"password":   {""},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/mfa/disable", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected handled response, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "MFA is required for your role") {
+		t.Fatalf("expected privileged MFA enforcement message, got %q", w.Body.String())
+	}
+}
+
+func TestProxyRequirementBlocksDirectProductionRequests(t *testing.T) {
+	a := newTestApp(t)
+	a.Config.AppEnv = "production"
+	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected direct production request to be forbidden, got %d", w.Code)
+	}
+}
+
+func TestProxyRequirementAllowsForwardedProductionRequests(t *testing.T) {
+	a := newTestApp(t)
+	a.Config.AppEnv = "production"
+	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	req.Header.Set("X-Forwarded-Host", "openbid.example")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected forwarded production request to pass, got %d", w.Code)
+	}
+}
+
+func TestProxyRequirementExemptsHealthz(t *testing.T) {
+	a := newTestApp(t)
+	a.Config.AppEnv = "production"
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected healthz to bypass proxy enforcement, got %d", w.Code)
 	}
 }

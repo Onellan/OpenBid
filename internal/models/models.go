@@ -142,9 +142,9 @@ type SourceScheduleSettings struct {
 	CreatedAt, UpdatedAt   time.Time
 }
 type Session struct {
-	UserID, TenantID, CSRF string
-	SessionVersion         int
-	Expires                time.Time
+	ID, UserID, TenantID, CSRF    string
+	SessionVersion                int
+	Expires, CreatedAt, UpdatedAt time.Time
 }
 type Dashboard struct {
 	TotalTenders, EngineeringRelevant, WithDocuments, ExtractedDocuments, QueuedDocuments, OpenTenders int

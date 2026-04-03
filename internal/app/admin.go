@@ -208,10 +208,6 @@ func (a *App) AdminCreateTenant(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin/tenants", 303)
 }
 
-func (a *App) AdminSources(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/sources", http.StatusSeeOther)
-}
-
 func (a *App) SourcesPage(w http.ResponseWriter, r *http.Request) {
 	u, t, m, ok := a.currentUserTenant(r)
 	if !ok {
@@ -611,7 +607,7 @@ func (a *App) SwitchTenant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session.TenantID = tenantID
-	if err := auth.SetSessionCookie(w, a.Config.SecretKey, session, a.Config.SecureCookies); err != nil {
+	if _, err := a.saveSession(r.Context(), w, session); err != nil {
 		a.serverError(w, r, "unable to update session", err)
 		return
 	}
@@ -652,6 +648,12 @@ func (a *App) AdminToggleUser(w http.ResponseWriter, r *http.Request) {
 	if err := a.persistUser(r.Context(), user); err != nil {
 		a.serverError(w, r, "unable to update user", err)
 		return
+	}
+	if !user.IsActive {
+		if err := a.revokeUserSessions(r.Context(), user.ID); err != nil {
+			a.serverError(w, r, "unable to revoke user sessions", err)
+			return
+		}
 	}
 	a.auditAction(r.Context(), actionContext{User: currentUser, Tenant: currentTenant, Member: m}, "update", "user", user.ID, "User activation updated", map[string]string{"active": strconv.FormatBool(user.IsActive)})
 	http.Redirect(w, r, "/admin/users", 303)
@@ -699,6 +701,10 @@ func (a *App) AdminResetPassword(w http.ResponseWriter, r *http.Request) {
 	user.SessionVersion++
 	if err := a.persistUser(r.Context(), user); err != nil {
 		a.serverError(w, r, "unable to update user password", err)
+		return
+	}
+	if err := a.revokeUserSessions(r.Context(), user.ID); err != nil {
+		a.serverError(w, r, "unable to revoke user sessions", err)
 		return
 	}
 	a.auditAction(r.Context(), actionContext{User: currentUser, Tenant: currentTenant, Member: m}, "update", "user_password", user.ID, "User password reset", nil)

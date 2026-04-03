@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"tenderhub-za/internal/auth"
-	"tenderhub-za/internal/models"
 )
 
 func (a *App) PasswordPage(w http.ResponseWriter, r *http.Request) {
@@ -47,14 +46,11 @@ func (a *App) PasswordPage(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, r, "unable to save password change", err)
 		return
 	}
-	session := models.Session{
-		UserID:         user.ID,
-		TenantID:       tenant.ID,
-		CSRF:           auth.RandomString(32),
-		SessionVersion: user.SessionVersion,
-		Expires:        time.Now().Add(time.Duration(a.Config.SessionHours) * time.Hour),
+	if err := a.revokeUserSessions(r.Context(), user.ID); err != nil {
+		a.serverError(w, r, "unable to revoke existing sessions", err)
+		return
 	}
-	if err := auth.SetSessionCookie(w, a.Config.SecretKey, session, a.Config.SecureCookies); err != nil {
+	if _, err := a.issueSession(r.Context(), w, user, tenant.ID); err != nil {
 		a.serverError(w, r, "unable to refresh session", err)
 		return
 	}
@@ -119,6 +115,10 @@ func (a *App) MFADisable(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method != http.MethodPost || !a.ensureCSRF(r) {
 		http.Error(w, "forbidden", 403)
+		return
+	}
+	if a.userRequiresPrivilegedMFA(r.Context(), user.ID) {
+		a.render(w, r, "mfa.html", map[string]any{"Title": "MFA", "Error": "MFA is required for your role", "RecoveryCodeCount": len(user.RecoveryCodes)})
 		return
 	}
 	if !auth.VerifyPassword(r.FormValue("password"), user.PasswordSalt, user.PasswordHash) {
