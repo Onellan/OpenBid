@@ -54,8 +54,9 @@ func templateFuncs() template.FuncMap {
 		"hasPrefix": func(value, prefix string) bool {
 			return strings.HasPrefix(value, prefix)
 		},
-		"condTone": func(state string) string {
-			switch state {
+		"condTone": func(state any) string {
+			value := strings.TrimSpace(fmt.Sprint(state))
+			switch value {
 			case "completed", "healthy", "success":
 				return "success"
 			case "failed", "failing", "degraded", "disabled":

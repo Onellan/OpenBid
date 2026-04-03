@@ -29,6 +29,24 @@ func TestProcessJobsRetry(t *testing.T) {
 		t.Fatal("expected retry or failed state")
 	}
 }
+
+func TestProcessJobsPrunesOrphanJobs(t *testing.T) {
+	s, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	_ = s.QueueJob(context.Background(), models.ExtractionJob{ID: "orphan", TenderID: "missing", DocumentURL: "https://example.org/doc.pdf", State: models.ExtractionQueued})
+	r := Runner{Store: s, Sources: source.NewRegistry(), Extractor: extract.New("http://127.0.0.1:1"), SyncEvery: time.Hour, LoopEvery: time.Millisecond}
+	r.processJobs(context.Background())
+	jobs, err := s.ListJobs(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("expected orphan job to be removed, got %#v", jobs)
+	}
+}
 func TestSyncAllUsesDynamicSourceLoader(t *testing.T) {
 	s, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {

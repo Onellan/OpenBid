@@ -600,6 +600,9 @@ func (s *SQLiteStore) UpdateJob(ctx context.Context, v models.ExtractionJob) err
 	v.UpdatedAt = time.Now().UTC()
 	return sqliteUpsertJSON(ctx, s.db, "jobs", v.ID, v)
 }
+func (s *SQLiteStore) DeleteJob(ctx context.Context, id string) error {
+	return sqliteDelete(ctx, s.db, "jobs", id)
+}
 func (s *SQLiteStore) Dashboard(ctx context.Context, tenantID string, lowMemory, analytics bool) (models.Dashboard, error) {
 	items, _, err := s.ListTenders(ctx, ListFilter{Page: 1, PageSize: 5000})
 	if err != nil {

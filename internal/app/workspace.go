@@ -54,6 +54,36 @@ func queueSummary(jobs []models.ExtractionJob) QueueSummary {
 	return summary
 }
 
+func (a *App) listRenderableJobs(ctx context.Context) []models.ExtractionJob {
+	jobs, _ := a.Store.ListJobs(ctx)
+	if len(jobs) == 0 {
+		return jobs
+	}
+	pruned := false
+	filtered := make([]models.ExtractionJob, 0, len(jobs))
+	for _, job := range jobs {
+		if strings.TrimSpace(job.TenderID) == "" {
+			if job.ID != "" {
+				_ = a.Store.DeleteJob(ctx, job.ID)
+			}
+			pruned = true
+			continue
+		}
+		if _, err := a.Store.GetTender(ctx, job.TenderID); err != nil {
+			if job.ID != "" {
+				_ = a.Store.DeleteJob(ctx, job.ID)
+			}
+			pruned = true
+			continue
+		}
+		filtered = append(filtered, job)
+	}
+	if pruned {
+		return filtered
+	}
+	return jobs
+}
+
 func csvJSON(value any) string {
 	data, err := json.Marshal(value)
 	if err != nil || len(data) == 0 || string(data) == "null" {
@@ -131,7 +161,7 @@ func (a *App) Home(w http.ResponseWriter, r *http.Request) {
 	d, _ := a.Store.Dashboard(r.Context(), t.ID, a.Config.LowMemoryMode, false)
 	bookmarks, _ := a.Store.ListBookmarks(r.Context(), t.ID, u.ID)
 	searches, _ := a.Store.ListSavedSearches(r.Context(), t.ID, u.ID)
-	jobs, _ := a.Store.ListJobs(r.Context())
+	jobs := a.listRenderableJobs(r.Context())
 	a.render(w, r, "home.html", map[string]any{
 		"Title":         "Home",
 		"User":          u,
@@ -477,6 +507,7 @@ func (a *App) QueuePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jobs, _ := a.Store.ListJobs(r.Context())
+	jobs = a.listRenderableJobs(r.Context())
 	items := make([]QueueItem, 0, len(jobs))
 	for _, job := range jobs {
 		tender, _ := a.Store.GetTender(r.Context(), job.TenderID)

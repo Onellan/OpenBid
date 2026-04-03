@@ -22,6 +22,13 @@ var (
 	cidbSpacePattern  = regexp.MustCompile(`\s+`)
 )
 
+const (
+	cidbUserAgent      = "OpenBid CIDB importer/1.0"
+	cidbMaxAttempts    = 3
+	cidbBaseRetryDelay = time.Second
+	cidbMaxRetryDelay  = 5 * time.Second
+)
+
 type CIDBAdapter struct {
 	SourceKey string
 	PageURL   string
@@ -79,28 +86,46 @@ func (a *CIDBAdapter) Fetch(ctx context.Context) ([]models.Tender, string, error
 	if err != nil {
 		return nil, "", err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
-	if err != nil {
-		return nil, "", err
-	}
-	resp, err := a.Client.Do(req)
-	if err != nil {
-		return nil, "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		return nil, "", fmt.Errorf("cidb returned %d", resp.StatusCode)
-	}
+	for attempt := 1; attempt <= cidbMaxAttempts; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+		if err != nil {
+			return nil, "", err
+		}
+		req.Header.Set("Accept", "application/json, text/plain, */*")
+		req.Header.Set("User-Agent", cidbUserAgent)
+		req.Header.Set("Referer", pageURL.String())
 
-	var payload cidbResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return nil, "", err
+		resp, err := a.Client.Do(req)
+		if err != nil {
+			return nil, "", err
+		}
+		if resp.StatusCode >= 300 {
+			delay := cidbRetryDelay(resp.Header.Get("Retry-After"), attempt)
+			retryable := cidbRetryableStatus(resp.StatusCode)
+			resp.Body.Close()
+			if retryable && attempt < cidbMaxAttempts {
+				if err := cidbSleep(ctx, delay); err != nil {
+					return nil, "", err
+				}
+				continue
+			}
+			return nil, "", fmt.Errorf("cidb returned %d", resp.StatusCode)
+		}
+
+		var payload cidbResponse
+		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+			resp.Body.Close()
+			return nil, "", err
+		}
+		resp.Body.Close()
+
+		out := make([]models.Tender, 0, len(payload.Tenders))
+		for _, item := range payload.Tenders {
+			out = append(out, a.mapListing(pageURL, item))
+		}
+		return out, fmt.Sprintf("loaded %d CIDB tenders", len(out)), nil
 	}
-	out := make([]models.Tender, 0, len(payload.Tenders))
-	for _, item := range payload.Tenders {
-		out = append(out, a.mapListing(pageURL, item))
-	}
-	return out, fmt.Sprintf("loaded %d CIDB tenders", len(out)), nil
+	return nil, "", fmt.Errorf("cidb returned 429")
 }
 
 func (a *CIDBAdapter) mapListing(pageURL *url.URL, item cidbListing) models.Tender {
@@ -305,4 +330,50 @@ func cidbMIMEType(p string) string {
 		return mimeType
 	}
 	return ""
+}
+
+func cidbRetryableStatus(code int) bool {
+	switch code {
+	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
+func cidbRetryDelay(raw string, attempt int) time.Duration {
+	raw = strings.TrimSpace(raw)
+	if raw != "" {
+		if seconds, err := strconv.Atoi(raw); err == nil && seconds >= 0 {
+			return cidbClampRetryDelay(time.Duration(seconds) * time.Second)
+		}
+		if retryAt, err := http.ParseTime(raw); err == nil {
+			return cidbClampRetryDelay(time.Until(retryAt))
+		}
+	}
+	return cidbClampRetryDelay(time.Duration(attempt) * cidbBaseRetryDelay)
+}
+
+func cidbClampRetryDelay(delay time.Duration) time.Duration {
+	if delay < 0 {
+		return 0
+	}
+	if delay > cidbMaxRetryDelay {
+		return cidbMaxRetryDelay
+	}
+	return delay
+}
+
+func cidbSleep(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }

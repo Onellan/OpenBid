@@ -80,6 +80,7 @@ type Store interface {
 	ListJobs(context.Context) ([]models.ExtractionJob, error)
 	QueueJob(context.Context, models.ExtractionJob) error
 	UpdateJob(context.Context, models.ExtractionJob) error
+	DeleteJob(context.Context, string) error
 
 	ListAuditEntries(context.Context, string) ([]models.AuditEntry, error)
 	AddAuditEntry(context.Context, models.AuditEntry) error

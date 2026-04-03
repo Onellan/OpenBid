@@ -73,6 +73,14 @@ func (r Runner) processJobs(ctx context.Context) {
 		return
 	}
 	for _, job := range jobs {
+		if strings.TrimSpace(job.TenderID) == "" {
+			_ = r.Store.DeleteJob(ctx, job.ID)
+			continue
+		}
+		if _, err := r.Store.GetTender(ctx, job.TenderID); err != nil {
+			_ = r.Store.DeleteJob(ctx, job.ID)
+			continue
+		}
 		if !(job.State == models.ExtractionQueued || job.State == models.ExtractionRetry) || r.now().Before(job.NextAttemptAt) {
 			continue
 		}

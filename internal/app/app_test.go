@@ -523,6 +523,82 @@ func TestTendersPageRendersTendersContent(t *testing.T) {
 		t.Fatalf("tenders page rendered login content")
 	}
 }
+
+func TestTendersPageRendersTypedDocumentStatus(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := adminSession(t, a)
+	_ = a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:             "typed-status",
+		Title:          "Typed Status Tender",
+		Issuer:         "CIDB",
+		SourceKey:      "cidb",
+		Status:         "open",
+		DocumentStatus: models.ExtractionQueued,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/tenders", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	if !strings.Contains(body, "Typed Status Tender") {
+		t.Fatalf("expected tender to render, got %s", body)
+	}
+	if strings.Contains(body, "template:") {
+		t.Fatalf("unexpected template execution error: %s", body)
+	}
+}
+
+func TestQueuePagePrunesOrphanJobsAndRendersTypedStates(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := adminSession(t, a)
+	_ = a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:             "queue-tender",
+		Title:          "Queue Tender",
+		Issuer:         "Metro",
+		SourceKey:      "treasury",
+		Status:         "open",
+		DocumentURL:    "https://example.org/doc.pdf",
+		DocumentStatus: models.ExtractionQueued,
+	})
+	_ = a.Store.QueueJob(t.Context(), models.ExtractionJob{
+		ID:          "job-valid",
+		TenderID:    "queue-tender",
+		DocumentURL: "https://example.org/doc.pdf",
+		State:       models.ExtractionQueued,
+	})
+	_ = a.Store.QueueJob(t.Context(), models.ExtractionJob{
+		ID:          "job-orphan",
+		TenderID:    "missing-tender",
+		DocumentURL: "https://example.org/missing.pdf",
+		State:       models.ExtractionCompleted,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/queue", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	if !strings.Contains(body, "Queue Tender") {
+		t.Fatalf("expected valid queue item to render, got %s", body)
+	}
+	if strings.Contains(body, "template:") {
+		t.Fatalf("unexpected template execution error: %s", body)
+	}
+	jobs, err := a.Store.ListJobs(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 || jobs[0].ID != "job-valid" {
+		t.Fatalf("expected orphan job to be pruned, got %#v", jobs)
+	}
+}
 func TestRoleBasedNavigationVisibility(t *testing.T) {
 	a := newTestApp(t)
 	_, _, adminCookie, _ := adminSession(t, a)

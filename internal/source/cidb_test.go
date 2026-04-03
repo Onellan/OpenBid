@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"tenderhub-za/internal/models"
@@ -100,5 +101,54 @@ func TestAdapterFromConfigBuildsCIDBAdapter(t *testing.T) {
 	}
 	if _, ok := adapter.(*CIDBAdapter); !ok {
 		t.Fatalf("expected CIDBAdapter, got %T", adapter)
+	}
+}
+
+func TestCIDBAdapterFetchRetriesRateLimit(t *testing.T) {
+	t.Parallel()
+
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/tenders.json" {
+			http.NotFound(w, r)
+			return
+		}
+		if got := r.Header.Get("User-Agent"); !strings.Contains(got, "OpenBid") {
+			t.Fatalf("expected OpenBid user agent, got %q", got)
+		}
+		if got := r.Header.Get("Accept"); !strings.Contains(got, "application/json") {
+			t.Fatalf("expected json accept header, got %q", got)
+		}
+		if attempts.Add(1) == 1 {
+			w.Header().Set("Retry-After", "0")
+			http.Error(w, "slow down", http.StatusTooManyRequests)
+			return
+		}
+		_, _ = w.Write([]byte(`{
+			"tender_count":"1",
+			"tm_tenders":[
+				{
+					"tender_ID":"39",
+					"description":"Civil works package",
+					"bid_number":"cidb 019 2526",
+					"tender_advert_date_time":"2026-04-03 09:00:00",
+					"status":"active",
+					"realstatus":"Open"
+				}
+			]
+		}`))
+	}))
+	defer server.Close()
+
+	adapter := NewCIDBAdapter("cidb", server.URL+"/cidb-tenders/current-tenders/")
+	items, msg, err := adapter.Fetch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts.Load() != 2 {
+		t.Fatalf("expected one retry after 429, got %d attempts", attempts.Load())
+	}
+	if len(items) != 1 || !strings.Contains(msg, "loaded 1 CIDB tenders") {
+		t.Fatalf("unexpected retry result: items=%d msg=%q", len(items), msg)
 	}
 }
