@@ -84,14 +84,21 @@ Notes:
 
 ## 5. Understand the HTTPS requirement
 
-Production mode requires `SECURE_COOKIES=true`. That means the browser must access OpenBid over HTTPS or session cookies will not work correctly.
+Production mode requires `SECURE_COOKIES=true`. The important part is that the end user's browser must reach OpenBid over HTTPS.
 
-You have two practical options:
+If you are putting OpenBid behind Cloudflare, the OpenBid origin can still stay on plain HTTP. That setup works because:
 
-1. Recommended: place OpenBid behind a TLS terminator such as Caddy, Nginx Proxy Manager, Traefik, or a Tailscale/Cloudflare tunnel.
-2. LAN-only quick start: use `APP_ENV=development` and `SECURE_COOKIES=false` temporarily, knowing this is not a hardened production setup.
+- the browser talks to Cloudflare over `https://`
+- Cloudflare talks to your Raspberry Pi over HTTP
+- the app still sets secure cookies correctly for the browser-facing HTTPS session
 
-The bundled `proxy` service only exposes plain HTTP on port `8088`. It is fine as an internal hop behind another HTTPS reverse proxy.
+For your setup, the bundled `proxy` service on port `8088` is the HTTP origin that Cloudflare should connect to.
+
+Practical options:
+
+1. Cloudflare in front of OpenBid: keep OpenBid on HTTP internally and expose `http://PI_IP_ADDRESS:8088` to Cloudflare.
+2. Another local reverse proxy in front of OpenBid: same idea, OpenBid can remain HTTP behind it.
+3. LAN-only quick start without any HTTPS edge: use `APP_ENV=development` and `SECURE_COOKIES=false` temporarily, knowing this is not a hardened production setup.
 
 ## 6. Start the stack
 
@@ -105,7 +112,7 @@ OpenBid will be available through the bundled proxy on:
 
 - `http://PI_IP_ADDRESS:8088`
 
-If you put another reverse proxy in front, point it at `http://PI_IP_ADDRESS:8088`.
+If you use Cloudflare, point Cloudflare at `http://PI_IP_ADDRESS:8088` as the origin and let Cloudflare present `https://your-domain` to end users.
 
 ## 7. Verify the services
 
@@ -173,10 +180,11 @@ If the app does not start in production:
 - confirm `.env` has `SECURE_COOKIES=true`
 - confirm `.env` has a strong `BOOTSTRAP_ADMIN_PASSWORD`
 
-If login works locally but not through your public URL:
+If login works locally but not through your public Cloudflare URL:
 
-- confirm your front-end proxy is serving HTTPS
-- confirm it forwards traffic to `http://PI_IP_ADDRESS:8088`
+- confirm the public site is actually loading over `https://`
+- confirm Cloudflare is forwarding to `http://PI_IP_ADDRESS:8088`
+- confirm `SECURE_COOKIES=true` is still enabled in production
 
 If the Pi feels slow:
 

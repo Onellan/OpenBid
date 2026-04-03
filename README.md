@@ -71,7 +71,7 @@ Common variables:
 
 ## Raspberry Pi deployment
 
-For a step-by-step Docker setup guide on Raspberry Pi, including HTTPS and production-cookie caveats, see [docs/raspberry-pi-docker-setup.md](docs/raspberry-pi-docker-setup.md).
+For a step-by-step Docker setup guide on Raspberry Pi, including Cloudflare-in-front HTTP origin deployment notes, see [docs/raspberry-pi-docker-setup.md](docs/raspberry-pi-docker-setup.md).
 
 ## Validation
 
