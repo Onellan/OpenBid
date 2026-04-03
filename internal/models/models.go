@@ -86,6 +86,7 @@ type User struct {
 	ID, Username, DisplayName, Email, PasswordHash, PasswordSalt, MFASecret string
 	IsActive, MFAEnabled                                                    bool
 	FailedLogins                                                            int
+	SessionVersion                                                          int
 	LockedUntil                                                             time.Time
 	RecoveryCodes                                                           []string
 	CreatedAt, UpdatedAt                                                    time.Time
@@ -142,6 +143,7 @@ type SourceScheduleSettings struct {
 }
 type Session struct {
 	UserID, TenantID, CSRF string
+	SessionVersion         int
 	Expires                time.Time
 }
 type Dashboard struct {

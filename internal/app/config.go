@@ -109,6 +109,14 @@ func loadConfigFromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	loginRateLimitWindowSeconds, err := envInt("LOGIN_RATE_LIMIT_WINDOW_SECONDS", 600)
+	if err != nil {
+		return Config{}, err
+	}
+	loginRateLimitMaxAttempts, err := envInt("LOGIN_RATE_LIMIT_MAX_ATTEMPTS", 10)
+	if err != nil {
+		return Config{}, err
+	}
 	secretKey, err := envStringWithFile("SECRET_KEY", "change-me-now")
 	if err != nil {
 		return Config{}, err
@@ -118,21 +126,23 @@ func loadConfigFromEnv() (Config, error) {
 		return Config{}, err
 	}
 	return Config{
-		AppEnv:                 appEnv,
-		AppAddr:                envString("APP_ADDR", ":8080"),
-		DataPath:               envString("DATA_PATH", "./data/store.db"),
-		SecretKey:              secretKey,
-		ExtractorURL:           envString("EXTRACTOR_URL", "http://extractor:9090"),
-		TreasuryFeedURL:        envOptionalString("TREASURY_FEED_URL"),
-		SecureCookies:          secureCookies,
-		LowMemoryMode:          lowMemoryMode,
-		AnalyticsEnabled:       analyticsEnabled,
-		BootstrapSyncOnStartup: bootstrapSyncOnStartup,
-		SessionHours:           sessionHours,
-		WorkerSyncMinutes:      workerSyncMinutes,
-		WorkerLoopSeconds:      workerLoopSeconds,
-		BootstrapAdminUsername: envString("BOOTSTRAP_ADMIN_USERNAME", "admin"),
-		BootstrapAdminEmail:    envString("BOOTSTRAP_ADMIN_EMAIL", "admin@localhost"),
-		BootstrapAdminPassword: bootstrapAdminPassword,
+		AppEnv:                      appEnv,
+		AppAddr:                     envString("APP_ADDR", ":8080"),
+		DataPath:                    envString("DATA_PATH", "./data/store.db"),
+		SecretKey:                   secretKey,
+		ExtractorURL:                envString("EXTRACTOR_URL", "http://extractor:9090"),
+		TreasuryFeedURL:             envOptionalString("TREASURY_FEED_URL"),
+		SecureCookies:               secureCookies,
+		LowMemoryMode:               lowMemoryMode,
+		AnalyticsEnabled:            analyticsEnabled,
+		BootstrapSyncOnStartup:      bootstrapSyncOnStartup,
+		SessionHours:                sessionHours,
+		WorkerSyncMinutes:           workerSyncMinutes,
+		WorkerLoopSeconds:           workerLoopSeconds,
+		LoginRateLimitWindowSeconds: loginRateLimitWindowSeconds,
+		LoginRateLimitMaxAttempts:   loginRateLimitMaxAttempts,
+		BootstrapAdminUsername:      envString("BOOTSTRAP_ADMIN_USERNAME", "admin"),
+		BootstrapAdminEmail:         envString("BOOTSTRAP_ADMIN_EMAIL", "admin@localhost"),
+		BootstrapAdminPassword:      bootstrapAdminPassword,
 	}, nil
 }

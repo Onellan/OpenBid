@@ -6,10 +6,11 @@ import (
 	"time"
 
 	"tenderhub-za/internal/auth"
+	"tenderhub-za/internal/models"
 )
 
 func (a *App) PasswordPage(w http.ResponseWriter, r *http.Request) {
-	user, _, _, ok := a.currentUserTenant(r)
+	user, tenant, _, ok := a.currentUserTenant(r)
 	if !ok {
 		http.Redirect(w, r, "/login", 303)
 		return
@@ -41,8 +42,20 @@ func (a *App) PasswordPage(w http.ResponseWriter, r *http.Request) {
 	}
 	user.PasswordSalt = salt
 	user.PasswordHash = hash
+	user.SessionVersion++
 	if err := a.persistUser(r.Context(), user); err != nil {
 		a.serverError(w, r, "unable to save password change", err)
+		return
+	}
+	session := models.Session{
+		UserID:         user.ID,
+		TenantID:       tenant.ID,
+		CSRF:           auth.RandomString(32),
+		SessionVersion: user.SessionVersion,
+		Expires:        time.Now().Add(time.Duration(a.Config.SessionHours) * time.Hour),
+	}
+	if err := auth.SetSessionCookie(w, a.Config.SecretKey, session, a.Config.SecureCookies); err != nil {
+		a.serverError(w, r, "unable to refresh session", err)
 		return
 	}
 	a.render(w, r, "password.html", map[string]any{"Title": "Password", "Message": "Password updated"})

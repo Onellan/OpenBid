@@ -236,5 +236,5 @@ func routes(a *App) http.Handler {
 	mux.HandleFunc("/admin/sources/schedule", a.RequireAuth(a.AdminUpdateSourceSchedule))
 	mux.HandleFunc("/admin/sources/delete", a.RequireAuth(a.AdminDeleteSource))
 	mux.HandleFunc("/tenant/switch", a.RequireAuth(a.SwitchTenant))
-	return a.WithRequestObservability(a.WithSecurityHeaders(mux))
+	return a.WithRequestObservability(a.WithSecurityHeaders(a.WithRecovery(mux)))
 }

@@ -70,6 +70,8 @@ Common variables:
 - `LOW_MEMORY_MODE`: keep `true` on smaller machines such as Raspberry Pi
 - `WORKER_SYNC_MINUTES`: default source check interval
 - `WORKER_LOOP_SECONDS`: worker polling loop interval
+- `LOGIN_RATE_LIMIT_WINDOW_SECONDS`: rolling per-IP login throttling window for direct app access
+- `LOGIN_RATE_LIMIT_MAX_ATTEMPTS`: maximum failed login attempts allowed within that window
 
 Production deployments should prefer `.env.production.example`, pinned GHCR image tags, mounted secret files under `./secrets`, and the packaged operations runbook in `docs/production-operations.md`.
 

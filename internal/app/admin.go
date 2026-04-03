@@ -615,8 +615,12 @@ func (a *App) SwitchTenant(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, r, "unable to update session", err)
 		return
 	}
-	if user, tenant, member, ok := a.currentUserTenant(r); ok {
-		a.auditAction(r.Context(), actionContext{User: user, Tenant: tenant, Member: member}, "switch", "tenant", tenantID, "Workspace switched", nil)
+	if user, err := a.Store.GetUser(r.Context(), session.UserID); err == nil {
+		if tenant, err := a.Store.GetTenant(r.Context(), tenantID); err == nil {
+			if member, err := a.Store.GetMembership(r.Context(), session.UserID, tenantID); err == nil {
+				a.auditAction(r.Context(), actionContext{User: user, Tenant: tenant, Member: member}, "switch", "tenant", tenantID, "Workspace switched", nil)
+			}
+		}
 	}
 	http.Redirect(w, r, safeReturnTarget(r.FormValue("return_to"), "/").String(), 303)
 }
@@ -692,6 +696,7 @@ func (a *App) AdminResetPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	user.PasswordSalt = salt
 	user.PasswordHash = hash
+	user.SessionVersion++
 	if err := a.persistUser(r.Context(), user); err != nil {
 		a.serverError(w, r, "unable to update user password", err)
 		return

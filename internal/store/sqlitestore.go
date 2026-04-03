@@ -18,7 +18,7 @@ import (
 	"tenderhub-za/internal/models"
 )
 
-const currentSchemaVersion = 2
+const currentSchemaVersion = 3
 
 type SQLiteStore struct {
 	db   *sql.DB
@@ -118,6 +118,12 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		`create table if not exists source_health (id text primary key, payload text not null);`,
 		`create table if not exists audit_entries (id text primary key, payload text not null);`,
 		`create table if not exists workflow_events (id text primary key, payload text not null);`,
+		`create index if not exists idx_users_username on users(lower(json_extract(payload, '$.Username')));`,
+		`create index if not exists idx_tenders_source on tenders(coalesce(json_extract(payload, '$.SourceKey'), ''));`,
+		`create index if not exists idx_tenders_status on tenders(lower(coalesce(json_extract(payload, '$.Status'), '')));`,
+		`create index if not exists idx_tenders_document_status on tenders(coalesce(json_extract(payload, '$.DocumentStatus'), ''));`,
+		`create index if not exists idx_tenders_published on tenders(coalesce(json_extract(payload, '$.PublishedDate'), ''));`,
+		`create index if not exists idx_tenders_closing on tenders(coalesce(json_extract(payload, '$.ClosingDate'), ''));`,
 		fmt.Sprintf(`pragma user_version = %d;`, currentSchemaVersion),
 		fmt.Sprintf(`insert into schema_meta(key,value) values('schema_version','%d') on conflict(key) do update set value='%d';`, currentSchemaVersion, currentSchemaVersion),
 	}
@@ -455,16 +461,27 @@ func (s *SQLiteStore) ListUsers(ctx context.Context) ([]models.User, error) {
 	return out, nil
 }
 func (s *SQLiteStore) GetUserByUsername(ctx context.Context, username string) (models.User, error) {
-	items, err := s.ListUsers(ctx)
+	username = strings.TrimSpace(strings.ToLower(username))
+	if username == "" {
+		return models.User{}, ErrNotFound
+	}
+	var raw string
+	err := s.db.QueryRowContext(
+		ctx,
+		"select payload from users where lower(coalesce(json_extract(payload, '$.Username'), '')) = ? limit 1",
+		username,
+	).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return models.User{}, ErrNotFound
+	}
 	if err != nil {
 		return models.User{}, err
 	}
-	for _, u := range items {
-		if u.Username == username {
-			return u, nil
-		}
+	var user models.User
+	if err := json.Unmarshal([]byte(raw), &user); err != nil {
+		return models.User{}, err
 	}
-	return models.User{}, ErrNotFound
+	return user, nil
 }
 func (s *SQLiteStore) GetUser(ctx context.Context, id string) (models.User, error) {
 	return sqliteGetJSON[models.User](ctx, s.db, "users", id)

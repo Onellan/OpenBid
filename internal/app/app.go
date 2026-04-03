@@ -27,16 +27,18 @@ type Config struct {
 	AppAddr, DataPath, SecretKey, ExtractorURL, TreasuryFeedURL            string
 	SecureCookies, LowMemoryMode, AnalyticsEnabled, BootstrapSyncOnStartup bool
 	SessionHours, WorkerSyncMinutes, WorkerLoopSeconds                     int
+	LoginRateLimitWindowSeconds, LoginRateLimitMaxAttempts                 int
 	BootstrapAdminUsername, BootstrapAdminEmail, BootstrapAdminPassword    string
 }
 type App struct {
-	Config    Config
-	Store     store.Store
-	Templates map[string]*template.Template
-	Server    *http.Server
-	Sources   source.Registry
-	Extractor *extract.Client
-	StartedAt time.Time
+	Config           Config
+	Store            store.Store
+	Templates        map[string]*template.Template
+	Server           *http.Server
+	Sources          source.Registry
+	Extractor        *extract.Client
+	StartedAt        time.Time
+	LoginRateLimiter *LoginRateLimiter
 }
 
 func atoi(s string, d int) int {
@@ -80,6 +82,12 @@ func validateConfig(cfg Config) error {
 	if cfg.WorkerLoopSeconds <= 0 {
 		return errors.New("WORKER_LOOP_SECONDS must be greater than zero")
 	}
+	if cfg.LoginRateLimitWindowSeconds <= 0 {
+		return errors.New("LOGIN_RATE_LIMIT_WINDOW_SECONDS must be greater than zero")
+	}
+	if cfg.LoginRateLimitMaxAttempts <= 0 {
+		return errors.New("LOGIN_RATE_LIMIT_MAX_ATTEMPTS must be greater than zero")
+	}
 	if cfg.BootstrapAdminPassword != "" {
 		if err := auth.StrongEnoughPassword(cfg.BootstrapAdminPassword); err != nil {
 			return fmt.Errorf("BOOTSTRAP_ADMIN_PASSWORD is not strong enough: %w", err)
@@ -118,7 +126,10 @@ func New() (*App, error) {
 		_ = st.Close()
 		return nil, err
 	}
-	a := &App{Config: cfg, Store: st, Templates: tpl, Sources: source.NewRegistry(), Extractor: extract.New(cfg.ExtractorURL), StartedAt: time.Now().UTC()}
+	a := &App{
+		Config: cfg, Store: st, Templates: tpl, Sources: source.NewRegistry(), Extractor: extract.New(cfg.ExtractorURL), StartedAt: time.Now().UTC(),
+		LoginRateLimiter: NewLoginRateLimiter(time.Duration(cfg.LoginRateLimitWindowSeconds)*time.Second, cfg.LoginRateLimitMaxAttempts),
+	}
 	if err := a.seed(context.Background()); err != nil {
 		_ = st.Close()
 		return nil, err
@@ -379,6 +390,9 @@ func (a *App) currentUserTenant(r *http.Request) (models.User, models.Tenant, mo
 	if err != nil || !u.IsActive {
 		return models.User{}, models.Tenant{}, models.Membership{}, false
 	}
+	if sess.SessionVersion != u.SessionVersion {
+		return models.User{}, models.Tenant{}, models.Membership{}, false
+	}
 	u, err = a.hydrateUserSensitiveFields(r.Context(), u)
 	if err != nil {
 		log.Printf("failed to hydrate user %s secrets: %v", u.ID, err)
@@ -498,6 +512,10 @@ func (a *App) userTenants(ctx context.Context, userID string) []TenantChoice {
 	return out
 }
 func (a *App) render(w http.ResponseWriter, r *http.Request, name string, data map[string]any) {
+	a.renderStatus(w, r, http.StatusOK, name, data)
+}
+
+func (a *App) renderStatus(w http.ResponseWriter, r *http.Request, status int, name string, data map[string]any) {
 	if data == nil {
 		data = map[string]any{}
 	}
@@ -551,6 +569,9 @@ func (a *App) render(w http.ResponseWriter, r *http.Request, name string, data m
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if status != http.StatusOK {
+		w.WriteHeader(status)
+	}
 	if err := tpl.ExecuteTemplate(w, name, data); err != nil {
 		log.Printf("template render failed for %s on %s: %v", name, r.URL.Path, err)
 		http.Error(w, "internal server error", 500)
@@ -625,11 +646,12 @@ func (a *App) ensureCSRF(r *http.Request) bool {
 }
 
 func (a *App) sameOriginRequest(r *http.Request) bool {
+	expectedScheme := forwardedRequestScheme(r)
 	expectedHost := forwardedRequestHost(r)
 	if expectedHost == "" {
 		expectedHost = r.Host
 	}
-	if expectedHost == "" {
+	if expectedHost == "" || expectedScheme == "" {
 		return false
 	}
 	for _, header := range []string{"Origin", "Referer"} {
@@ -639,6 +661,9 @@ func (a *App) sameOriginRequest(r *http.Request) bool {
 		}
 		u, err := url.Parse(raw)
 		if err != nil || u.Host == "" {
+			return false
+		}
+		if !strings.EqualFold(u.Scheme, expectedScheme) {
 			return false
 		}
 		if !strings.EqualFold(u.Host, expectedHost) {
@@ -661,6 +686,23 @@ func forwardedRequestHost(r *http.Request) string {
 	}
 	return ""
 }
+
+func forwardedRequestScheme(r *http.Request) string {
+	for _, header := range []string{"X-Forwarded-Proto"} {
+		raw := strings.TrimSpace(r.Header.Get(header))
+		if raw == "" {
+			continue
+		}
+		if index := strings.Index(raw, ","); index >= 0 {
+			raw = strings.TrimSpace(raw[:index])
+		}
+		return strings.ToLower(raw)
+	}
+	if r.TLS != nil {
+		return "https"
+	}
+	return "http"
+}
 func (a *App) Login(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		a.render(w, r, "login.html", map[string]any{"Title": "Login"})
@@ -670,8 +712,30 @@ func (a *App) Login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid form submission", 400)
 		return
 	}
+	loginKey := forwardedClientIP(r)
+	if a.LoginRateLimiter != nil {
+		if allowed, retryAfter := a.LoginRateLimiter.Allow(loginKey, time.Now()); !allowed {
+			w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())))
+			a.renderStatus(w, r, http.StatusTooManyRequests, "login.html", map[string]any{"Title": "Login", "Error": "Too many login attempts. Please wait and try again."})
+			return
+		}
+	}
 	u, err := a.Store.GetUserByUsername(r.Context(), r.FormValue("username"))
-	if err != nil || !u.IsActive {
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			if a.LoginRateLimiter != nil {
+				a.LoginRateLimiter.RegisterFailure(loginKey, time.Now())
+			}
+			a.render(w, r, "login.html", map[string]any{"Title": "Login", "Error": "Invalid credentials"})
+			return
+		}
+		a.serverError(w, r, "unable to load user", err)
+		return
+	}
+	if !u.IsActive {
+		if a.LoginRateLimiter != nil {
+			a.LoginRateLimiter.RegisterFailure(loginKey, time.Now())
+		}
 		a.render(w, r, "login.html", map[string]any{"Title": "Login", "Error": "Invalid credentials"})
 		return
 	}
@@ -685,6 +749,9 @@ func (a *App) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !auth.VerifyPassword(r.FormValue("password"), u.PasswordSalt, u.PasswordHash) {
+		if a.LoginRateLimiter != nil {
+			a.LoginRateLimiter.RegisterFailure(loginKey, time.Now())
+		}
 		u.FailedLogins++
 		if u.FailedLogins >= 5 {
 			u.LockedUntil = time.Now().Add(15 * time.Minute)
@@ -701,6 +768,9 @@ func (a *App) Login(w http.ResponseWriter, r *http.Request) {
 		if !auth.ValidateTOTP(u.MFASecret, mfaInput, time.Now()) {
 			remainingCodes, usedRecoveryCode := auth.ConsumeRecoveryCode(u.RecoveryCodes, mfaInput)
 			if !usedRecoveryCode {
+				if a.LoginRateLimiter != nil {
+					a.LoginRateLimiter.RegisterFailure(loginKey, time.Now())
+				}
 				a.render(w, r, "login.html", map[string]any{"Title": "Login", "Error": "Invalid MFA or recovery code"})
 				return
 			}
@@ -713,12 +783,19 @@ func (a *App) Login(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, r, "unable to update login state", err)
 		return
 	}
-	memberships, _ := a.Store.ListMemberships(r.Context(), u.ID)
+	memberships, err := a.Store.ListMemberships(r.Context(), u.ID)
+	if err != nil {
+		a.serverError(w, r, "unable to load memberships", err)
+		return
+	}
 	if len(memberships) == 0 {
 		http.Error(w, "No tenant membership assigned", 403)
 		return
 	}
-	s := models.Session{UserID: u.ID, TenantID: memberships[0].TenantID, Expires: time.Now().Add(time.Duration(a.Config.SessionHours) * time.Hour), CSRF: auth.RandomString(32)}
+	if a.LoginRateLimiter != nil {
+		a.LoginRateLimiter.RegisterSuccess(loginKey)
+	}
+	s := models.Session{UserID: u.ID, TenantID: memberships[0].TenantID, SessionVersion: u.SessionVersion, Expires: time.Now().Add(time.Duration(a.Config.SessionHours) * time.Hour), CSRF: auth.RandomString(32)}
 	if err := auth.SetSessionCookie(w, a.Config.SecretKey, s, a.Config.SecureCookies); err != nil {
 		a.serverError(w, r, "unable to start session", err)
 		return
