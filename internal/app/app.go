@@ -452,9 +452,32 @@ func (a *App) render(w http.ResponseWriter, r *http.Request, name string, data m
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tpl.ExecuteTemplate(w, name, data); err != nil {
+		log.Printf("template render failed for %s on %s: %v", name, r.URL.Path, err)
 		http.Error(w, "internal server error", 500)
 	}
 }
+
+func (a *App) badRequest(w http.ResponseWriter, r *http.Request, message string, err error) {
+	if err != nil {
+		log.Printf("bad request on %s %s: %v", r.Method, r.URL.Path, err)
+	}
+	http.Error(w, message, http.StatusBadRequest)
+}
+
+func (a *App) notFound(w http.ResponseWriter, r *http.Request, message string, err error) {
+	if err != nil {
+		log.Printf("not found on %s %s: %v", r.Method, r.URL.Path, err)
+	}
+	http.Error(w, message, http.StatusNotFound)
+}
+
+func (a *App) serverError(w http.ResponseWriter, r *http.Request, message string, err error) {
+	if err != nil {
+		log.Printf("server error on %s %s: %v", r.Method, r.URL.Path, err)
+	}
+	http.Error(w, message, http.StatusInternalServerError)
+}
+
 func (a *App) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if _, _, _, ok := a.currentUserTenant(r); !ok {
@@ -480,7 +503,7 @@ func (a *App) WithSecurityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		w.Header().Set("Content-Security-Policy", "default-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
 		if a.Config.SecureCookies {
 			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}

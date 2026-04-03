@@ -155,6 +155,45 @@ func TestDashboardCountsAllTendersBeyondPageCap(t *testing.T) {
 	}
 }
 
+func TestSQLiteListTendersPaginatesAndFiltersWithoutWorkflowJoin(t *testing.T) {
+	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	inputs := []models.Tender{
+		{ID: "sql-1", Title: "Alpha", Issuer: "Metro", SourceKey: "treasury", Status: "open", PublishedDate: "2026-04-01", DocumentURL: "https://example.org/a.pdf", DocumentStatus: models.ExtractionCompleted},
+		{ID: "sql-2", Title: "Bravo", Issuer: "Metro", SourceKey: "treasury", Status: "open", PublishedDate: "2026-04-02", DocumentURL: "https://example.org/b.pdf", DocumentStatus: models.ExtractionCompleted},
+		{ID: "sql-3", Title: "Charlie", Issuer: "Metro", SourceKey: "treasury", Status: "closed", PublishedDate: "2026-04-03", DocumentStatus: models.ExtractionQueued},
+	}
+	for _, tender := range inputs {
+		if err := s.UpsertTender(ctx, tender); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	items, total, err := s.ListTenders(ctx, ListFilter{
+		Source:         "treasury",
+		Status:         "open",
+		DocumentStatus: string(models.ExtractionCompleted),
+		HasDocuments:   true,
+		Sort:           "published_date",
+		Page:           2,
+		PageSize:       1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 || len(items) != 1 {
+		t.Fatalf("expected total=2 len=1, got total=%d len=%d", total, len(items))
+	}
+	if items[0].ID != "sql-1" {
+		t.Fatalf("expected second page to contain sql-1, got %#v", items[0])
+	}
+}
+
 func TestSQLiteTenderRoundTripsStructuredFields(t *testing.T) {
 	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {

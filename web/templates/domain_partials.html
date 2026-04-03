@@ -35,17 +35,18 @@
 </form>
 {{end}}
 
-{{define "pipeline_jobs_table_typed"}}
+{{define "queue_section_table_typed"}}
 <table>
   <tr><th>Opportunity</th><th>State</th><th>Attempts</th><th>Next attempt</th><th>Last error</th><th>Actions</th></tr>
-  {{range .QueueItems}}
+  {{range .PageItems}}
   <tr>
     <td><a href="/tenders/{{.Tender.ID}}">{{.Tender.Title}}</a></td>
     <td>{{template "status_badge" (dict "tone" (condTone .Job.State) "label" .Job.State)}}</td>
     <td>{{.Job.Attempts}}</td>
-    <td>{{.Job.NextAttemptAt}}</td>
-    <td class="small mono">{{.Job.LastError}}</td>
+    <td>{{formatTime .Job.NextAttemptAt}}</td>
+    <td class="small mono">{{if .Job.LastError}}{{.Job.LastError}}{{else}}No error recorded{{end}}</td>
     <td>
+      {{if ne (printf "%s" .Job.State) "completed"}}
       {{template "confirm_destructive_action" (dict
         "action" "/queue/requeue"
         "confirm" (printf "Requeue processing for '%s'?" .Tender.Title)
@@ -54,10 +55,17 @@
         "hidden" (slice (dict "name" "tender_id" "value" .Tender.ID))
         "label" "Retry"
       )}}
+      {{else}}
+      <span class="footer-note">Completed</span>
+      {{end}}
     </td>
   </tr>
   {{else}}
   <tr><td colspan="6">{{template "empty_state" "No pipeline items yet."}}</td></tr>
   {{end}}
 </table>
+{{end}}
+
+{{define "pipeline_jobs_table_typed"}}
+{{template "queue_section_table_typed" (dict "PageItems" .QueueItems "CSRFToken" .CSRFToken)}}
 {{end}}

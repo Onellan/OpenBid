@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +18,21 @@ import (
 type QueueItem struct {
 	Job    models.ExtractionJob
 	Tender models.Tender
+}
+
+type QueueSection struct {
+	Key         string
+	Title       string
+	Tone        string
+	Items       []QueueItem
+	PageItems   []QueueItem
+	CurrentPage int
+	TotalPages  int
+	HasPrevPage bool
+	HasNextPage bool
+	PrevPageURL string
+	NextPageURL string
+	Open        bool
 }
 
 type QueueSummary struct {
@@ -52,6 +68,75 @@ func queueSummary(jobs []models.ExtractionJob) QueueSummary {
 		}
 	}
 	return summary
+}
+
+func cloneURLValues(values url.Values) url.Values {
+	cloned := url.Values{}
+	for key, current := range values {
+		cloned[key] = append([]string{}, current...)
+	}
+	return cloned
+}
+
+func queuePageLink(values url.Values, param string, page int) string {
+	if page < 1 {
+		page = 1
+	}
+	query := cloneURLValues(values)
+	query.Set(param, strconv.Itoa(page))
+	encoded := query.Encode()
+	if encoded == "" {
+		return "/queue"
+	}
+	return "/queue?" + encoded
+}
+
+func buildQueueSection(key, title, tone string, items []QueueItem, query url.Values, open bool) QueueSection {
+	const pageSize = 10
+	param := key + "_page"
+	currentPage, err := strconv.Atoi(query.Get(param))
+	if err != nil || currentPage < 1 {
+		currentPage = 1
+	}
+	total := len(items)
+	totalPages := total / pageSize
+	if total%pageSize != 0 {
+		totalPages++
+	}
+	if totalPages == 0 {
+		totalPages = 1
+	}
+	if currentPage > totalPages {
+		currentPage = totalPages
+	}
+	start := (currentPage - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	pageItems := items[start:end]
+	section := QueueSection{
+		Key:         key,
+		Title:       title,
+		Tone:        tone,
+		Items:       items,
+		PageItems:   pageItems,
+		CurrentPage: currentPage,
+		TotalPages:  totalPages,
+		Open:        open,
+	}
+	if currentPage > 1 {
+		section.HasPrevPage = true
+		section.PrevPageURL = queuePageLink(query, param, currentPage-1)
+	}
+	if currentPage < totalPages {
+		section.HasNextPage = true
+		section.NextPageURL = queuePageLink(query, param, currentPage+1)
+	}
+	return section
 }
 
 func (a *App) listRenderableJobs(ctx context.Context) []models.ExtractionJob {
@@ -242,7 +327,7 @@ func (a *App) Tenders(w http.ResponseWriter, r *http.Request) {
 	a.render(w, r, "tenders.html", map[string]any{
 		"Title": "Tenders", "User": u, "Tenant": t, "Items": items, "Total": total,
 		"Filter": f, "Bookmarks": bookmarkByTender, "Bookmarked": bookmarked, "Workflows": workflowByTender,
-		"ReturnTo": r.URL.RequestURI(),
+		"ReturnTo":    r.URL.RequestURI(),
 		"CurrentPage": f.Page, "TotalPages": totalPages, "HasPrevPage": f.Page > 1, "HasNextPage": f.Page < totalPages,
 		"PrevPageURL": pageLink("/tenders", params, f.Page-1), "NextPageURL": pageLink("/tenders", params, f.Page+1),
 	})
@@ -353,7 +438,7 @@ func (a *App) QueueExtraction(w http.ResponseWriter, r *http.Request) {
 	}
 	tender, err := a.Store.GetTender(r.Context(), r.FormValue("tender_id"))
 	if err != nil {
-		http.Error(w, err.Error(), 404)
+		a.notFound(w, r, "tender not found", err)
 		return
 	}
 	if tender.DocumentURL == "" {
@@ -512,14 +597,38 @@ func (a *App) QueuePage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", 303)
 		return
 	}
-	jobs, _ := a.Store.ListJobs(r.Context())
-	jobs = a.listRenderableJobs(r.Context())
+	jobs := a.listRenderableJobs(r.Context())
 	items := make([]QueueItem, 0, len(jobs))
 	for _, job := range jobs {
 		tender, _ := a.Store.GetTender(r.Context(), job.TenderID)
 		items = append(items, QueueItem{Job: job, Tender: tender})
 	}
-	a.render(w, r, "queue.html", map[string]any{"Title": "Queue", "User": u, "Tenant": t, "QueueItems": items, "QueueSummary": queueSummary(jobs)})
+	grouped := map[models.ExtractionState][]QueueItem{
+		models.ExtractionFailed:     {},
+		models.ExtractionProcessing: {},
+		models.ExtractionRetry:      {},
+		models.ExtractionQueued:     {},
+		models.ExtractionCompleted:  {},
+	}
+	for _, item := range items {
+		grouped[item.Job.State] = append(grouped[item.Job.State], item)
+	}
+	query := r.URL.Query()
+	sections := []QueueSection{
+		buildQueueSection("failed", "Failed", "danger", grouped[models.ExtractionFailed], query, true),
+		buildQueueSection("processing", "Processing", "warning", grouped[models.ExtractionProcessing], query, false),
+		buildQueueSection("retry", "Retry", "warning", grouped[models.ExtractionRetry], query, false),
+		buildQueueSection("queued", "Queued", "info", grouped[models.ExtractionQueued], query, false),
+		buildQueueSection("completed", "Completed", "success", grouped[models.ExtractionCompleted], query, false),
+	}
+	a.render(w, r, "queue.html", map[string]any{
+		"Title":         "Queue",
+		"User":          u,
+		"Tenant":        t,
+		"QueueItems":    items,
+		"QueueSummary":  queueSummary(jobs),
+		"QueueSections": sections,
+	})
 }
 
 func (a *App) QueueRequeue(w http.ResponseWriter, r *http.Request) {
@@ -538,7 +647,7 @@ func (a *App) QueueRequeue(w http.ResponseWriter, r *http.Request) {
 	}
 	tender, err := a.Store.GetTender(r.Context(), r.FormValue("tender_id"))
 	if err != nil {
-		http.Error(w, err.Error(), 404)
+		a.notFound(w, r, "tender not found", err)
 		return
 	}
 	if tender.DocumentURL == "" {

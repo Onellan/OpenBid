@@ -545,6 +545,40 @@ func TestLoginPageRendersSignInContent(t *testing.T) {
 	}
 }
 
+func TestLoginPageUsesExternalAssetsAndTighterCSP(t *testing.T) {
+	a := newTestApp(t)
+	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `href="/assets/styles.css"`) || !strings.Contains(body, `src="/assets/app.js"`) {
+		t.Fatalf("expected external asset references, got %s", body)
+	}
+	csp := w.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "script-src 'self'") || !strings.Contains(csp, "style-src 'self' 'unsafe-inline'") {
+		t.Fatalf("expected tightened CSP, got %q", csp)
+	}
+	if strings.Contains(csp, "default-src 'self' 'unsafe-inline'") {
+		t.Fatalf("expected inline script allowance to be removed, got %q", csp)
+	}
+}
+
+func TestAssetRouteServesSharedAppJS(t *testing.T) {
+	a := newTestApp(t)
+	req := httptest.NewRequest(http.MethodGet, "/assets/app.js", nil)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "closeOtherMenus") {
+		t.Fatalf("expected shared app script, got %s", w.Body.String())
+	}
+}
+
 func TestLoginPageHidesDemoCredentialsInProduction(t *testing.T) {
 	t.Setenv("APP_ENV", "production")
 	t.Setenv("DATA_PATH", filepath.Join(t.TempDir(), "store.db"))
@@ -892,6 +926,96 @@ func TestQueuePagePrunesOrphanJobsAndRendersTypedStates(t *testing.T) {
 	}
 	if len(jobs) != 1 || jobs[0].ID != "job-valid" {
 		t.Fatalf("expected orphan job to be pruned, got %#v", jobs)
+	}
+}
+
+func TestQueuePageGroupsStatesAndHidesCompletedRetry(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := adminSession(t, a)
+	for i := 0; i < 12; i++ {
+		tenderID := "failed-tender-" + strconv.Itoa(i)
+		_ = a.Store.UpsertTender(t.Context(), models.Tender{
+			ID:             tenderID,
+			Title:          "Failed Tender " + strconv.Itoa(i),
+			Issuer:         "Metro",
+			SourceKey:      "treasury",
+			Status:         "open",
+			DocumentURL:    "https://example.org/" + strconv.Itoa(i) + ".pdf",
+			DocumentStatus: models.ExtractionFailed,
+		})
+		_ = a.Store.QueueJob(t.Context(), models.ExtractionJob{
+			ID:          "failed-job-" + strconv.Itoa(i),
+			TenderID:    tenderID,
+			DocumentURL: "https://example.org/" + strconv.Itoa(i) + ".pdf",
+			State:       models.ExtractionFailed,
+		})
+	}
+	_ = a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:             "completed-tender",
+		Title:          "Completed Tender",
+		Issuer:         "Metro",
+		SourceKey:      "treasury",
+		Status:         "open",
+		DocumentURL:    "https://example.org/completed.pdf",
+		DocumentStatus: models.ExtractionCompleted,
+	})
+	_ = a.Store.QueueJob(t.Context(), models.ExtractionJob{
+		ID:          "completed-job",
+		TenderID:    "completed-tender",
+		DocumentURL: "https://example.org/completed.pdf",
+		State:       models.ExtractionCompleted,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/queue", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	if !strings.Contains(body, "queue-state-failed") || !strings.Contains(body, "queue-state-completed") {
+		t.Fatalf("expected grouped queue sections, got %s", body)
+	}
+	if !strings.Contains(body, "<details class=\"section-disclosure queue-state-disclosure queue-state-failed\" open>") {
+		t.Fatalf("expected failed section open by default, got %s", body)
+	}
+	if !strings.Contains(body, "queue-state-disclosure queue-state-completed") || strings.Contains(body, "queue-state-disclosure queue-state-completed\" open") {
+		t.Fatalf("expected completed section collapsed by default, got %s", body)
+	}
+	if strings.Contains(body, "Requeue processing for &#39;Completed Tender&#39;?") || strings.Contains(body, "Requeue processing for 'Completed Tender'?") {
+		t.Fatalf("completed job still exposed retry action: %s", body)
+	}
+	if !strings.Contains(body, "failed_page=2") || !strings.Contains(body, "Page 1 of 2") {
+		t.Fatalf("expected failed section pagination controls, got %s", body)
+	}
+	if strings.Index(body, "queue-state-failed") > strings.Index(body, "queue-state-processing") {
+		t.Fatalf("expected failed section before other states, got %s", body)
+	}
+}
+
+func TestSourcesPageReordersSetupAndCollapsesHistory(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := adminSession(t, a)
+	req := httptest.NewRequest(http.MethodGet, "/sources", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "sources-setup-stack") || !strings.Contains(body, "sources-history-disclosure") {
+		t.Fatalf("expected updated sources layout markers, got %s", body)
+	}
+	if strings.Index(body, "Add source") > strings.Index(body, "Scheduling") {
+		t.Fatalf("expected Add source above Scheduling, got %s", body)
+	}
+	if !strings.Contains(body, "<details class=\"section-disclosure sources-history-disclosure\"") {
+		t.Fatalf("expected collapsible history section, got %s", body)
+	}
+	if strings.Contains(body, "<details class=\"section-disclosure sources-history-disclosure\" open>") {
+		t.Fatalf("expected history section collapsed by default, got %s", body)
+	}
+	if !strings.Contains(body, "source-ops-table") || !strings.Contains(body, "source-inline-controls") {
+		t.Fatalf("expected compact source operations markup, got %s", body)
 	}
 }
 func TestRoleBasedNavigationVisibility(t *testing.T) {

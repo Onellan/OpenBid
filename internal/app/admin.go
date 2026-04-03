@@ -200,7 +200,7 @@ func (a *App) AdminCreateSource(w http.ResponseWriter, r *http.Request) {
 		AutoCheckEnabled:    true,
 	}
 	if err := a.Store.UpsertSourceConfig(r.Context(), cfg); err != nil {
-		http.Error(w, err.Error(), 500)
+		a.serverError(w, r, "unable to save source configuration", err)
 		return
 	}
 	settings := a.loadSourceScheduleSettings(r.Context())
@@ -238,7 +238,7 @@ func (a *App) AdminUpdateSource(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg, err := a.Store.GetSourceConfig(r.Context(), key)
 	if err != nil {
-		http.Error(w, err.Error(), 404)
+		a.notFound(w, r, "source not found", err)
 		return
 	}
 	interval := 0
@@ -254,7 +254,7 @@ func (a *App) AdminUpdateSource(w http.ResponseWriter, r *http.Request) {
 	cfg.AutoCheckEnabled = r.FormValue("auto_check_enabled") == "on"
 	cfg.IntervalMinutes = interval
 	if err := a.Store.UpsertSourceConfig(r.Context(), cfg); err != nil {
-		http.Error(w, err.Error(), 500)
+		a.serverError(w, r, "unable to update source settings", err)
 		return
 	}
 	health, _ := a.Store.GetSourceHealth(r.Context(), key)
@@ -267,7 +267,7 @@ func (a *App) AdminUpdateSource(w http.ResponseWriter, r *http.Request) {
 	}
 	health.HealthStatus = source.ComputeHealthStatus(cfg, settings, health)
 	if err := a.Store.UpsertSourceHealth(r.Context(), health); err != nil {
-		http.Error(w, err.Error(), 500)
+		a.serverError(w, r, "unable to update source health", err)
 		return
 	}
 	a.auditAction(r.Context(), actionContext{User: u, Tenant: t, Member: m}, "update", "source", key, "Source settings updated", map[string]string{
@@ -329,7 +329,7 @@ func (a *App) AdminUpdateSourceSchedule(w http.ResponseWriter, r *http.Request) 
 		Paused:                 r.FormValue("paused") == "on",
 	}
 	if err := a.Store.UpsertSourceScheduleSettings(r.Context(), settings); err != nil {
-		http.Error(w, err.Error(), 500)
+		a.serverError(w, r, "unable to save source schedule", err)
 		return
 	}
 	_ = a.recalculateSourceSchedules(r.Context(), time.Now().UTC())
@@ -396,7 +396,7 @@ func (a *App) triggerSourceChecks(w http.ResponseWriter, r *http.Request, rawKey
 	}
 	queued, err := a.queueSourceChecks(r.Context(), rawKeys)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		a.serverError(w, r, "unable to queue source checks", err)
 		return
 	}
 	if queued == 0 {
@@ -504,7 +504,7 @@ func (a *App) AdminToggleUser(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := a.Store.GetUser(r.Context(), r.FormValue("user_id"))
 	if err != nil {
-		http.Error(w, err.Error(), 404)
+		a.notFound(w, r, "user not found", err)
 		return
 	}
 	user.IsActive = !user.IsActive
@@ -528,7 +528,7 @@ func (a *App) AdminResetPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := a.Store.GetUser(r.Context(), r.FormValue("user_id"))
 	if err != nil {
-		http.Error(w, err.Error(), 404)
+		a.notFound(w, r, "user not found", err)
 		return
 	}
 	password := r.FormValue("new_password")

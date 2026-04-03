@@ -132,8 +132,8 @@
 {{end}}
 
 {{define "source_config_table_typed"}}
-<table>
-  <tr><th>Select</th><th>Source</th><th>Status</th><th>Schedule</th><th>Checks</th><th>Actions</th></tr>
+<table class="source-ops-table">
+  <tr><th>Select</th><th>Source</th><th>Health</th><th>Schedule</th><th>Actions</th></tr>
   {{range .Items}}
   <tr>
     <td>
@@ -145,40 +145,35 @@
     </td>
     <td>
       <strong>{{.Config.Name}}</strong>
-      <div class="footer-note mono small" style="margin-top:6px">{{.Config.Key}}</div>
-      <div class="footer-note" style="margin-top:6px">{{.Config.Type}}</div>
+      <div class="footer-note mono small" style="margin-top:6px">{{.Config.Key}} · {{.Config.Type}}</div>
       <div class="footer-note small" style="margin-top:6px"><a href="{{.Config.FeedURL}}" target="_blank" rel="noreferrer">{{.Config.FeedURL}}</a></div>
     </td>
     <td>
       {{template "status_badge" (dict "tone" (condTone .Health.HealthStatus) "label" .Health.HealthStatus)}}
-      <div class="footer-note" style="margin-top:6px">{{if .Health.LastMessage}}{{.Health.LastMessage}}{{else}}Waiting for the next source check.{{end}}</div>
-      <div class="footer-note" style="margin-top:6px">Failures: {{.Health.ConsecutiveFailures}}</div>
+      <div class="footer-note" style="margin-top:6px">Failures: {{.Health.ConsecutiveFailures}} · Items: {{.Health.LastItemCount}}</div>
+      <div class="footer-note" style="margin-top:6px">Last: {{formatTime .Health.LastCheckedAt}}{{if .RecentRun.Trigger}} · {{.RecentRun.Trigger}}{{end}}</div>
     </td>
     <td>
-      <div class="footer-note">{{if .Config.Enabled}}Enabled{{else}}Disabled{{end}} / {{if .Config.AutoCheckEnabled}}Auto{{else}}Manual only{{end}}</div>
-      <div class="footer-note" style="margin-top:6px">Every {{if gt .Config.IntervalMinutes 0}}{{.Config.IntervalMinutes}}{{else}}{{$.ScheduleSettings.DefaultIntervalMinutes}}{{end}} minutes</div>
-      <div class="footer-note" style="margin-top:6px">Next: {{formatTime .Health.NextScheduledCheckAt}}</div>
+      <div class="footer-note">{{if .Config.Enabled}}Enabled{{else}}Disabled{{end}} · {{if .Config.AutoCheckEnabled}}Auto{{else}}Manual only{{end}}</div>
+      <div class="footer-note" style="margin-top:6px">Every {{if gt .Config.IntervalMinutes 0}}{{.Config.IntervalMinutes}}{{else}}{{$.ScheduleSettings.DefaultIntervalMinutes}}{{end}} min · Next {{formatTime .Health.NextScheduledCheckAt}}</div>
       {{if $.CanManageSources}}
-      <form method="post" action="/sources/update" class="form-grid" style="margin-top:10px">
+      <form method="post" action="/sources/update" class="form-grid source-inline-form" style="margin-top:10px">
         <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
         <input type="hidden" name="key" value="{{.Config.Key}}">
-        <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" name="enabled" {{if .Config.Enabled}}checked{{end}}><span>Enabled</span></label>
-        <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" name="auto_check_enabled" {{if .Config.AutoCheckEnabled}}checked{{end}}><span>Auto-check</span></label>
-        <label>Override minutes
-          <input type="number" min="0" name="interval_minutes" value="{{.Config.IntervalMinutes}}" placeholder="0 = global">
-        </label>
-        <div class="actions"><button type="submit">Save</button></div>
+        <div class="source-inline-controls">
+          <label class="toggle-inline"><input type="checkbox" name="enabled" {{if .Config.Enabled}}checked{{end}}><span>Enabled</span></label>
+          <label class="toggle-inline"><input type="checkbox" name="auto_check_enabled" {{if .Config.AutoCheckEnabled}}checked{{end}}><span>Auto-check</span></label>
+          <label class="source-interval-field">Override min
+            <input type="number" min="0" name="interval_minutes" value="{{.Config.IntervalMinutes}}" placeholder="0 = global">
+          </label>
+        </div>
+        <div class="actions compact-actions"><button type="submit">Save</button></div>
       </form>
       {{end}}
     </td>
-    <td>
-      <div class="footer-note">Last check: {{formatTime .Health.LastCheckedAt}}</div>
-      <div class="footer-note" style="margin-top:6px">Last success: {{formatTime .Health.LastSuccessfulCheckAt}}</div>
-      <div class="footer-note" style="margin-top:6px">Items: {{.Health.LastItemCount}}</div>
-      {{if .RecentRun.Trigger}}<div class="footer-note" style="margin-top:6px">Trigger: {{.RecentRun.Trigger}}</div>{{end}}
-    </td>
-    <td>
+    <td class="source-actions-cell">
       {{if $.CanManageSources}}
+        <div class="actions compact-actions">
         <form method="post" action="/sources/check" style="display:inline-flex">
           <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
           <input type="hidden" name="key" value="{{.Config.Key}}">
@@ -192,13 +187,14 @@
           "hidden" (slice (dict "name" "id" "value" .Config.ID) (dict "name" "key" "value" .Config.Key))
           "label" "Delete"
         )}}
+        </div>
       {{else}}
         <span class="footer-note">View only</span>
       {{end}}
     </td>
   </tr>
   {{else}}
-  <tr><td colspan="6">{{template "empty_state" "No sources configured yet."}}</td></tr>
+  <tr><td colspan="5">{{template "empty_state" "No sources configured yet."}}</td></tr>
   {{end}}
 </table>
 {{end}}

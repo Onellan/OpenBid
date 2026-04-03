@@ -1,4 +1,3 @@
-
 {{define "queue.html"}}{{template "base" .}}{{end}}{{define "content"}}
 {{template "page_hero" (dict
   "eyebrow" "Pipeline"
@@ -12,10 +11,27 @@
   {{template "metric_card" (dict "label" "Failed" "value" .QueueSummary.Failed)}}
   {{template "metric_card" (dict "label" "Completed" "value" .QueueSummary.Completed)}}
 </section>
-{{template "entity_table_card" (dict
-  "title" "Processing queue"
-  "subtitle" "A live view of extraction jobs and their current state."
-  "inner" "pipeline_jobs_table_typed"
-  "context" .
-)}}
+<div class="stack">
+  {{range .QueueSections}}
+  <details class="section-disclosure queue-state-disclosure queue-state-{{.Key}}" {{if .Open}}open{{end}}>
+    <summary>
+      <div>
+        <h2 class="card-title">{{.Title}}</h2>
+        <p class="section-disclosure-copy">A focused view of jobs currently in the {{.Title}} state.</p>
+      </div>
+      <span class="badge {{.Tone}}">{{len .Items}} items</span>
+    </summary>
+    <div class="section-disclosure-body">
+      <div class="table-wrap">{{template "queue_section_table_typed" (dict "PageItems" .PageItems "CSRFToken" $.CSRFToken)}}</div>
+      {{if gt .TotalPages 1}}
+      <div class="actions queue-section-pagination" style="margin-top:14px">
+        {{if .HasPrevPage}}<a class="button secondary" href="{{.PrevPageURL}}">Previous</a>{{else}}<span class="badge info">First page</span>{{end}}
+        <span class="badge info">Page {{.CurrentPage}} of {{.TotalPages}}</span>
+        {{if .HasNextPage}}<a class="button secondary" href="{{.NextPageURL}}">Next</a>{{else}}<span class="badge success">Last page</span>{{end}}
+      </div>
+      {{end}}
+    </div>
+  </details>
+  {{end}}
+</div>
 {{end}}

@@ -164,11 +164,22 @@ func (s *SQLiteStore) listAllTenders(ctx context.Context) ([]models.Tender, erro
 }
 
 func (s *SQLiteStore) ListTenders(ctx context.Context, f ListFilter) ([]models.Tender, int, error) {
+	f = NormalizeFilter(f)
+	if f.WorkflowStatus != "" || f.BookmarkedOnly {
+		return s.listTendersInMemory(ctx, f)
+	}
+	items, total, err := s.listTendersSQL(ctx, f)
+	if err == nil {
+		return items, total, nil
+	}
+	return s.listTendersInMemory(ctx, f)
+}
+
+func (s *SQLiteStore) listTendersInMemory(ctx context.Context, f ListFilter) ([]models.Tender, int, error) {
 	items, err := s.listAllTenders(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
-	f = NormalizeFilter(f)
 
 	bookmarked := map[string]bool{}
 	if f.TenantID != "" && f.UserID != "" {
@@ -248,6 +259,93 @@ func (s *SQLiteStore) ListTenders(ctx context.Context, f ListFilter) ([]models.T
 		end = total
 	}
 	return out[start:end], total, nil
+}
+
+func tenderOrderClause(sortKey string) string {
+	switch sortKey {
+	case "published_date":
+		return "coalesce(json_extract(payload, '$.PublishedDate'), '') desc, id asc"
+	case "relevance":
+		return "coalesce(json_extract(payload, '$.RelevanceScore'), 0) desc, id asc"
+	case "cidb":
+		return "coalesce(json_extract(payload, '$.CIDBGrading'), '') desc, id asc"
+	default:
+		return "coalesce(json_extract(payload, '$.ClosingDate'), '') asc, id asc"
+	}
+}
+
+func buildTenderSQLFilter(f ListFilter) (string, []any) {
+	clauses := []string{"1=1"}
+	args := []any{}
+	if f.Query != "" {
+		term := "%" + strings.ToLower(f.Query) + "%"
+		clauses = append(clauses, "(lower(coalesce(json_extract(payload, '$.Title'), '')) like ? or lower(coalesce(json_extract(payload, '$.Issuer'), '')) like ? or lower(coalesce(json_extract(payload, '$.Summary'), '')) like ? or lower(coalesce(json_extract(payload, '$.TenderNumber'), '')) like ?)")
+		args = append(args, term, term, term, term)
+	}
+	if f.Source != "" {
+		clauses = append(clauses, "coalesce(json_extract(payload, '$.SourceKey'), '') = ?")
+		args = append(args, f.Source)
+	}
+	if f.Province != "" {
+		clauses = append(clauses, "lower(coalesce(json_extract(payload, '$.Province'), '')) = ?")
+		args = append(args, strings.ToLower(f.Province))
+	}
+	if f.Category != "" {
+		clauses = append(clauses, "lower(coalesce(json_extract(payload, '$.Category'), '')) = ?")
+		args = append(args, strings.ToLower(f.Category))
+	}
+	if f.Issuer != "" {
+		clauses = append(clauses, "lower(coalesce(json_extract(payload, '$.Issuer'), '')) like ?")
+		args = append(args, "%"+strings.ToLower(f.Issuer)+"%")
+	}
+	if f.Status != "" {
+		clauses = append(clauses, "lower(coalesce(json_extract(payload, '$.Status'), '')) = ?")
+		args = append(args, strings.ToLower(f.Status))
+	}
+	if f.CIDB != "" {
+		clauses = append(clauses, "lower(coalesce(json_extract(payload, '$.CIDBGrading'), '')) like ?")
+		args = append(args, "%"+strings.ToLower(f.CIDB)+"%")
+	}
+	if f.DocumentStatus != "" {
+		clauses = append(clauses, "coalesce(json_extract(payload, '$.DocumentStatus'), '') = ?")
+		args = append(args, f.DocumentStatus)
+	}
+	if f.HasDocuments {
+		clauses = append(clauses, "coalesce(json_extract(payload, '$.DocumentURL'), '') <> ''")
+	}
+	return strings.Join(clauses, " and "), args
+}
+
+func (s *SQLiteStore) listTendersSQL(ctx context.Context, f ListFilter) ([]models.Tender, int, error) {
+	whereClause, args := buildTenderSQLFilter(f)
+	countQuery := "select count(*) from tenders where " + whereClause
+	var total int
+	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	offset := (f.Page - 1) * f.PageSize
+	if offset >= total {
+		return []models.Tender{}, total, nil
+	}
+	queryArgs := append(append([]any{}, args...), f.PageSize, offset)
+	rows, err := s.db.QueryContext(ctx, "select payload from tenders where "+whereClause+" order by "+tenderOrderClause(f.Sort)+" limit ? offset ?", queryArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	out := make([]models.Tender, 0, f.PageSize)
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, 0, err
+		}
+		var tender models.Tender
+		if err := json.Unmarshal([]byte(raw), &tender); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, tender)
+	}
+	return out, total, rows.Err()
 }
 
 func (s *SQLiteStore) GetTender(ctx context.Context, id string) (models.Tender, error) {

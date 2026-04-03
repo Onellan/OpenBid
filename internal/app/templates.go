@@ -27,15 +27,26 @@ func dict(values ...any) (map[string]any, error) {
 	return out, nil
 }
 
-func locateTemplateDir() (string, error) {
-	candidates := []string{filepath.Join("web", "templates")}
+func locateWebSubdir(name string) (string, error) {
+	candidates := []string{filepath.Join("web", name)}
 	if _, filename, _, ok := runtime.Caller(0); ok {
-		candidates = append(candidates, filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", "web", "templates")))
+		candidates = append(candidates, filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", "web", name)))
 	}
 	for _, dir := range candidates {
-		if info, err := os.Stat(filepath.Join(dir, "base.html")); err == nil && !info.IsDir() {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
 			return dir, nil
 		}
+	}
+	return "", fmt.Errorf("no %s directory found in known locations", name)
+}
+
+func locateTemplateDir() (string, error) {
+	dir, err := locateWebSubdir("templates")
+	if err != nil {
+		return "", err
+	}
+	if info, err := os.Stat(filepath.Join(dir, "base.html")); err == nil && !info.IsDir() {
+		return dir, nil
 	}
 	return "", fmt.Errorf("no templates found in known locations")
 }
@@ -124,6 +135,9 @@ func parseTemplates() (map[string]*template.Template, error) {
 
 func routes(a *App) http.Handler {
 	mux := http.NewServeMux()
+	if assetDir, err := locateWebSubdir("assets"); err == nil {
+		mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir(assetDir))))
+	}
 	mux.HandleFunc("/healthz", a.Healthz)
 	mux.HandleFunc("/login", a.Login)
 	mux.HandleFunc("/logout", a.RequireAuth(a.Logout))
