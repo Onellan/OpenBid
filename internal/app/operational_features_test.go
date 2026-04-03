@@ -172,6 +172,19 @@ func TestHealthPageIsForbiddenForViewer(t *testing.T) {
 	}
 }
 
+func TestHealthPageIsForbiddenForTenantAdmin(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := sessionForRole(t, a, models.RoleTenantAdmin)
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 got %d", w.Code)
+	}
+}
+
 func TestAuditAndWorkflowHistoryStoreMethods(t *testing.T) {
 	s, err := store.NewSQLiteStore(t.TempDir() + "/store.db")
 	if err != nil {

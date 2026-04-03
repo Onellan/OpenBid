@@ -544,17 +544,29 @@ func (a *App) BulkTenders(w http.ResponseWriter, r *http.Request) {
 	for _, id := range parseSelectedIDs(r.FormValue("selected_ids")) {
 		switch r.FormValue("action") {
 		case "bookmark":
-			_ = a.Store.UpsertBookmark(r.Context(), models.Bookmark{TenantID: t.ID, UserID: u.ID, TenderID: id, Note: r.FormValue("notes")})
+			if err := a.Store.UpsertBookmark(r.Context(), models.Bookmark{TenantID: t.ID, UserID: u.ID, TenderID: id, Note: r.FormValue("notes")}); err != nil {
+				a.serverError(w, r, "unable to apply bulk bookmark", err)
+				return
+			}
 		case "queue":
 			tender, err := a.Store.GetTender(r.Context(), id)
 			if err == nil && tender.DocumentURL != "" {
 				tender.DocumentStatus = models.ExtractionQueued
-				_ = a.Store.UpsertTender(r.Context(), tender)
-				_ = a.Store.QueueJob(r.Context(), models.ExtractionJob{TenderID: tender.ID, DocumentURL: tender.DocumentURL, State: models.ExtractionQueued})
+				if err := a.Store.UpsertTender(r.Context(), tender); err != nil {
+					a.serverError(w, r, "unable to queue tender document", err)
+					return
+				}
+				if err := a.Store.QueueJob(r.Context(), models.ExtractionJob{TenderID: tender.ID, DocumentURL: tender.DocumentURL, State: models.ExtractionQueued}); err != nil {
+					a.serverError(w, r, "unable to queue extraction job", err)
+					return
+				}
 			}
 		default:
 			workflow := models.Workflow{TenantID: t.ID, TenderID: id, Status: r.FormValue("status"), Priority: r.FormValue("priority"), AssignedUser: r.FormValue("assigned_user"), Notes: r.FormValue("notes")}
-			_ = a.Store.UpsertWorkflow(r.Context(), workflow)
+			if err := a.Store.UpsertWorkflow(r.Context(), workflow); err != nil {
+				a.serverError(w, r, "unable to update workflow", err)
+				return
+			}
 			a.addWorkflowSnapshot(r.Context(), actionContext{User: u, Tenant: t, Member: m}, workflow)
 		}
 	}

@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"tenderhub-za/internal/extract"
 	"tenderhub-za/internal/models"
+	"tenderhub-za/internal/netguard"
 	"tenderhub-za/internal/source"
 	"tenderhub-za/internal/store"
 	"time"
@@ -18,6 +21,7 @@ type Runner struct {
 	Sources              source.Registry
 	SourceLoad           func(context.Context) (source.Registry, error)
 	Extractor            *extract.Client
+	HeartbeatPath        string
 	SyncEvery, LoopEvery time.Duration
 	Now                  func() time.Time
 }
@@ -53,12 +57,14 @@ func (r Runner) Run(ctx context.Context) error {
 	if err := r.resetRunningSources(ctx); err != nil {
 		r.logKV("worker_reset_running_sources_failed", "error", err)
 	}
+	r.writeHeartbeat()
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		r.processSourceChecks(ctx)
 		r.processJobs(ctx)
+		r.writeHeartbeat()
 		wait := r.nextWait(ctx)
 		timer := time.NewTimer(wait)
 		select {
@@ -67,6 +73,21 @@ func (r Runner) Run(ctx context.Context) error {
 			return ctx.Err()
 		case <-timer.C:
 		}
+	}
+}
+
+func (r Runner) writeHeartbeat() {
+	if strings.TrimSpace(r.HeartbeatPath) == "" {
+		return
+	}
+	path := filepath.Clean(r.HeartbeatPath)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		r.logKV("worker_heartbeat_dir_failed", "path", path, "error", err)
+		return
+	}
+	payload := []byte(r.now().Format(time.RFC3339Nano))
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		r.logKV("worker_heartbeat_write_failed", "path", path, "error", err)
 	}
 }
 
@@ -180,6 +201,15 @@ func (r Runner) processJobs(ctx context.Context) {
 			r.persistJobUpdate(ctx, job)
 			r.updateTenderDocumentState(ctx, job.TenderID, models.ExtractionFailed)
 			r.logKV("worker_job_extractor_unconfigured", "job", job.ID, "tender", job.TenderID)
+			continue
+		}
+		if _, err := netguard.NormalizePublicHTTPURL(job.DocumentURL); err != nil {
+			job.State = models.ExtractionFailed
+			job.LastError = err.Error()
+			job.NextAttemptAt = time.Time{}
+			r.persistJobUpdate(ctx, job)
+			r.updateTenderDocumentState(ctx, job.TenderID, models.ExtractionFailed)
+			r.logKV("worker_job_extract_rejected_url", "job", job.ID, "tender", job.TenderID, "error", err)
 			continue
 		}
 		res, err := r.Extractor.Extract(ctx, job.DocumentURL)

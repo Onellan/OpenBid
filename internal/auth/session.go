@@ -48,7 +48,11 @@ func SetSessionCookie(w http.ResponseWriter, secret string, s models.Session, se
 	if err != nil {
 		return err
 	}
-	http.SetCookie(w, &http.Cookie{Name: "th_session", Value: raw, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode, Expires: s.Expires})
+	maxAge := int(time.Until(s.Expires).Seconds())
+	if maxAge < 0 {
+		maxAge = 0
+	}
+	http.SetCookie(w, &http.Cookie{Name: "th_session", Value: raw, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode, Expires: s.Expires, MaxAge: maxAge})
 	return nil
 }
 func ClearSessionCookie(w http.ResponseWriter, secure bool) {

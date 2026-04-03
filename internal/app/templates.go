@@ -174,7 +174,11 @@ func parseTemplates() (map[string]*template.Template, error) {
 func routes(a *App) http.Handler {
 	mux := http.NewServeMux()
 	if assetDir, err := locateWebSubdir("assets"); err == nil {
-		mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir(assetDir))))
+		assetHandler := http.StripPrefix("/assets/", http.FileServer(http.Dir(assetDir)))
+		mux.Handle("/assets/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "public, max-age=3600")
+			assetHandler.ServeHTTP(w, r)
+		}))
 	}
 	mux.HandleFunc("/healthz", a.Healthz)
 	mux.HandleFunc("/login", a.Login)
@@ -203,6 +207,7 @@ func routes(a *App) http.Handler {
 	mux.HandleFunc("/settings/mfa", a.RequireAuth(a.MFAPage))
 	mux.HandleFunc("/mfa/setup", a.RequireAuth(a.MFASetup))
 	mux.HandleFunc("/mfa/disable", a.RequireAuth(a.MFADisable))
+	mux.HandleFunc("/mfa/recovery/regenerate", a.RequireAuth(a.MFARegenerateRecoveryCodes))
 	mux.HandleFunc("/saved-searches", a.RequireAuth(a.SavedSearches))
 	mux.HandleFunc("/saved-searches/delete", a.RequireAuth(a.DeleteSavedSearch))
 	mux.HandleFunc("/admin/users", a.RequireAuth(a.AdminUsers))
@@ -231,5 +236,5 @@ func routes(a *App) http.Handler {
 	mux.HandleFunc("/admin/sources/schedule", a.RequireAuth(a.AdminUpdateSourceSchedule))
 	mux.HandleFunc("/admin/sources/delete", a.RequireAuth(a.AdminDeleteSource))
 	mux.HandleFunc("/tenant/switch", a.RequireAuth(a.SwitchTenant))
-	return a.WithSecurityHeaders(mux)
+	return a.WithRequestObservability(a.WithSecurityHeaders(mux))
 }

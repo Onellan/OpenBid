@@ -2,9 +2,11 @@ package app
 
 import (
 	"net/mail"
+	"net/url"
 	"strings"
 
 	"tenderhub-za/internal/models"
+	"tenderhub-za/internal/netguard"
 	"tenderhub-za/internal/source"
 )
 
@@ -65,4 +67,16 @@ func hasTenantWithSlug(tenants []models.Tenant, slug string) bool {
 		}
 	}
 	return false
+}
+
+func normalizeSafeOutboundURL(raw string) (string, error) {
+	return netguard.NormalizePublicHTTPURL(raw)
+}
+
+func validateSafeOutboundURL(raw string) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return err
+	}
+	return netguard.ValidatePublicHTTPURL(parsed)
 }

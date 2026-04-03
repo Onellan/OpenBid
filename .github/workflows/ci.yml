@@ -3,33 +3,85 @@ name: ci
 on:
   push:
     branches: ["main", "master", "release/**"]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   pull_request:
     branches: ["main", "master"]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
+  changes:
     runs-on: ubuntu-latest
+    outputs:
+      docker_app: ${{ steps.filter.outputs.docker_app }}
+      docker_extractor: ${{ steps.filter.outputs.docker_extractor }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            docker_app:
+              - 'Dockerfile.app'
+              - 'go.mod'
+              - 'go.sum'
+              - 'cmd/**'
+              - 'internal/**'
+              - 'web/**'
+            docker_extractor:
+              - 'Dockerfile.extractor'
+              - 'extractor/**'
+
+  verify:
+    runs-on: ubuntu-latest
+    needs: changes
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: "1.23"
-      - name: Run unit tests
+          cache: true
+      - name: Run tests
         run: go test ./...
-      - name: Build app image
-        run: docker build -f Dockerfile.app -t tenderhubza-app:test .
-      - name: Build extractor image
-        run: docker build -f Dockerfile.extractor -t tenderhubza-extractor:test .
-  dependency-audit:
-    runs-on: ubuntu-latest
-    if: github.ref_type == 'branch'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.23"
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - name: Go vulnerability check
         run: |
           "$(go env GOPATH)/bin/govulncheck" ./...
+
+  image-smoke:
+    runs-on: ubuntu-latest
+    needs: [changes, verify]
+    if: needs.changes.outputs.docker_app == 'true' || needs.changes.outputs.docker_extractor == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build app image
+        if: needs.changes.outputs.docker_app == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.app
+          push: false
+          load: true
+          tags: openbid-app:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build extractor image
+        if: needs.changes.outputs.docker_extractor == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.extractor
+          push: false
+          load: true
+          tags: openbid-extractor:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

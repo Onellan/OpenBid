@@ -11,9 +11,22 @@
   <section class="card">
     {{template "card_header" (dict "title" "Multi-factor authentication" "subtitle" "Add an extra layer of security for serious procurement workflows.")}}
     <div style="margin-top:10px">{{template "flash_messages" .}}</div>
+    <div class="card-soft" style="margin-top:14px">
+      <strong>Recovery codes remaining</strong>
+      <div class="footer-note" style="margin-top:6px">{{.RecoveryCodeCount}} one-time codes available for account recovery.</div>
+    </div>
     <div class="actions" style="margin-top:14px">
       <a class="button" href="/mfa/setup">Set up MFA</a>
     </div>
+    {{if .RecoveryCodes}}
+    <div class="card-soft" style="margin-top:14px">
+      <strong>Save these recovery codes now</strong>
+      <div class="footer-note" style="margin-top:6px">Each code works once. They will not be shown again after you leave this page.</div>
+      <div class="list mono" style="margin-top:12px">
+        {{range .RecoveryCodes}}<div>{{.}}</div>{{end}}
+      </div>
+    </div>
+    {{end}}
   </section>
   <section class="card">
     {{template "card_header" (dict "title" "Disable MFA" "subtitle" "Confirm your password before removing multi-factor protection.")}}
@@ -21,6 +34,12 @@
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <label>Password confirmation<input type="password" name="password" required></label>
       <div class="actions"><button type="submit">Disable MFA</button></div>
+    </form>
+    <hr>
+    <form method="post" action="/mfa/recovery/regenerate" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <label>Password confirmation<input type="password" name="password" required></label>
+      <div class="actions"><button type="submit" class="button secondary">Regenerate recovery codes</button></div>
     </form>
   </section>
 </div>

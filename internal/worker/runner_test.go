@@ -14,6 +14,11 @@ import (
 	"time"
 )
 
+func allowPrivateURLs(t *testing.T) {
+	t.Helper()
+	t.Setenv("OPENBID_ALLOW_PRIVATE_URLS", "true")
+}
+
 func TestProcessJobsRetry(t *testing.T) {
 	s, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {
@@ -95,6 +100,43 @@ func TestProcessJobsPrunesOrphanJobs(t *testing.T) {
 		t.Fatalf("expected orphan job to be removed, got %#v", jobs)
 	}
 }
+
+func TestProcessJobsRejectsUnsafeDocumentURL(t *testing.T) {
+	s, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if err := s.UpsertTender(ctx, models.Tender{ID: "unsafe", Title: "Unsafe", DocumentURL: "http://127.0.0.1/doc.pdf", DocumentStatus: models.ExtractionQueued}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.QueueJob(ctx, models.ExtractionJob{ID: "unsafe-job", TenderID: "unsafe", DocumentURL: "http://127.0.0.1/doc.pdf", State: models.ExtractionQueued}); err != nil {
+		t.Fatal(err)
+	}
+
+	r := Runner{Store: s, Sources: source.NewRegistry(), Extractor: extract.New("http://127.0.0.1:1"), SyncEvery: time.Hour, LoopEvery: time.Millisecond}
+	r.processJobs(ctx)
+
+	jobs, err := s.ListJobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 || jobs[0].State != models.ExtractionFailed {
+		t.Fatalf("expected unsafe url job to fail immediately, got %#v", jobs)
+	}
+	if !jobs[0].NextAttemptAt.IsZero() {
+		t.Fatalf("expected no retry window for rejected url, got %#v", jobs[0])
+	}
+	tender, err := s.GetTender(ctx, "unsafe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tender.DocumentStatus != models.ExtractionFailed {
+		t.Fatalf("expected tender marked failed, got %#v", tender)
+	}
+}
+
 func TestSyncAllUsesDynamicSourceLoader(t *testing.T) {
 	s, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {
@@ -230,6 +272,7 @@ func TestProcessJobsMergesPageAndDocumentFacts(t *testing.T) {
 }
 
 func TestProcessSourceChecksManualSingleTrigger(t *testing.T) {
+	allowPrivateURLs(t)
 	s, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -296,6 +339,7 @@ func TestProcessSourceChecksManualSingleTrigger(t *testing.T) {
 }
 
 func TestProcessSourceChecksScheduledUsesOverrideAndSkipsDisabledOrManualOnly(t *testing.T) {
+	allowPrivateURLs(t)
 	s, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -371,6 +415,7 @@ func TestProcessSourceChecksPreventsDuplicateOverlap(t *testing.T) {
 }
 
 func TestProcessSourceChecksFailureBackoff(t *testing.T) {
+	allowPrivateURLs(t)
 	s, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {
 		t.Fatal(err)

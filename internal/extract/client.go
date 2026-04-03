@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"tenderhub-za/internal/netguard"
 	"time"
 )
 
@@ -40,7 +41,12 @@ func (c *Client) Healthz(ctx context.Context) error {
 }
 
 func (c *Client) Extract(ctx context.Context, url string) (Result, error) {
+	normalizedURL, err := netguard.NormalizePublicHTTPURL(url)
+	if err != nil {
+		return Result{}, err
+	}
 	payload, _ := json.Marshal(map[string]string{"url": url})
+	payload, _ = json.Marshal(map[string]string{"url": normalizedURL})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/extract", bytes.NewReader(payload))
 	if err != nil {
 		return Result{}, err

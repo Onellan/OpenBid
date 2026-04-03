@@ -16,7 +16,7 @@
     <form method="post" action="/login" class="form-grid" style="margin-top:14px">
       <label>Username<input name="username" required></label>
       <label>Password<input type="password" name="password" required></label>
-      <label>MFA code (only if enabled)<input name="mfa_code"></label>
+      <label>MFA or recovery code<input name="mfa_code" autocomplete="one-time-code"></label>
       <button type="submit">Sign in to OpenBid</button>
     </form>
     {{if .ShowDemoCredentials}}<div class="card-soft" style="margin-top:16px">

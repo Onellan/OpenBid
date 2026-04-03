@@ -647,6 +647,161 @@ func TestAssetRouteServesSharedAppJS(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "closeOtherMenus") {
 		t.Fatalf("expected shared app script, got %s", w.Body.String())
 	}
+	if cacheControl := w.Header().Get("Cache-Control"); cacheControl != "public, max-age=3600" {
+		t.Fatalf("expected asset cache header, got %q", cacheControl)
+	}
+}
+
+func TestCrossOriginCSRFIsRejected(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, csrf := adminSession(t, a)
+	form := url.Values{"csrf_token": {csrf}, "default_interval_minutes": {"90"}}
+	req := httptest.NewRequest(http.MethodPost, "/sources/schedule", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "https://evil.example")
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 got %d", w.Code)
+	}
+}
+
+func TestAdminResetPasswordRequiresExplicitPassword(t *testing.T) {
+	a := newTestApp(t)
+	user, _, cookie, csrf := adminSession(t, a)
+	form := url.Values{"csrf_token": {csrf}, "user_id": {user.ID}, "new_password": {""}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/users/reset-password", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 got %d", w.Code)
+	}
+}
+
+func TestAdminCreateSourceRejectsPrivateFeedURL(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, csrf := adminSession(t, a)
+	form := url.Values{
+		"csrf_token": {csrf},
+		"name":       {"Internal Feed"},
+		"feed_url":   {"http://127.0.0.1/feed.json"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/sources/create", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 got %d", w.Code)
+	}
+}
+
+func TestTenantAdminCannotCreateAdminUser(t *testing.T) {
+	a := newTestApp(t)
+	_, tenant, cookie, csrf := sessionForRole(t, a, models.RoleTenantAdmin)
+	form := url.Values{
+		"csrf_token":       {csrf},
+		"username":         {"tenant-admin-peer"},
+		"display_name":     {"Tenant Admin Peer"},
+		"email":            {"tenant-admin-peer@example.com"},
+		"password":         {"Strong!2026Pass"},
+		"tenant_id":        {tenant.ID},
+		"role":             {string(models.RoleAdmin)},
+		"responsibilities": {"Testing"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/users/create", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 got %d", w.Code)
+	}
+}
+
+func TestTenantAdminCannotManageOtherTenantMemberships(t *testing.T) {
+	a := newTestApp(t)
+	_, currentTenant, cookie, csrf := sessionForRole(t, a, models.RoleTenantAdmin)
+	if err := a.Store.UpsertTenant(t.Context(), models.Tenant{Name: "Other Workspace", Slug: "other-workspace"}); err != nil {
+		t.Fatal(err)
+	}
+	tenants, err := a.Store.ListTenants(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherTenantID := ""
+	for _, tenant := range tenants {
+		if tenant.ID != currentTenant.ID && tenant.Slug == "other-workspace" {
+			otherTenantID = tenant.ID
+		}
+	}
+	if otherTenantID == "" {
+		t.Fatal("expected second tenant")
+	}
+	form := url.Values{
+		"csrf_token":       {csrf},
+		"username":         {"cross-tenant-user"},
+		"display_name":     {"Cross Tenant"},
+		"email":            {"cross-tenant@example.com"},
+		"password":         {"Strong!2026Pass"},
+		"tenant_id":        {otherTenantID},
+		"role":             {string(models.RoleViewer)},
+		"responsibilities": {"Testing"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/users/create", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 got %d", w.Code)
+	}
+}
+
+func TestTenantAdminUserAdminPageIsScopedToCurrentTenant(t *testing.T) {
+	a := newTestApp(t)
+	_, currentTenant, cookie, _ := sessionForRole(t, a, models.RoleTenantAdmin)
+	if err := a.Store.UpsertTenant(t.Context(), models.Tenant{Name: "Other Workspace", Slug: "other-workspace"}); err != nil {
+		t.Fatal(err)
+	}
+	tenants, err := a.Store.ListTenants(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherTenantID := ""
+	for _, tenant := range tenants {
+		if tenant.ID != currentTenant.ID && tenant.Slug == "other-workspace" {
+			otherTenantID = tenant.ID
+		}
+	}
+	if otherTenantID == "" {
+		t.Fatal("expected second tenant")
+	}
+	if err := a.Store.UpsertUser(t.Context(), models.User{Username: "otheruser", DisplayName: "Other User", Email: "other@example.com", IsActive: true}); err != nil {
+		t.Fatal(err)
+	}
+	otherUser, err := a.Store.GetUserByUsername(t.Context(), "otheruser")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store.UpsertMembership(t.Context(), models.Membership{UserID: otherUser.ID, TenantID: otherTenantID, Role: models.RoleViewer}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/users", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	body := w.Body.String()
+	if strings.Contains(body, "other@example.com") || strings.Contains(body, "Other Workspace") {
+		t.Fatalf("expected tenant-scoped admin view, got %s", body)
+	}
 }
 
 func TestLoginPageHidesDemoCredentialsInProduction(t *testing.T) {
@@ -1197,4 +1352,120 @@ func TestRouteAccessibilityAndPageRendering(t *testing.T) {
 			t.Fatalf("expected 403 for %s got %d", path, w.Code)
 		}
 	}
+}
+
+func TestMFASetupStoresEncryptedSecretAtRest(t *testing.T) {
+	a := newTestApp(t)
+	user, _, cookie, csrf := adminSession(t, a)
+	secret := auth.NewTOTPSecret()
+	code := auth.GenerateTOTPFromSecret(secret, time.Now())
+	form := url.Values{
+		"csrf_token": {csrf},
+		"secret":     {secret},
+		"code":       {code},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/mfa/setup", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	storedUser, err := a.Store.GetUser(t.Context(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !storedUser.MFAEnabled {
+		t.Fatalf("expected MFA to be enabled, got %#v", storedUser)
+	}
+	if storedUser.MFASecret == "" || storedUser.MFASecret == secret {
+		t.Fatalf("expected encrypted MFA secret at rest, got %q", storedUser.MFASecret)
+	}
+	if len(storedUser.RecoveryCodes) != 10 {
+		t.Fatalf("expected 10 recovery codes, got %#v", storedUser.RecoveryCodes)
+	}
+	for _, recoveryCode := range storedUser.RecoveryCodes {
+		if !strings.HasPrefix(recoveryCode, "enc:v1:") {
+			t.Fatalf("expected encrypted recovery code marker, got %#v", storedUser.RecoveryCodes)
+		}
+	}
+}
+
+func TestLoginAcceptsRecoveryCodeAndConsumesIt(t *testing.T) {
+	a := newTestApp(t)
+	user, _, _, _ := adminSession(t, a)
+	secret := "JBSWY3DPEHPK3PXP"
+	user.MFAEnabled = true
+	user.MFASecret = secret
+	user.RecoveryCodes = []string{"ABCD-EF12", "1234-5678"}
+	if err := a.persistUser(t.Context(), user); err != nil {
+		t.Fatal(err)
+	}
+
+	form := url.Values{
+		"username": {"admin"},
+		"password": {"TenderHub!2026"},
+		"mfa_code": {"ABCD-EF12"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect got %d body=%s", w.Code, w.Body.String())
+	}
+
+	updatedUser, err := a.hydrateUserSensitiveFields(t.Context(), userMustGet(t, a, user.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updatedUser.RecoveryCodes) != 1 || updatedUser.RecoveryCodes[0] != "1234-5678" {
+		t.Fatalf("expected used recovery code to be consumed, got %#v", updatedUser.RecoveryCodes)
+	}
+}
+
+func TestLegacyPlaintextMFASecretAndRecoveryCodesUpgradeOnLogin(t *testing.T) {
+	a := newTestApp(t)
+	user, _, _, _ := adminSession(t, a)
+	legacySecret := "JBSWY3DPEHPK3PXP"
+	user.MFAEnabled = true
+	user.MFASecret = legacySecret
+	user.RecoveryCodes = []string{"ABCD-EF12", "1234-5678"}
+	if err := a.Store.UpsertUser(t.Context(), user); err != nil {
+		t.Fatal(err)
+	}
+
+	form := url.Values{
+		"username": {"admin"},
+		"password": {"TenderHub!2026"},
+		"mfa_code": {auth.GenerateTOTPFromSecret(legacySecret, time.Now())},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect got %d body=%s", w.Code, w.Body.String())
+	}
+
+	upgradedUser, err := a.Store.GetUser(t.Context(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if upgradedUser.MFASecret == legacySecret || upgradedUser.MFASecret == "" {
+		t.Fatalf("expected legacy plaintext secret to be upgraded, got %q", upgradedUser.MFASecret)
+	}
+	if len(upgradedUser.RecoveryCodes) != 2 || strings.Contains(strings.Join(upgradedUser.RecoveryCodes, ","), "ABCD-EF12") {
+		t.Fatalf("expected legacy plaintext recovery codes to be upgraded, got %#v", upgradedUser.RecoveryCodes)
+	}
+}
+
+func userMustGet(t *testing.T, a *App, userID string) models.User {
+	t.Helper()
+	user, err := a.Store.GetUser(t.Context(), userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return user
 }

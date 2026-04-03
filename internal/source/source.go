@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"tenderhub-za/internal/models"
+	"tenderhub-za/internal/netguard"
 )
 
 const (
@@ -78,6 +79,11 @@ func AdapterFromConfig(cfg models.SourceConfig) (Adapter, error) {
 	key := NormalizeKey(cfg.Key)
 	if key == "" {
 		return nil, fmt.Errorf("source key is required")
+	}
+	if strings.TrimSpace(cfg.FeedURL) != "" {
+		if _, err := netguard.NormalizePublicHTTPURL(cfg.FeedURL); err != nil {
+			return nil, fmt.Errorf("invalid feed url for %s: %w", key, err)
+		}
 	}
 	switch cfg.Type {
 	case "", TypeJSONFeed:

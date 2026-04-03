@@ -1,15 +1,52 @@
 #!/usr/bin/env python3
-import json, os, re, subprocess, tempfile, urllib.request
+import ipaddress, json, os, re, socket, subprocess, tempfile, urllib.parse, urllib.request
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 EMAIL_RE=re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 PHONE_RE=re.compile(r"(?:\+27|0)[0-9][0-9 \-()/]{7,}")
 MONTH_FORMATS=["%d %B %Y","%d %b %Y","%d/%m/%Y","%d-%m-%Y","%Y-%m-%d"]
+MAX_FETCH_BYTES=15*1024*1024
+
+def is_public_ip(value:str)->bool:
+    ip=ipaddress.ip_address(value)
+    return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified or ip.is_reserved)
+
+def validate_public_url(raw:str)->str:
+    parsed=urllib.parse.urlparse((raw or "").strip())
+    if parsed.scheme not in ("http","https"):
+        raise ValueError("url must use http or https")
+    if parsed.username or parsed.password:
+        raise ValueError("url credentials are not allowed")
+    host=(parsed.hostname or "").strip().lower()
+    if not host:
+        raise ValueError("url host is required")
+    if host=="localhost" or host.endswith(".local") or host.endswith(".internal") or host.endswith(".localhost"):
+        raise ValueError("private hostnames are not allowed")
+    try:
+        if not is_public_ip(host):
+            raise ValueError("private or local network urls are not allowed")
+    except ValueError:
+        addresses={item[4][0] for item in socket.getaddrinfo(host,None)}
+        if not addresses:
+            raise ValueError("url host did not resolve")
+        for address in addresses:
+            if not is_public_ip(address):
+                raise ValueError("private or local network urls are not allowed")
+    return parsed.geturl()
 
 def fetch(url:str)->bytes:
-    req=urllib.request.Request(url, headers={"User-Agent":"TenderHubZA/1.0"})
-    with urllib.request.urlopen(req, timeout=60) as resp: return resp.read()
+    safe_url=validate_public_url(url)
+    req=urllib.request.Request(safe_url, headers={"User-Agent":"TenderHubZA/1.0"})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        validate_public_url(resp.geturl())
+        content_length=resp.headers.get("Content-Length","").strip()
+        if content_length.isdigit() and int(content_length)>MAX_FETCH_BYTES:
+            raise ValueError("document is too large to extract safely")
+        data=resp.read(MAX_FETCH_BYTES+1)
+        if len(data)>MAX_FETCH_BYTES:
+            raise ValueError("document is too large to extract safely")
+        return data
 def parse_pdf(data:bytes)->str:
     with tempfile.NamedTemporaryFile(delete=False,suffix=".pdf") as f: f.write(data); src=f.name
     txt=src+".txt"
@@ -167,9 +204,21 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(404); self.end_headers()
     def do_POST(self):
         if self.path!="/extract": self.send_response(404); self.end_headers(); return
-        length=int(self.headers.get("Content-Length","0")); payload=json.loads(self.rfile.read(length) or b"{}"); url=payload.get("url","")
+        length=int(self.headers.get("Content-Length","0"))
+        if length<=0 or length>4096:
+            self.send_response(400); self.end_headers(); return
+        payload=json.loads(self.rfile.read(length) or b"{}"); url=payload.get("url","")
         if not url: self.send_response(400); self.end_headers(); return
-        data=fetch(url)
+        try:
+            data=fetch(url)
+        except Exception as exc:
+            body=json.dumps({"error":str(exc)}).encode()
+            self.send_response(400)
+            self.send_header("Content-Type","application/json")
+            self.send_header("Content-Length",str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if url.lower().endswith(".pdf"): kind,text="pdf",parse_pdf(data)
         elif "<html" in data[:500].decode("utf-8",errors="ignore").lower(): kind,text="html",parse_html(data)
         else: kind,text="text",data.decode("utf-8",errors="ignore")

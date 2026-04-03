@@ -45,6 +45,27 @@ func (a *App) AdminUsers(w http.ResponseWriter, r *http.Request) {
 	users, _ := a.Store.ListUsers(r.Context())
 	tenants, _ := a.Store.ListTenants(r.Context())
 	memberships, _ := a.Store.ListAllMemberships(r.Context())
+	if isTenantScopedAdmin(m.Role) {
+		allowedTenantIDs := map[string]bool{t.ID: true}
+		filteredMemberships := make([]models.Membership, 0, len(memberships))
+		visibleUserIDs := map[string]bool{}
+		for _, membership := range memberships {
+			if !allowedTenantIDs[membership.TenantID] {
+				continue
+			}
+			filteredMemberships = append(filteredMemberships, membership)
+			visibleUserIDs[membership.UserID] = true
+		}
+		filteredUsers := make([]models.User, 0, len(users))
+		for _, user := range users {
+			if visibleUserIDs[user.ID] {
+				filteredUsers = append(filteredUsers, user)
+			}
+		}
+		users = filteredUsers
+		tenants = []models.Tenant{t}
+		memberships = filteredMemberships
+	}
 	a.render(w, r, "admin_users.html", map[string]any{"Title": "Users", "User": u, "Tenant": t, "Items": users, "Tenants": tenants, "Memberships": memberships})
 }
 
@@ -53,7 +74,7 @@ func (a *App) AdminCreateUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	_, _, m, ok := a.currentUserTenant(r)
+	currentUser, currentTenant, m, ok := a.currentUserTenant(r)
 	if !ok {
 		http.Redirect(w, r, "/login", 303)
 		return
@@ -79,6 +100,14 @@ func (a *App) AdminCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if !isValidRole(role) {
 		http.Error(w, "invalid role", 400)
+		return
+	}
+	if !canAssignManagedRole(m.Role, role) {
+		http.Error(w, "forbidden", 403)
+		return
+	}
+	if isTenantScopedAdmin(m.Role) && tenantID != currentTenant.ID {
+		http.Error(w, "forbidden", 403)
 		return
 	}
 	if _, err := a.Store.GetTenant(r.Context(), tenantID); err != nil {
@@ -107,7 +136,7 @@ func (a *App) AdminCreateUser(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, r, "unable to hash password", err)
 		return
 	}
-	if err := a.Store.UpsertUser(r.Context(), models.User{Username: username, DisplayName: displayName, Email: email, PasswordSalt: salt, PasswordHash: hash, IsActive: true}); err != nil {
+	if err := a.persistUser(r.Context(), models.User{Username: username, DisplayName: displayName, Email: email, PasswordSalt: salt, PasswordHash: hash, IsActive: true}); err != nil {
 		a.serverError(w, r, "unable to save user", err)
 		return
 	}
@@ -120,6 +149,7 @@ func (a *App) AdminCreateUser(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, r, "unable to save membership", err)
 		return
 	}
+	a.auditAction(r.Context(), actionContext{User: currentUser, Tenant: currentTenant, Member: m}, "create", "user", user.ID, "User created", map[string]string{"username": username, "role": string(role), "tenant_id": tenantID})
 	http.Redirect(w, r, "/admin/users", 303)
 }
 
@@ -142,7 +172,7 @@ func (a *App) AdminCreateTenant(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	_, _, m, ok := a.currentUserTenant(r)
+	currentUser, currentTenant, m, ok := a.currentUserTenant(r)
 	if !ok {
 		http.Redirect(w, r, "/login", 303)
 		return
@@ -174,6 +204,7 @@ func (a *App) AdminCreateTenant(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, r, "unable to save tenant", err)
 		return
 	}
+	a.auditAction(r.Context(), actionContext{User: currentUser, Tenant: currentTenant, Member: m}, "create", "tenant", slug, "Tenant created", map[string]string{"name": name, "slug": slug})
 	http.Redirect(w, r, "/admin/tenants", 303)
 }
 
@@ -238,6 +269,11 @@ func (a *App) AdminCreateSource(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name and feed url are required", 400)
 		return
 	}
+	normalizedFeedURL, err := normalizeSafeOutboundURL(feedURL)
+	if err != nil {
+		http.Error(w, "feed url must be a public http or https endpoint", 400)
+		return
+	}
 	sourceType := strings.TrimSpace(r.FormValue("type"))
 	if sourceType == "" {
 		sourceType = source.TypeJSONFeed
@@ -265,7 +301,7 @@ func (a *App) AdminCreateSource(w http.ResponseWriter, r *http.Request) {
 		Key:                 key,
 		Name:                name,
 		Type:                sourceType,
-		FeedURL:             feedURL,
+		FeedURL:             normalizedFeedURL,
 		Enabled:             true,
 		ManualChecksEnabled: true,
 		AutoCheckEnabled:    true,
@@ -579,6 +615,9 @@ func (a *App) SwitchTenant(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, r, "unable to update session", err)
 		return
 	}
+	if user, tenant, member, ok := a.currentUserTenant(r); ok {
+		a.auditAction(r.Context(), actionContext{User: user, Tenant: tenant, Member: member}, "switch", "tenant", tenantID, "Workspace switched", nil)
+	}
 	http.Redirect(w, r, safeReturnTarget(r.FormValue("return_to"), "/").String(), 303)
 }
 
@@ -587,7 +626,7 @@ func (a *App) AdminToggleUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	_, _, m, ok := a.currentUserTenant(r)
+	currentUser, currentTenant, m, ok := a.currentUserTenant(r)
 	if !ok {
 		http.Redirect(w, r, "/login", 303)
 		return
@@ -601,11 +640,16 @@ func (a *App) AdminToggleUser(w http.ResponseWriter, r *http.Request) {
 		a.notFound(w, r, "user not found", err)
 		return
 	}
+	if !a.canManageUser(r.Context(), m.Role, currentTenant.ID, user.ID) {
+		http.Error(w, "forbidden", 403)
+		return
+	}
 	user.IsActive = !user.IsActive
-	if err := a.Store.UpsertUser(r.Context(), user); err != nil {
+	if err := a.persistUser(r.Context(), user); err != nil {
 		a.serverError(w, r, "unable to update user", err)
 		return
 	}
+	a.auditAction(r.Context(), actionContext{User: currentUser, Tenant: currentTenant, Member: m}, "update", "user", user.ID, "User activation updated", map[string]string{"active": strconv.FormatBool(user.IsActive)})
 	http.Redirect(w, r, "/admin/users", 303)
 }
 
@@ -614,7 +658,7 @@ func (a *App) AdminResetPassword(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	_, _, m, ok := a.currentUserTenant(r)
+	currentUser, currentTenant, m, ok := a.currentUserTenant(r)
 	if !ok {
 		http.Redirect(w, r, "/login", 303)
 		return
@@ -628,9 +672,14 @@ func (a *App) AdminResetPassword(w http.ResponseWriter, r *http.Request) {
 		a.notFound(w, r, "user not found", err)
 		return
 	}
+	if !a.canManageUser(r.Context(), m.Role, currentTenant.ID, user.ID) {
+		http.Error(w, "forbidden", 403)
+		return
+	}
 	password := r.FormValue("new_password")
-	if password == "" {
-		password = "Reset!2026Pass"
+	if strings.TrimSpace(password) == "" {
+		http.Error(w, "new password is required", 400)
+		return
 	}
 	if err := auth.StrongEnoughPassword(password); err != nil {
 		http.Error(w, err.Error(), 400)
@@ -643,10 +692,11 @@ func (a *App) AdminResetPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	user.PasswordSalt = salt
 	user.PasswordHash = hash
-	if err := a.Store.UpsertUser(r.Context(), user); err != nil {
+	if err := a.persistUser(r.Context(), user); err != nil {
 		a.serverError(w, r, "unable to update user password", err)
 		return
 	}
+	a.auditAction(r.Context(), actionContext{User: currentUser, Tenant: currentTenant, Member: m}, "update", "user_password", user.ID, "User password reset", nil)
 	http.Redirect(w, r, "/admin/users", 303)
 }
 
@@ -655,7 +705,7 @@ func (a *App) AdminUpsertMembership(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	_, _, m, ok := a.currentUserTenant(r)
+	currentUser, currentTenant, m, ok := a.currentUserTenant(r)
 	if !ok {
 		http.Redirect(w, r, "/login", 303)
 		return
@@ -683,6 +733,14 @@ func (a *App) AdminUpsertMembership(w http.ResponseWriter, r *http.Request) {
 		a.notFound(w, r, "tenant not found", err)
 		return
 	}
+	if !canAssignManagedRole(m.Role, role) {
+		http.Error(w, "forbidden", 403)
+		return
+	}
+	if isTenantScopedAdmin(m.Role) && tenantID != currentTenant.ID {
+		http.Error(w, "forbidden", 403)
+		return
+	}
 	if err := a.Store.UpsertMembership(r.Context(), models.Membership{
 		ID:               r.FormValue("id"),
 		UserID:           userID,
@@ -693,6 +751,7 @@ func (a *App) AdminUpsertMembership(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, r, "unable to save membership", err)
 		return
 	}
+	a.auditAction(r.Context(), actionContext{User: currentUser, Tenant: currentTenant, Member: m}, "update", "membership", userID+":"+tenantID, "Membership updated", map[string]string{"role": string(role)})
 	http.Redirect(w, r, "/admin/users", 303)
 }
 
@@ -701,7 +760,7 @@ func (a *App) AdminDeleteMembership(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	_, _, m, ok := a.currentUserTenant(r)
+	currentUser, currentTenant, m, ok := a.currentUserTenant(r)
 	if !ok {
 		http.Redirect(w, r, "/login", 303)
 		return
@@ -715,9 +774,36 @@ func (a *App) AdminDeleteMembership(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "membership id is required", 400)
 		return
 	}
+	memberships, err := a.Store.ListAllMemberships(r.Context())
+	if err != nil {
+		a.serverError(w, r, "unable to load memberships", err)
+		return
+	}
+	var target models.Membership
+	found := false
+	for _, membership := range memberships {
+		if membership.ID == id {
+			target = membership
+			found = true
+			break
+		}
+	}
+	if !found {
+		a.notFound(w, r, "membership not found", nil)
+		return
+	}
+	if isTenantScopedAdmin(m.Role) && target.TenantID != currentTenant.ID {
+		http.Error(w, "forbidden", 403)
+		return
+	}
+	if target.UserID == currentUser.ID && target.TenantID == currentTenant.ID {
+		http.Error(w, "cannot remove your active membership", http.StatusBadRequest)
+		return
+	}
 	if err := a.Store.DeleteMembership(r.Context(), id); err != nil {
 		a.serverError(w, r, "unable to delete membership", err)
 		return
 	}
+	a.auditAction(r.Context(), actionContext{User: currentUser, Tenant: currentTenant, Member: m}, "delete", "membership", target.UserID+":"+target.TenantID, "Membership removed", map[string]string{"role": string(target.Role)})
 	http.Redirect(w, r, "/admin/users", 303)
 }

@@ -54,31 +54,42 @@ Replace `OWNER/REPO` with your actual repository.
 
 ## 4. Create the environment file
 
-Start from the example file:
+Start from the production example file:
 
 ```bash
-cp .env.example .env
+cp .env.production.example .env.production
+mkdir -p secrets data backups
 ```
 
-For a real deployment, set at least these values in `.env`:
+Prefer mounted secret files instead of inline secrets:
+
+```bash
+printf '%s' 'replace-with-a-random-32-plus-character-secret' > secrets/openbid_secret_key
+printf '%s' 'replace-with-a-strong-admin-password' > secrets/openbid_bootstrap_admin_password
+chmod 600 secrets/openbid_secret_key secrets/openbid_bootstrap_admin_password
+```
+
+For a real deployment, set at least these values in `.env.production`:
 
 ```dotenv
 APP_ENV=production
-SECRET_KEY=replace-with-a-random-32-plus-character-secret
 SECURE_COOKIES=true
 LOW_MEMORY_MODE=true
 ANALYTICS_ENABLED=false
-BOOTSTRAP_ADMIN_PASSWORD=replace-with-a-strong-admin-password
 BOOTSTRAP_SYNC_ON_STARTUP=false
 WORKER_SYNC_MINUTES=360
 WORKER_LOOP_SECONDS=30
 TREASURY_FEED_URL=
+APP_IMAGE_TAG=v1.0.0
+EXTRACTOR_IMAGE_TAG=v1.0.0
+SECRET_KEY_FILE=/run/secrets/openbid_secret_key
+BOOTSTRAP_ADMIN_PASSWORD_FILE=/run/secrets/openbid_bootstrap_admin_password
 ```
 
 Notes:
 
-- `SECRET_KEY` must be strong and non-default in production.
-- `BOOTSTRAP_ADMIN_PASSWORD` is required for the first production startup when the database is empty.
+- `SECRET_KEY_FILE` and `BOOTSTRAP_ADMIN_PASSWORD_FILE` are the preferred production inputs.
+- If you do use inline values, `SECRET_KEY` must still be strong and non-default.
 - `BOOTSTRAP_SYNC_ON_STARTUP=false` is a safer default on smaller Pis because first boot stays lighter.
 - Leave `LOW_MEMORY_MODE=true` unless you have profiled a larger Pi and want to experiment.
 
@@ -103,9 +114,9 @@ Practical options:
 ## 6. Start the stack
 
 ```bash
-mkdir -p data
-docker compose up --build -d
-docker compose ps
+docker compose -f docker-compose.ghcr.yml --env-file .env.production pull
+docker compose -f docker-compose.ghcr.yml --env-file .env.production up -d
+docker compose -f docker-compose.ghcr.yml --env-file .env.production ps
 ```
 
 OpenBid will be available through the bundled proxy on:
@@ -117,10 +128,10 @@ If you use Cloudflare, point Cloudflare at `http://PI_IP_ADDRESS:8088` as the or
 ## 7. Verify the services
 
 ```bash
-docker compose logs app --tail=100
-docker compose logs worker --tail=100
-docker compose logs extractor --tail=100
-docker compose logs proxy --tail=100
+docker compose -f docker-compose.ghcr.yml --env-file .env.production logs app --tail=100
+docker compose -f docker-compose.ghcr.yml --env-file .env.production logs worker --tail=100
+docker compose -f docker-compose.ghcr.yml --env-file .env.production logs extractor --tail=100
+docker compose -f docker-compose.ghcr.yml --env-file .env.production logs proxy --tail=100
 ```
 
 Healthy signs:
@@ -144,10 +155,11 @@ Once the stack is up:
 ```bash
 cd /srv/openbid
 git pull
-docker compose up --build -d
+docker compose -f docker-compose.ghcr.yml --env-file .env.production pull
+docker compose -f docker-compose.ghcr.yml --env-file .env.production up -d
 ```
 
-If you changed only configuration and not code, `docker compose up -d` is enough.
+Rollback is the reverse: set `APP_IMAGE_TAG` and `EXTRACTOR_IMAGE_TAG` back to the last known good release and run the same `pull` plus `up -d`.
 
 ## 10. Back up the SQLite database
 
@@ -156,13 +168,20 @@ The database lives at:
 - host path: `/srv/openbid/data/store.db`
 - container path: `/app/data/store.db`
 
-Simple backup example:
+Consistent backup example:
 
 ```bash
-cp /srv/openbid/data/store.db /srv/openbid/data/store.db.bak
+COMPOSE_FILE=docker-compose.ghcr.yml ./scripts/sqlite-backup.sh ./backups/store-$(date +%Y%m%d-%H%M%S).db
 ```
 
-For safer scheduled backups, stop the stack briefly or use the repository backup scripts after testing them in your environment.
+Validate or restore later with:
+
+```bash
+COMPOSE_FILE=docker-compose.ghcr.yml ./scripts/sqlite-validate.sh ./data/store.db
+COMPOSE_FILE=docker-compose.ghcr.yml ./scripts/sqlite-restore.sh ./backups/store-YYYYMMDD-HHMMSS.db ./data/store.db
+```
+
+For the full upgrade, rollback, backup, and observability runbook, see `docs/production-operations.md`.
 
 ## 11. Resource tips for smaller Pis
 

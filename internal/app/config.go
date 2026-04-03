@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -18,6 +19,37 @@ func envString(key, fallback string) string {
 
 func envOptionalString(key string) string {
 	return strings.TrimSpace(os.Getenv(key))
+}
+
+func envOptionalStringWithFile(key string) (string, error) {
+	value, valueSet := os.LookupEnv(key)
+	fileValue, fileSet := os.LookupEnv(key + "_FILE")
+	if valueSet && strings.TrimSpace(value) != "" && fileSet && strings.TrimSpace(fileValue) != "" {
+		return "", fmt.Errorf("%s and %s_FILE cannot both be set", key, key)
+	}
+	if fileSet && strings.TrimSpace(fileValue) != "" {
+		path := strings.TrimSpace(fileValue)
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read %s_FILE %s: %w", key, filepath.Clean(path), err)
+		}
+		return strings.TrimSpace(string(content)), nil
+	}
+	if valueSet {
+		return strings.TrimSpace(value), nil
+	}
+	return "", nil
+}
+
+func envStringWithFile(key, fallback string) (string, error) {
+	value, err := envOptionalStringWithFile(key)
+	if err != nil {
+		return "", err
+	}
+	if value != "" {
+		return value, nil
+	}
+	return fallback, nil
 }
 
 func envBool(key string, fallback bool) (bool, error) {
@@ -77,11 +109,19 @@ func loadConfigFromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	secretKey, err := envStringWithFile("SECRET_KEY", "change-me-now")
+	if err != nil {
+		return Config{}, err
+	}
+	bootstrapAdminPassword, err := envOptionalStringWithFile("BOOTSTRAP_ADMIN_PASSWORD")
+	if err != nil {
+		return Config{}, err
+	}
 	return Config{
 		AppEnv:                 appEnv,
 		AppAddr:                envString("APP_ADDR", ":8080"),
 		DataPath:               envString("DATA_PATH", "./data/store.db"),
-		SecretKey:              envString("SECRET_KEY", "change-me-now"),
+		SecretKey:              secretKey,
 		ExtractorURL:           envString("EXTRACTOR_URL", "http://extractor:9090"),
 		TreasuryFeedURL:        envOptionalString("TREASURY_FEED_URL"),
 		SecureCookies:          secureCookies,
@@ -93,6 +133,6 @@ func loadConfigFromEnv() (Config, error) {
 		WorkerLoopSeconds:      workerLoopSeconds,
 		BootstrapAdminUsername: envString("BOOTSTRAP_ADMIN_USERNAME", "admin"),
 		BootstrapAdminEmail:    envString("BOOTSTRAP_ADMIN_EMAIL", "admin@localhost"),
-		BootstrapAdminPassword: envOptionalString("BOOTSTRAP_ADMIN_PASSWORD"),
+		BootstrapAdminPassword: bootstrapAdminPassword,
 	}, nil
 }

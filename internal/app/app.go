@@ -2,11 +2,13 @@ package app
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"html/template"
 	"log"
 	"net/http"
+	"net/url"
 
 	"sort"
 	"strconv"
@@ -121,7 +123,14 @@ func New() (*App, error) {
 		_ = st.Close()
 		return nil, err
 	}
-	a.Server = &http.Server{Addr: cfg.AppAddr, Handler: routes(a), ReadHeaderTimeout: 10 * time.Second}
+	a.Server = &http.Server{
+		Addr:              cfg.AppAddr,
+		Handler:           routes(a),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 	return a, nil
 }
 func (a *App) seed(ctx context.Context) error {
@@ -139,7 +148,7 @@ func (a *App) seed(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if err := a.Store.UpsertUser(ctx, models.User{Username: a.Config.BootstrapAdminUsername, DisplayName: "Platform Admin", Email: a.Config.BootstrapAdminEmail, PasswordSalt: salt, PasswordHash: hash, IsActive: true}); err != nil {
+		if err := a.persistUser(ctx, models.User{Username: a.Config.BootstrapAdminUsername, DisplayName: "Platform Admin", Email: a.Config.BootstrapAdminEmail, PasswordSalt: salt, PasswordHash: hash, IsActive: true}); err != nil {
 			return err
 		}
 		users, _ = a.Store.ListUsers(ctx)
@@ -370,6 +379,11 @@ func (a *App) currentUserTenant(r *http.Request) (models.User, models.Tenant, mo
 	if err != nil || !u.IsActive {
 		return models.User{}, models.Tenant{}, models.Membership{}, false
 	}
+	u, err = a.hydrateUserSensitiveFields(r.Context(), u)
+	if err != nil {
+		log.Printf("failed to hydrate user %s secrets: %v", u.ID, err)
+		return models.User{}, models.Tenant{}, models.Membership{}, false
+	}
 	t, err := a.Store.GetTenant(r.Context(), sess.TenantID)
 	if err != nil {
 		return models.User{}, models.Tenant{}, models.Membership{}, false
@@ -379,6 +393,90 @@ func (a *App) currentUserTenant(r *http.Request) (models.User, models.Tenant, mo
 		return models.User{}, models.Tenant{}, models.Membership{}, false
 	}
 	return u, t, m, true
+}
+
+func (a *App) hydrateUserSensitiveFields(ctx context.Context, user models.User) (models.User, error) {
+	if strings.TrimSpace(user.MFASecret) == "" {
+		return a.hydrateUserRecoveryCodes(ctx, user)
+	}
+	decryptedSecret, legacyPlaintext, err := auth.DecryptSensitiveValue(a.Config.SecretKey, user.MFASecret)
+	if err != nil {
+		return models.User{}, err
+	}
+	user.MFASecret = decryptedSecret
+	if legacyPlaintext {
+		protectedSecret, err := auth.EncryptSensitiveValue(a.Config.SecretKey, decryptedSecret)
+		if err != nil {
+			return models.User{}, err
+		}
+		storedUser := user
+		storedUser.MFASecret = protectedSecret
+		if err := a.Store.UpsertUser(ctx, storedUser); err != nil {
+			return models.User{}, err
+		}
+	}
+	return a.hydrateUserRecoveryCodes(ctx, user)
+}
+
+func (a *App) hydrateUserRecoveryCodes(ctx context.Context, user models.User) (models.User, error) {
+	if len(user.RecoveryCodes) == 0 {
+		return user, nil
+	}
+	decryptedCodes := make([]string, 0, len(user.RecoveryCodes))
+	legacyPlaintext := false
+	for _, code := range user.RecoveryCodes {
+		decryptedCode, wasLegacyPlaintext, err := auth.DecryptSensitiveValue(a.Config.SecretKey, code)
+		if err != nil {
+			return models.User{}, err
+		}
+		if strings.TrimSpace(decryptedCode) == "" {
+			continue
+		}
+		if wasLegacyPlaintext {
+			legacyPlaintext = true
+		}
+		decryptedCodes = append(decryptedCodes, decryptedCode)
+	}
+	user.RecoveryCodes = decryptedCodes
+	if legacyPlaintext {
+		if err := a.persistUser(ctx, user); err != nil {
+			return models.User{}, err
+		}
+	}
+	return user, nil
+}
+
+func (a *App) persistUser(ctx context.Context, user models.User) error {
+	if strings.TrimSpace(user.MFASecret) != "" {
+		decryptedSecret, _, err := auth.DecryptSensitiveValue(a.Config.SecretKey, user.MFASecret)
+		if err != nil {
+			return err
+		}
+		protectedSecret, err := auth.EncryptSensitiveValue(a.Config.SecretKey, decryptedSecret)
+		if err != nil {
+			return err
+		}
+		user.MFASecret = protectedSecret
+	}
+	if len(user.RecoveryCodes) > 0 {
+		protectedCodes := make([]string, 0, len(user.RecoveryCodes))
+		for _, code := range user.RecoveryCodes {
+			if strings.TrimSpace(code) == "" {
+				continue
+			}
+			decryptedCode, _, err := auth.DecryptSensitiveValue(a.Config.SecretKey, code)
+			if err != nil {
+				return err
+			}
+			protectedCode, err := auth.EncryptSensitiveValue(a.Config.SecretKey, decryptedCode)
+			if err != nil {
+				return err
+			}
+			protectedCodes = append(protectedCodes, protectedCode)
+		}
+		user.RecoveryCodes = protectedCodes
+	}
+	return a.Store.UpsertUser(ctx, user)
 }
 
 type TenantChoice struct {
@@ -433,6 +531,9 @@ func (a *App) render(w http.ResponseWriter, r *http.Request, name string, data m
 		}
 		if _, exists := data["CanManageSources"]; !exists {
 			data["CanManageSources"] = canManageSources(m.Role)
+		}
+		if _, exists := data["CanViewPlatformHealth"]; !exists {
+			data["CanViewPlatformHealth"] = canViewPlatformHealth(m.Role)
 		}
 	}
 	if _, exists := data["Error"]; !exists {
@@ -502,6 +603,8 @@ func (a *App) WithSecurityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
 		if a.Config.SecureCookies {
 			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
@@ -511,7 +614,52 @@ func (a *App) WithSecurityHeaders(next http.Handler) http.Handler {
 }
 func (a *App) ensureCSRF(r *http.Request) bool {
 	s, ok := a.currentSession(r)
-	return ok && r.FormValue("csrf_token") == s.CSRF
+	if !ok || !a.sameOriginRequest(r) {
+		return false
+	}
+	token := r.FormValue("csrf_token")
+	if len(token) != len(s.CSRF) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(token), []byte(s.CSRF)) == 1
+}
+
+func (a *App) sameOriginRequest(r *http.Request) bool {
+	expectedHost := forwardedRequestHost(r)
+	if expectedHost == "" {
+		expectedHost = r.Host
+	}
+	if expectedHost == "" {
+		return false
+	}
+	for _, header := range []string{"Origin", "Referer"} {
+		raw := strings.TrimSpace(r.Header.Get(header))
+		if raw == "" {
+			continue
+		}
+		u, err := url.Parse(raw)
+		if err != nil || u.Host == "" {
+			return false
+		}
+		if !strings.EqualFold(u.Host, expectedHost) {
+			return false
+		}
+	}
+	return true
+}
+
+func forwardedRequestHost(r *http.Request) string {
+	for _, header := range []string{"X-Forwarded-Host", "Host"} {
+		raw := strings.TrimSpace(r.Header.Get(header))
+		if raw == "" {
+			continue
+		}
+		if index := strings.Index(raw, ","); index >= 0 {
+			raw = strings.TrimSpace(raw[:index])
+		}
+		return raw
+	}
+	return ""
 }
 func (a *App) Login(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
@@ -527,6 +675,11 @@ func (a *App) Login(w http.ResponseWriter, r *http.Request) {
 		a.render(w, r, "login.html", map[string]any{"Title": "Login", "Error": "Invalid credentials"})
 		return
 	}
+	u, err = a.hydrateUserSensitiveFields(r.Context(), u)
+	if err != nil {
+		a.serverError(w, r, "unable to load MFA settings", err)
+		return
+	}
 	if !u.LockedUntil.IsZero() && time.Now().Before(u.LockedUntil) {
 		a.render(w, r, "login.html", map[string]any{"Title": "Login", "Error": "Account temporarily locked"})
 		return
@@ -537,19 +690,26 @@ func (a *App) Login(w http.ResponseWriter, r *http.Request) {
 			u.LockedUntil = time.Now().Add(15 * time.Minute)
 			u.FailedLogins = 0
 		}
-		if err := a.Store.UpsertUser(r.Context(), u); err != nil {
+		if err := a.persistUser(r.Context(), u); err != nil {
 			log.Printf("failed to persist login attempt for user=%s: %v", u.Username, err)
 		}
 		a.render(w, r, "login.html", map[string]any{"Title": "Login", "Error": "Invalid credentials"})
 		return
 	}
-	if u.MFAEnabled && !auth.ValidateTOTP(u.MFASecret, r.FormValue("mfa_code"), time.Now()) {
-		a.render(w, r, "login.html", map[string]any{"Title": "Login", "Error": "Invalid MFA code"})
-		return
+	if u.MFAEnabled {
+		mfaInput := r.FormValue("mfa_code")
+		if !auth.ValidateTOTP(u.MFASecret, mfaInput, time.Now()) {
+			remainingCodes, usedRecoveryCode := auth.ConsumeRecoveryCode(u.RecoveryCodes, mfaInput)
+			if !usedRecoveryCode {
+				a.render(w, r, "login.html", map[string]any{"Title": "Login", "Error": "Invalid MFA or recovery code"})
+				return
+			}
+			u.RecoveryCodes = remainingCodes
+		}
 	}
 	u.FailedLogins = 0
 	u.LockedUntil = time.Time{}
-	if err := a.Store.UpsertUser(r.Context(), u); err != nil {
+	if err := a.persistUser(r.Context(), u); err != nil {
 		a.serverError(w, r, "unable to update login state", err)
 		return
 	}
@@ -569,14 +729,27 @@ func (a *App) Logout(w http.ResponseWriter, r *http.Request) {
 	auth.ClearSessionCookie(w, a.Config.SecureCookies)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
+
+func (a *App) Close() error {
+	if closer, ok := a.Store.(interface{ Close() error }); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
 func (a *App) RunWorker() error {
+	return a.RunWorkerContext(context.Background())
+}
+
+func (a *App) RunWorkerContext(ctx context.Context) error {
 	return worker.Runner{
-		Store:      a.Store,
-		Sources:    a.Sources,
-		SourceLoad: a.loadSourceRegistry,
-		Extractor:  a.Extractor,
-		SyncEvery:  time.Duration(a.Config.WorkerSyncMinutes) * time.Minute,
-		LoopEvery:  time.Duration(a.Config.WorkerLoopSeconds) * time.Second,
-	}.Run(context.Background())
+		Store:         a.Store,
+		Sources:       a.Sources,
+		SourceLoad:    a.loadSourceRegistry,
+		Extractor:     a.Extractor,
+		SyncEvery:     time.Duration(a.Config.WorkerSyncMinutes) * time.Minute,
+		LoopEvery:     time.Duration(a.Config.WorkerLoopSeconds) * time.Second,
+		HeartbeatPath: "/tmp/tenderhub-worker-heartbeat",
+	}.Run(ctx)
 }
 func init() { log.SetFlags(log.LstdFlags | log.Lshortfile) }

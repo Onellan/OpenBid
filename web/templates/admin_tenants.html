@@ -10,6 +10,14 @@
 
 <div class="cards tenant-admin-top" style="margin-top:18px">
   <section class="card">
+    {{template "card_header" (dict "title" "Current workspace" "subtitle" "The active tenant for this session. This context only needs to be visible while managing tenant workspaces.")}}
+    <div class="workspace-meta" style="margin-top:14px">
+      <div class="workspace-label">Workspace</div>
+      <div class="workspace-title">{{.Tenant.Name}}</div>
+    </div>
+  </section>
+
+  <section class="card">
     {{template "card_header" (dict "title" "Switch workspace" "subtitle" "Move between the tenants available to your current account without using the header.")}}
     <div style="margin-top:14px">{{template "tenant_switch_form" .}}</div>
   </section>

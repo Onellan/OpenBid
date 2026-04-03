@@ -62,16 +62,27 @@ Common variables:
 
 - `APP_ENV`: use `development` locally, `production` for hardened deployments
 - `SECRET_KEY`: at least 32 strong random characters in production
+- `SECRET_KEY_FILE`: preferred production path for a mounted secret file
 - `SECURE_COOKIES`: must be `true` in production
 - `BOOTSTRAP_ADMIN_PASSWORD`: initial admin password for first boot in production
+- `BOOTSTRAP_ADMIN_PASSWORD_FILE`: preferred production path for a mounted bootstrap password file
 - `BOOTSTRAP_SYNC_ON_STARTUP`: whether to sync sources on the first startup
 - `LOW_MEMORY_MODE`: keep `true` on smaller machines such as Raspberry Pi
 - `WORKER_SYNC_MINUTES`: default source check interval
 - `WORKER_LOOP_SECONDS`: worker polling loop interval
 
+Production deployments should prefer `.env.production.example`, pinned GHCR image tags, mounted secret files under `./secrets`, and the packaged operations runbook in `docs/production-operations.md`.
+
 ## Raspberry Pi deployment
 
 For a step-by-step Docker setup guide on Raspberry Pi, including Cloudflare-in-front HTTP origin deployment notes, see [docs/raspberry-pi-docker-setup.md](docs/raspberry-pi-docker-setup.md).
+
+## Operations
+
+- Production runbook: [docs/production-operations.md](docs/production-operations.md)
+- SQLite backup: `./scripts/sqlite-backup.sh`
+- SQLite restore: `./scripts/sqlite-restore.sh`
+- SQLite validation: `./scripts/sqlite-validate.sh`
 
 ## Validation
 

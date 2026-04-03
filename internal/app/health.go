@@ -37,7 +37,7 @@ func (a *App) HealthPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
-	if !canManageAudit(m.Role) {
+	if !canViewPlatformHealth(m.Role) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}

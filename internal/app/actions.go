@@ -45,11 +45,41 @@ func canManageTenants(role models.Role) bool {
 }
 
 func canManageSources(role models.Role) bool {
-	return canAdminUsers(role)
+	return canManagePlatform(role)
 }
 
 func canManageAudit(role models.Role) bool {
 	return canAdminUsers(role)
+}
+
+func canViewPlatformHealth(role models.Role) bool {
+	return canManagePlatform(role)
+}
+
+func canManagePlatform(role models.Role) bool {
+	return role == models.RoleAdmin || role == models.RolePortfolioManager
+}
+
+func isTenantScopedAdmin(role models.Role) bool {
+	return role == models.RoleTenantAdmin
+}
+
+func canAssignManagedRole(actorRole, targetRole models.Role) bool {
+	if !isValidRole(targetRole) {
+		return false
+	}
+	if canManagePlatform(actorRole) {
+		return true
+	}
+	if !isTenantScopedAdmin(actorRole) {
+		return false
+	}
+	switch targetRole {
+	case models.RoleAnalyst, models.RoleReviewer, models.RoleOperator, models.RoleViewer:
+		return true
+	default:
+		return false
+	}
 }
 
 func canEditWorkspace(role models.Role) bool {
@@ -100,6 +130,25 @@ func (a *App) auditAction(ctx context.Context, ac actionContext, action, entity,
 	}); err != nil {
 		log.Printf("audit write failed for tenant=%s entity=%s id=%s: %v", ac.Tenant.ID, entity, entityID, err)
 	}
+}
+
+func (a *App) canManageUser(ctx context.Context, actorRole models.Role, currentTenantID, targetUserID string) bool {
+	if canManagePlatform(actorRole) {
+		return true
+	}
+	if !isTenantScopedAdmin(actorRole) || strings.TrimSpace(currentTenantID) == "" || strings.TrimSpace(targetUserID) == "" {
+		return false
+	}
+	memberships, err := a.Store.ListMemberships(ctx, targetUserID)
+	if err != nil {
+		return false
+	}
+	for _, membership := range memberships {
+		if membership.TenantID == currentTenantID {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *App) addWorkflowSnapshot(ctx context.Context, ac actionContext, wf models.Workflow) {

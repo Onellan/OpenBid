@@ -41,7 +41,7 @@ func (a *App) PasswordPage(w http.ResponseWriter, r *http.Request) {
 	}
 	user.PasswordSalt = salt
 	user.PasswordHash = hash
-	if err := a.Store.UpsertUser(r.Context(), user); err != nil {
+	if err := a.persistUser(r.Context(), user); err != nil {
 		a.serverError(w, r, "unable to save password change", err)
 		return
 	}
@@ -49,16 +49,16 @@ func (a *App) PasswordPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) MFAPage(w http.ResponseWriter, r *http.Request) {
-	user, tenant, _, ok := a.currentUserTenant(r)
+	user, tenant, member, ok := a.currentUserTenant(r)
 	if !ok {
 		http.Redirect(w, r, "/login", 303)
 		return
 	}
-	a.render(w, r, "mfa.html", map[string]any{"Title": "MFA", "User": user, "Tenant": tenant})
+	a.render(w, r, "mfa.html", map[string]any{"Title": "MFA", "User": user, "Tenant": tenant, "Member": member, "RecoveryCodeCount": len(user.RecoveryCodes)})
 }
 
 func (a *App) MFASetup(w http.ResponseWriter, r *http.Request) {
-	user, _, _, ok := a.currentUserTenant(r)
+	user, tenant, member, ok := a.currentUserTenant(r)
 	if !ok {
 		http.Redirect(w, r, "/login", 303)
 		return
@@ -81,17 +81,25 @@ func (a *App) MFASetup(w http.ResponseWriter, r *http.Request) {
 		a.render(w, r, "mfa_setup.html", map[string]any{"Title": "MFA Setup", "Message": secret, "Error": "Invalid MFA code"})
 		return
 	}
-	user.MFASecret = secret
+	encryptedSecret, err := auth.EncryptSensitiveValue(a.Config.SecretKey, secret)
+	if err != nil {
+		a.serverError(w, r, "unable to protect MFA secret", err)
+		return
+	}
+	user.MFASecret = encryptedSecret
 	user.MFAEnabled = true
-	if err := a.Store.UpsertUser(r.Context(), user); err != nil {
+	recoveryCodes := auth.NewRecoveryCodes(10)
+	user.RecoveryCodes = recoveryCodes
+	if err := a.persistUser(r.Context(), user); err != nil {
 		a.serverError(w, r, "unable to enable MFA", err)
 		return
 	}
-	a.render(w, r, "mfa.html", map[string]any{"Title": "MFA", "Message": "MFA enabled"})
+	a.auditAction(r.Context(), actionContext{User: user, Tenant: tenant, Member: member}, "update", "user_security", user.ID, "MFA enabled", map[string]string{"recovery_codes": "generated"})
+	a.render(w, r, "mfa.html", map[string]any{"Title": "MFA", "Message": "MFA enabled. Save your recovery codes now.", "RecoveryCodes": recoveryCodes, "RecoveryCodeCount": len(recoveryCodes)})
 }
 
 func (a *App) MFADisable(w http.ResponseWriter, r *http.Request) {
-	user, _, _, ok := a.currentUserTenant(r)
+	user, tenant, member, ok := a.currentUserTenant(r)
 	if !ok {
 		http.Redirect(w, r, "/login", 303)
 		return
@@ -106,9 +114,46 @@ func (a *App) MFADisable(w http.ResponseWriter, r *http.Request) {
 	}
 	user.MFAEnabled = false
 	user.MFASecret = ""
-	if err := a.Store.UpsertUser(r.Context(), user); err != nil {
+	user.RecoveryCodes = nil
+	if err := a.persistUser(r.Context(), user); err != nil {
 		a.serverError(w, r, "unable to disable MFA", err)
 		return
 	}
+	a.auditAction(r.Context(), actionContext{User: user, Tenant: tenant, Member: member}, "update", "user_security", user.ID, "MFA disabled", nil)
 	a.render(w, r, "mfa.html", map[string]any{"Title": "MFA", "Message": "MFA disabled"})
+}
+
+func (a *App) MFARegenerateRecoveryCodes(w http.ResponseWriter, r *http.Request) {
+	user, tenant, member, ok := a.currentUserTenant(r)
+	if !ok {
+		http.Redirect(w, r, "/login", 303)
+		return
+	}
+	if r.Method != http.MethodPost || !a.ensureCSRF(r) {
+		http.Error(w, "forbidden", 403)
+		return
+	}
+	if !user.MFAEnabled || strings.TrimSpace(user.MFASecret) == "" {
+		a.render(w, r, "mfa.html", map[string]any{"Title": "MFA", "User": user, "Tenant": tenant, "Error": "Enable MFA before regenerating recovery codes"})
+		return
+	}
+	if !auth.VerifyPassword(r.FormValue("password"), user.PasswordSalt, user.PasswordHash) {
+		a.render(w, r, "mfa.html", map[string]any{"Title": "MFA", "User": user, "Tenant": tenant, "Error": "Password confirmation failed", "RecoveryCodeCount": len(user.RecoveryCodes)})
+		return
+	}
+	recoveryCodes := auth.NewRecoveryCodes(10)
+	user.RecoveryCodes = recoveryCodes
+	if err := a.persistUser(r.Context(), user); err != nil {
+		a.serverError(w, r, "unable to regenerate recovery codes", err)
+		return
+	}
+	a.auditAction(r.Context(), actionContext{User: user, Tenant: tenant, Member: member}, "update", "user_security", user.ID, "Recovery codes regenerated", nil)
+	a.render(w, r, "mfa.html", map[string]any{
+		"Title":             "MFA",
+		"User":              user,
+		"Tenant":            tenant,
+		"Message":           "Recovery codes regenerated. Save the new set now.",
+		"RecoveryCodes":     recoveryCodes,
+		"RecoveryCodeCount": len(recoveryCodes),
+	})
 }
