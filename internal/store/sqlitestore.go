@@ -159,8 +159,12 @@ func sqliteDelete(ctx context.Context, db *sql.DB, table, id string) error {
 	return err
 }
 
+func (s *SQLiteStore) listAllTenders(ctx context.Context) ([]models.Tender, error) {
+	return sqliteListJSON[models.Tender](ctx, s.db, "tenders")
+}
+
 func (s *SQLiteStore) ListTenders(ctx context.Context, f ListFilter) ([]models.Tender, int, error) {
-	items, err := sqliteListJSON[models.Tender](ctx, s.db, "tenders")
+	items, err := s.listAllTenders(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -428,6 +432,26 @@ func (s *SQLiteStore) ListBookmarks(ctx context.Context, tenantID, userID string
 	}
 	return out, nil
 }
+
+func (s *SQLiteStore) UpsertBookmark(ctx context.Context, v models.Bookmark) error {
+	items, err := sqliteListJSON[models.Bookmark](ctx, s.db, "bookmarks")
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	for _, b := range items {
+		if b.TenantID == v.TenantID && b.UserID == v.UserID && b.TenderID == v.TenderID {
+			b.Note = v.Note
+			b.UpdatedAt = now
+			return sqliteUpsertJSON(ctx, s.db, "bookmarks", b.ID, b)
+		}
+	}
+	v.ID = newid()
+	v.CreatedAt = now
+	v.UpdatedAt = now
+	return sqliteUpsertJSON(ctx, s.db, "bookmarks", v.ID, v)
+}
+
 func (s *SQLiteStore) ToggleBookmark(ctx context.Context, v models.Bookmark) error {
 	items, err := sqliteListJSON[models.Bookmark](ctx, s.db, "bookmarks")
 	if err != nil {
@@ -442,6 +466,19 @@ func (s *SQLiteStore) ToggleBookmark(ctx context.Context, v models.Bookmark) err
 	v.CreatedAt = time.Now().UTC()
 	v.UpdatedAt = v.CreatedAt
 	return sqliteUpsertJSON(ctx, s.db, "bookmarks", v.ID, v)
+}
+
+func (s *SQLiteStore) DeleteBookmark(ctx context.Context, tenantID, userID, tenderID string) error {
+	items, err := sqliteListJSON[models.Bookmark](ctx, s.db, "bookmarks")
+	if err != nil {
+		return err
+	}
+	for _, b := range items {
+		if b.TenantID == tenantID && b.UserID == userID && b.TenderID == tenderID {
+			return sqliteDelete(ctx, s.db, "bookmarks", b.ID)
+		}
+	}
+	return nil
 }
 func (s *SQLiteStore) ListSavedSearches(ctx context.Context, tenantID, userID string) ([]models.SavedSearch, error) {
 	items, err := sqliteListJSON[models.SavedSearch](ctx, s.db, "saved_searches")
@@ -604,7 +641,7 @@ func (s *SQLiteStore) DeleteJob(ctx context.Context, id string) error {
 	return sqliteDelete(ctx, s.db, "jobs", id)
 }
 func (s *SQLiteStore) Dashboard(ctx context.Context, tenantID string, lowMemory, analytics bool) (models.Dashboard, error) {
-	items, _, err := s.ListTenders(ctx, ListFilter{Page: 1, PageSize: 5000})
+	items, err := s.listAllTenders(ctx)
 	if err != nil {
 		return models.Dashboard{}, err
 	}

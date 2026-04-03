@@ -11,6 +11,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"tenderhub-za/internal/auth"
 	"tenderhub-za/internal/extract"
 	"tenderhub-za/internal/models"
@@ -21,9 +22,12 @@ import (
 )
 
 type Config struct {
-	AppAddr, DataPath, SecretKey, ExtractorURL         string
-	SecureCookies, LowMemoryMode, AnalyticsEnabled     bool
-	SessionHours, WorkerSyncMinutes, WorkerLoopSeconds int
+	AppEnv                                                              string
+	AppAddr, DataPath, SecretKey, ExtractorURL                          string
+	SecureCookies, LowMemoryMode, AnalyticsEnabled                      bool
+	BootstrapSyncOnStartup                                              bool
+	SessionHours, WorkerSyncMinutes, WorkerLoopSeconds                  int
+	BootstrapAdminUsername, BootstrapAdminEmail, BootstrapAdminPassword string
 }
 type App struct {
 	Config    Config
@@ -47,8 +51,81 @@ func atoi(s string, d int) int {
 	}
 	return v
 }
+
+func boolenv(k string, d bool) bool {
+	v := strings.TrimSpace(os.Getenv(k))
+	if v == "" {
+		return d
+	}
+	switch strings.ToLower(v) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeAppEnv(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "", "dev", "development", "local", "test":
+		return "development"
+	case "prod", "production":
+		return "production"
+	default:
+		return strings.ToLower(strings.TrimSpace(v))
+	}
+}
+
+func usesWeakSecret(secret string) bool {
+	secret = strings.TrimSpace(secret)
+	lower := strings.ToLower(secret)
+	return len(secret) < 32 || lower == "change-me-now" || lower == "local-dev-secret-change-me" || strings.Contains(lower, "change-me") || strings.Contains(lower, "replace-with")
+}
+
+func validateConfig(cfg Config) error {
+	if cfg.BootstrapAdminPassword != "" {
+		if err := auth.StrongEnoughPassword(cfg.BootstrapAdminPassword); err != nil {
+			return fmt.Errorf("BOOTSTRAP_ADMIN_PASSWORD is not strong enough: %w", err)
+		}
+	}
+	if cfg.AppEnv != "production" {
+		return nil
+	}
+	if usesWeakSecret(cfg.SecretKey) {
+		return errors.New("SECRET_KEY must be a strong non-default value in production")
+	}
+	if !cfg.SecureCookies {
+		return errors.New("SECURE_COOKIES must be true in production")
+	}
+	return nil
+}
+
+func (c Config) ShowDemoCredentials() bool {
+	return c.AppEnv != "production" && strings.TrimSpace(c.BootstrapAdminPassword) == ""
+}
+
 func New() (*App, error) {
-	cfg := Config{AppAddr: getenv("APP_ADDR", ":8080"), DataPath: getenv("DATA_PATH", "./data/store.db"), SecretKey: getenv("SECRET_KEY", "change-me-now"), SecureCookies: getenv("SECURE_COOKIES", "false") == "true", LowMemoryMode: getenv("LOW_MEMORY_MODE", "true") == "true", AnalyticsEnabled: getenv("ANALYTICS_ENABLED", "false") == "true", ExtractorURL: getenv("EXTRACTOR_URL", "http://extractor:9090"), SessionHours: atoi(getenv("SESSION_HOURS", "12"), 12), WorkerSyncMinutes: atoi(getenv("WORKER_SYNC_MINUTES", "360"), 360), WorkerLoopSeconds: atoi(getenv("WORKER_LOOP_SECONDS", "30"), 30)}
+	appEnv := normalizeAppEnv(getenv("APP_ENV", "development"))
+	cfg := Config{
+		AppEnv:                 appEnv,
+		AppAddr:                getenv("APP_ADDR", ":8080"),
+		DataPath:               getenv("DATA_PATH", "./data/store.db"),
+		SecretKey:              getenv("SECRET_KEY", "change-me-now"),
+		SecureCookies:          boolenv("SECURE_COOKIES", false),
+		LowMemoryMode:          boolenv("LOW_MEMORY_MODE", true),
+		AnalyticsEnabled:       boolenv("ANALYTICS_ENABLED", false),
+		BootstrapSyncOnStartup: boolenv("BOOTSTRAP_SYNC_ON_STARTUP", appEnv != "production"),
+		ExtractorURL:           getenv("EXTRACTOR_URL", "http://extractor:9090"),
+		SessionHours:           atoi(getenv("SESSION_HOURS", "12"), 12),
+		WorkerSyncMinutes:      atoi(getenv("WORKER_SYNC_MINUTES", "360"), 360),
+		WorkerLoopSeconds:      atoi(getenv("WORKER_LOOP_SECONDS", "30"), 30),
+		BootstrapAdminUsername: getenv("BOOTSTRAP_ADMIN_USERNAME", "admin"),
+		BootstrapAdminEmail:    getenv("BOOTSTRAP_ADMIN_EMAIL", "admin@localhost"),
+		BootstrapAdminPassword: os.Getenv("BOOTSTRAP_ADMIN_PASSWORD"),
+	}
+	if err := validateConfig(cfg); err != nil {
+		return nil, err
+	}
 	st, err := store.NewSQLiteStore(cfg.DataPath)
 	if err != nil {
 		return nil, err
@@ -70,11 +147,18 @@ func (a *App) seed(ctx context.Context) error {
 	users, _ := a.Store.ListUsers(ctx)
 	seededUsers := len(users) == 0
 	if seededUsers {
-		salt, hash, err := auth.HashPassword("TenderHub!2026")
+		password := a.Config.BootstrapAdminPassword
+		if password == "" {
+			if a.Config.AppEnv == "production" {
+				return errors.New("BOOTSTRAP_ADMIN_PASSWORD must be set before starting with an empty production database")
+			}
+			password = "TenderHub!2026"
+		}
+		salt, hash, err := auth.HashPassword(password)
 		if err != nil {
 			return err
 		}
-		if err := a.Store.UpsertUser(ctx, models.User{Username: "admin", DisplayName: "Platform Admin", Email: "admin@localhost", PasswordSalt: salt, PasswordHash: hash, IsActive: true}); err != nil {
+		if err := a.Store.UpsertUser(ctx, models.User{Username: a.Config.BootstrapAdminUsername, DisplayName: "Platform Admin", Email: a.Config.BootstrapAdminEmail, PasswordSalt: salt, PasswordHash: hash, IsActive: true}); err != nil {
 			return err
 		}
 		users, _ = a.Store.ListUsers(ctx)
@@ -103,7 +187,7 @@ func (a *App) seed(ctx context.Context) error {
 	}
 	registry := a.mustLoadSourceRegistry(ctx)
 	a.Sources = registry
-	if seededUsers {
+	if seededUsers && a.Config.BootstrapSyncOnStartup {
 		return a.syncSources(ctx, registry)
 	}
 	return nil
@@ -284,7 +368,7 @@ func (a *App) currentUserTenant(r *http.Request) (models.User, models.Tenant, mo
 		return models.User{}, models.Tenant{}, models.Membership{}, false
 	}
 	u, err := a.Store.GetUser(r.Context(), sess.UserID)
-	if err != nil {
+	if err != nil || !u.IsActive {
 		return models.User{}, models.Tenant{}, models.Membership{}, false
 	}
 	t, err := a.Store.GetTenant(r.Context(), sess.TenantID)
@@ -358,6 +442,9 @@ func (a *App) render(w http.ResponseWriter, r *http.Request, name string, data m
 	if _, exists := data["Message"]; !exists {
 		data["Message"] = r.URL.Query().Get("message")
 	}
+	if _, exists := data["ShowDemoCredentials"]; !exists {
+		data["ShowDemoCredentials"] = a.Config.ShowDemoCredentials()
+	}
 	tpl, ok := a.Templates[name]
 	if !ok {
 		http.Error(w, fmt.Sprintf("template %s not configured", name), 500)
@@ -370,7 +457,7 @@ func (a *App) render(w http.ResponseWriter, r *http.Request, name string, data m
 }
 func (a *App) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := a.currentSession(r); !ok {
+		if _, _, _, ok := a.currentUserTenant(r); !ok {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
@@ -379,6 +466,13 @@ func (a *App) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 }
 func (a *App) Healthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	if validator, ok := a.Store.(interface{ ValidateRuntime(context.Context) error }); ok {
+		if err := validator.ValidateRuntime(r.Context()); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"ok":false,"error":"store_unhealthy"}`))
+			return
+		}
+	}
 	_, _ = w.Write([]byte(`{"ok":true}`))
 }
 func (a *App) WithSecurityHeaders(next http.Handler) http.Handler {
@@ -386,7 +480,10 @@ func (a *App) WithSecurityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		w.Header().Set("Content-Security-Policy", "default-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data:; frame-ancestors 'none'; form-action 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
+		if a.Config.SecureCookies {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
 		next.ServeHTTP(w, r)
 	})
 }

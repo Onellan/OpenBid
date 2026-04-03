@@ -32,6 +32,21 @@
       <div class="actions" style="margin-top:10px">
         <a class="button secondary" href="{{.Item.OriginalURL}}" target="_blank" rel="noreferrer">View source page</a>
         {{if .Item.DocumentURL}}<a class="button secondary" href="{{.Item.DocumentURL}}" target="_blank" rel="noreferrer">View primary document</a>{{end}}
+        {{if .Bookmark.TenderID}}
+        <form method="post" action="/tenders/bookmark/remove">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <input type="hidden" name="return_to" value="{{.CurrentPath}}">
+          <input type="hidden" name="tender_id" value="{{.Item.ID}}">
+          <button type="submit">Remove bookmark</button>
+        </form>
+        {{else}}
+        <form method="post" action="/tenders/bookmark">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <input type="hidden" name="return_to" value="{{.CurrentPath}}">
+          <input type="hidden" name="tender_id" value="{{.Item.ID}}">
+          <button type="submit">Add bookmark</button>
+        </form>
+        {{end}}
       </div>
     </div>
   </section>

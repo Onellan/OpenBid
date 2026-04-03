@@ -77,6 +77,28 @@ func TestSQLiteQueueWritesDeduplicate(t *testing.T) {
 	}
 }
 
+func TestSQLiteUpsertBookmarkUpdatesExistingNote(t *testing.T) {
+	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if err := s.UpsertBookmark(ctx, models.Bookmark{TenantID: "t1", UserID: "u1", TenderID: "x1", Note: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertBookmark(ctx, models.Bookmark{TenantID: "t1", UserID: "u1", TenderID: "x1", Note: "updated"}); err != nil {
+		t.Fatal(err)
+	}
+	bookmarks, err := s.ListBookmarks(ctx, "t1", "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bookmarks) != 1 || bookmarks[0].Note != "updated" {
+		t.Fatalf("expected bookmark note update, got %#v", bookmarks)
+	}
+}
+
 func TestSQLiteConcurrentWrites(t *testing.T) {
 	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {
@@ -100,6 +122,36 @@ func TestSQLiteConcurrentWrites(t *testing.T) {
 	}
 	if total != len(items) || total < 15 {
 		t.Fatalf("expected >=15 tenders, got total=%d len=%d", total, len(items))
+	}
+}
+
+func TestDashboardCountsAllTendersBeyondPageCap(t *testing.T) {
+	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	for i := 0; i < 120; i++ {
+		if err := s.UpsertTender(ctx, models.Tender{
+			ID:             fmt.Sprintf("dash-%d", i),
+			Title:          "Tender",
+			Issuer:         "Issuer",
+			SourceKey:      "treasury",
+			Status:         "open",
+			DocumentURL:    "https://example.org/doc.pdf",
+			DocumentStatus: models.ExtractionCompleted,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dashboard, err := s.Dashboard(ctx, "", false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dashboard.TotalTenders != 120 || dashboard.WithDocuments != 120 || dashboard.ExtractedDocuments != 120 {
+		t.Fatalf("expected full dashboard counts, got %#v", dashboard)
 	}
 }
 

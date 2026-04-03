@@ -174,13 +174,7 @@ func (a *App) Home(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) Dashboard(w http.ResponseWriter, r *http.Request) {
-	u, t, _, ok := a.currentUserTenant(r)
-	if !ok {
-		http.Redirect(w, r, "/login", 303)
-		return
-	}
-	d, _ := a.Store.Dashboard(r.Context(), t.ID, a.Config.LowMemoryMode, a.Config.AnalyticsEnabled && !a.Config.LowMemoryMode && r.URL.Query().Get("analytics") == "1")
-	a.render(w, r, "dashboard.html", map[string]any{"Title": "Dashboard", "User": u, "Tenant": t, "Dashboard": d, "CSRFToken": a.mustCSRF(r)})
+	a.Home(w, r)
 }
 
 func (a *App) BookmarksPage(w http.ResponseWriter, r *http.Request) {
@@ -312,9 +306,9 @@ func (a *App) ToggleBookmark(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", 303)
 		return
 	}
-	_ = a.Store.ToggleBookmark(r.Context(), models.Bookmark{TenantID: t.ID, UserID: u.ID, TenderID: r.FormValue("tender_id"), Note: r.FormValue("note")})
-	a.auditAction(r.Context(), actionContext{User: u, Tenant: t}, "update", "bookmark", r.FormValue("tender_id"), "Bookmark updated", map[string]string{"note": r.FormValue("note")})
-	a.redirectAfterAction(w, r, "/tenders", "success", "Bookmark updated")
+	_ = a.Store.UpsertBookmark(r.Context(), models.Bookmark{TenantID: t.ID, UserID: u.ID, TenderID: r.FormValue("tender_id"), Note: r.FormValue("note")})
+	a.auditAction(r.Context(), actionContext{User: u, Tenant: t}, "update", "bookmark", r.FormValue("tender_id"), "Bookmark saved", map[string]string{"note": r.FormValue("note")})
+	a.redirectAfterAction(w, r, "/tenders", "success", "Bookmark saved")
 }
 
 func (a *App) UpdateWorkflow(w http.ResponseWriter, r *http.Request) {
@@ -440,7 +434,7 @@ func (a *App) BulkTenders(w http.ResponseWriter, r *http.Request) {
 	for _, id := range parseSelectedIDs(r.FormValue("selected_ids")) {
 		switch r.FormValue("action") {
 		case "bookmark":
-			_ = a.Store.ToggleBookmark(r.Context(), models.Bookmark{TenantID: t.ID, UserID: u.ID, TenderID: id, Note: r.FormValue("notes")})
+			_ = a.Store.UpsertBookmark(r.Context(), models.Bookmark{TenantID: t.ID, UserID: u.ID, TenderID: id, Note: r.FormValue("notes")})
 		case "queue":
 			tender, err := a.Store.GetTender(r.Context(), id)
 			if err == nil && tender.DocumentURL != "" {
@@ -475,11 +469,20 @@ func (a *App) TenderDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	workflow, _ := a.Store.GetWorkflow(r.Context(), t.ID, id)
 	history, _ := a.Store.ListWorkflowEvents(r.Context(), t.ID, id)
+	bookmarks, _ := a.Store.ListBookmarks(r.Context(), t.ID, u.ID)
+	var bookmark models.Bookmark
+	for _, itemBookmark := range bookmarks {
+		if itemBookmark.TenderID == id {
+			bookmark = itemBookmark
+			break
+		}
+	}
 	a.render(w, r, "tender_detail.html", map[string]any{
 		"Title":           "Opportunity detail",
 		"User":            u,
 		"Tenant":          t,
 		"Item":            item,
+		"Bookmark":        bookmark,
 		"Workflow":        workflow,
 		"WorkflowHistory": history,
 		"FactSections":    factSectionsForTender(item),
@@ -578,6 +581,6 @@ func (a *App) RemoveBookmark(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", 303)
 		return
 	}
-	_ = a.Store.ToggleBookmark(r.Context(), models.Bookmark{TenantID: t.ID, UserID: u.ID, TenderID: r.FormValue("tender_id")})
+	_ = a.Store.DeleteBookmark(r.Context(), t.ID, u.ID, r.FormValue("tender_id"))
 	a.redirectAfterAction(w, r, "/tenders", "success", "Bookmark removed")
 }

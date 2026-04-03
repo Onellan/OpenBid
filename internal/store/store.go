@@ -19,8 +19,11 @@ func NormalizeFilter(f ListFilter) ListFilter {
 	if f.Page < 1 {
 		f.Page = 1
 	}
-	if f.PageSize < 1 || f.PageSize > 100 {
+	if f.PageSize < 1 {
 		f.PageSize = 20
+	}
+	if f.PageSize > 100 {
+		f.PageSize = 100
 	}
 	if f.Sort == "" {
 		f.Sort = "closing_date"
@@ -58,7 +61,9 @@ type Store interface {
 	UpsertWorkflow(context.Context, models.Workflow) error
 
 	ListBookmarks(context.Context, string, string) ([]models.Bookmark, error)
+	UpsertBookmark(context.Context, models.Bookmark) error
 	ToggleBookmark(context.Context, models.Bookmark) error
+	DeleteBookmark(context.Context, string, string, string) error
 
 	ListSavedSearches(context.Context, string, string) ([]models.SavedSearch, error)
 	UpsertSavedSearch(context.Context, models.SavedSearch) error

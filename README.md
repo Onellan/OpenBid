@@ -13,10 +13,12 @@ OpenBid is a lightweight, self-hosted, multi-tenant tender aggregation platform 
 - Docker Compose deployment
 - Unit and integration-style tests for the current runtime path
 
-## Default credentials
+## Development bootstrap credentials
 
 - Username: `admin`
 - Password: `TenderHub!2026`
+
+These are seeded only for local development when `APP_ENV=development` and `BOOTSTRAP_ADMIN_PASSWORD` is left empty. For production, set a strong `SECRET_KEY`, enable `SECURE_COOKIES=true`, and provide `BOOTSTRAP_ADMIN_PASSWORD` before first startup.
 
 ## Local run
 
@@ -43,6 +45,7 @@ Open `http://localhost:8088`.
 - Default local database path: `./data/store.db`
 - Docker database path: `/app/data/store.db`
 - The app and worker both expect SQLite and no longer support the old JSON runtime store.
+- Fresh production deployments do not auto-import tenders on first boot unless `BOOTSTRAP_SYNC_ON_STARTUP=true` is explicitly set.
 
 ## Validation
 

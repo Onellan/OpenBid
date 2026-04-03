@@ -33,3 +33,15 @@ func TestSeededStartupSQLite(t *testing.T) {
 		t.Fatalf("expected seeded tenders, err=%v total=%d", err, total)
 	}
 }
+
+func TestProductionStartupRequiresBootstrapPasswordForEmptyDatabase(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("DATA_PATH", filepath.Join(t.TempDir(), "store.db"))
+	t.Setenv("SECRET_KEY", "0123456789abcdef0123456789abcdef")
+	t.Setenv("SECURE_COOKIES", "true")
+	t.Setenv("BOOTSTRAP_ADMIN_PASSWORD", "")
+
+	if _, err := New(); err == nil {
+		t.Fatal("expected production startup to require a bootstrap admin password")
+	}
+}

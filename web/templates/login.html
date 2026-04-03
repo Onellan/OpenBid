@@ -19,10 +19,10 @@
       <label>MFA code (only if enabled)<input name="mfa_code"></label>
       <button type="submit">Sign in to OpenBid</button>
     </form>
-    <div class="card-soft" style="margin-top:16px">
+    {{if .ShowDemoCredentials}}<div class="card-soft" style="margin-top:16px">
       <strong>Demo access</strong>
       <div class="footer-note" style="margin-top:6px">Username: <span class="mono">admin</span> · Password: <span class="mono">TenderHub!2026</span></div>
-    </div>
+    </div>{{end}}
   </section>
 </div>
 

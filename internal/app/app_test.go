@@ -489,6 +489,42 @@ func TestLoginPageRendersSignInContent(t *testing.T) {
 		t.Fatalf("login page rendered tenders content")
 	}
 }
+
+func TestLoginPageHidesDemoCredentialsInProduction(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("DATA_PATH", filepath.Join(t.TempDir(), "store.db"))
+	t.Setenv("SECRET_KEY", "0123456789abcdef0123456789abcdef")
+	t.Setenv("SECURE_COOKIES", "true")
+	t.Setenv("BOOTSTRAP_ADMIN_PASSWORD", "Strong!2026Password")
+	a, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closer, ok := a.Store.(interface{ Close() error }); ok {
+		t.Cleanup(func() { _ = closer.Close() })
+	}
+	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	if strings.Contains(body, "TenderHub!2026") || strings.Contains(body, "Demo access") {
+		t.Fatalf("production login page exposed demo credentials: %s", body)
+	}
+}
+
+func TestCurrentUserTenantRejectsInactiveUser(t *testing.T) {
+	a := newTestApp(t)
+	user, _, cookie, _ := adminSession(t, a)
+	user.IsActive = false
+	if err := a.Store.UpsertUser(t.Context(), user); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	req.AddCookie(cookie)
+	if _, _, _, ok := a.currentUserTenant(req); ok {
+		t.Fatal("expected inactive user session to be rejected")
+	}
+}
 func TestHomePageRendersHomepageContent(t *testing.T) {
 	a := newTestApp(t)
 	_, _, cookie, _ := adminSession(t, a)
@@ -500,8 +536,11 @@ func TestHomePageRendersHomepageContent(t *testing.T) {
 		t.Fatalf("expected 200 got %d", w.Code)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, "A lighter front door for daily bidding work") || !strings.Contains(body, "Bookmarks") {
+	if !strings.Contains(body, "One home for daily bidding work and operational visibility") || !strings.Contains(body, "Bookmarks") {
 		t.Fatalf("home page missing expected content: %s", body)
+	}
+	if !strings.Contains(body, "Source health") || !strings.Contains(body, "Recent opportunities") {
+		t.Fatalf("home page missing merged dashboard sections: %s", body)
 	}
 }
 
@@ -549,6 +588,55 @@ func TestTendersPageRendersTypedDocumentStatus(t *testing.T) {
 	}
 	if strings.Contains(body, "template:") {
 		t.Fatalf("unexpected template execution error: %s", body)
+	}
+}
+
+func TestTendersPageShowsExplicitBookmarkActionLabels(t *testing.T) {
+	a := newTestApp(t)
+	user, tenant, cookie, _ := adminSession(t, a)
+	_ = a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:        "bookmark-visible",
+		Title:     "Bookmark Visible Tender",
+		Issuer:    "Metro",
+		SourceKey: "treasury",
+		Status:    "open",
+	})
+	_ = a.Store.UpsertBookmark(t.Context(), models.Bookmark{
+		TenantID: tenant.ID,
+		UserID:   user.ID,
+		TenderID: "bookmark-visible",
+		Note:     "track this one",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/tenders", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	if !strings.Contains(body, "Remove bookmark") || !strings.Contains(body, "Update saved note") {
+		t.Fatalf("expected explicit bookmark controls, got %s", body)
+	}
+}
+
+func TestTenderDetailShowsAddBookmarkAction(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := adminSession(t, a)
+	_ = a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:          "detail-bookmark",
+		Title:       "Detail Bookmark Tender",
+		Issuer:      "Metro",
+		SourceKey:   "treasury",
+		Status:      "open",
+		OriginalURL: "https://example.org/tender",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/tenders/detail-bookmark", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	if !strings.Contains(body, "Add bookmark") {
+		t.Fatalf("expected detail page bookmark action, got %s", body)
 	}
 }
 
@@ -628,7 +716,7 @@ func TestRouteAccessibilityAndPageRendering(t *testing.T) {
 	a := newTestApp(t)
 	_, _, viewerCookie, _ := sessionForRole(t, a, models.RoleViewer)
 	routes := map[string]string{
-		"/dashboard":      "Operational metrics for the current workspace",
+		"/dashboard":      "One home for daily bidding work and operational visibility",
 		"/bookmarks":      "Keep active opportunities separate",
 		"/saved-searches": "Reusable market views",
 		"/queue":          "Queue and extraction monitoring",
