@@ -8,43 +8,63 @@
 <div style="margin-top:18px">{{template "flash_messages" .}}</div>
 
 <div class="stack sources-setup-stack" style="margin-top:18px">
-  <section class="card">
-    {{if .CanManageSources}}
-      {{template "card_header" (dict "title" "Add source" "subtitle" "Register a new feed-backed source without editing application code.")}}
-      <div style="margin-top:14px">{{template "create_source_form" .}}</div>
-    {{else}}
-      {{template "card_header" (dict "title" "Source administration" "subtitle" "Only admin-capable roles can add or remove sources.")}}
-      {{template "empty_state" "You can view source health here, but source management controls are reserved for admin-capable roles."}}
-    {{end}}
-  </section>
+  <details class="section-disclosure sources-add-disclosure" open>
+    <summary>
+      <div>
+        <h2 class="card-title">Add source</h2>
+        <p class="section-disclosure-copy">Register a new feed-backed source without editing application code.</p>
+      </div>
+    </summary>
+    <div class="section-disclosure-body">
+      {{if .CanManageSources}}
+        {{template "create_source_form" .}}
+      {{else}}
+        {{template "empty_state" "You can view source health here, but source management controls are reserved for admin-capable roles."}}
+      {{end}}
+    </div>
+  </details>
 
-  <section class="card">
-    {{template "card_header" (dict "title" "Scheduling" "subtitle" "Set the global default interval, pause scheduled checks if needed, and trigger enabled sources manually.")}}
-    {{if .CanManageSources}}
-      <div style="margin-top:14px">{{template "source_schedule_form" .}}</div>
-      <form method="post" action="/sources/check-all" style="margin-top:14px">
-        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <button type="submit">Check all enabled sources now</button>
-      </form>
-    {{else}}
-      <div class="footer-note" style="margin-top:14px">Default interval: every {{.ScheduleSettings.DefaultIntervalMinutes}} minutes</div>
-      <div class="footer-note" style="margin-top:6px">Scheduled checks: {{if .ScheduleSettings.Paused}}Paused{{else}}Active{{end}}</div>
-    {{end}}
-  </section>
+  <details class="section-disclosure sources-scheduling-disclosure">
+    <summary>
+      <div>
+        <h2 class="card-title">Scheduling</h2>
+        <p class="section-disclosure-copy">Set the global default interval, pause scheduled checks if needed, and trigger enabled sources manually.</p>
+      </div>
+    </summary>
+    <div class="section-disclosure-body">
+      {{if .CanManageSources}}
+        {{template "source_schedule_form" .}}
+        <form method="post" action="/sources/check-all" style="margin-top:14px">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <button type="submit">Check all enabled sources now</button>
+        </form>
+      {{else}}
+        <div class="footer-note">Default interval: every {{.ScheduleSettings.DefaultIntervalMinutes}} minutes</div>
+        <div class="footer-note" style="margin-top:6px">Scheduled checks: {{if .ScheduleSettings.Paused}}Paused{{else}}Active{{end}}</div>
+      {{end}}
+    </div>
+  </details>
 </div>
 
-<section class="card" style="margin-top:18px">
-  {{template "card_header" (dict "title" "Source operations" "subtitle" "Run single sources, queue selected checks, or update per-source timing without leaving this page.")}}
-  {{if .CanManageSources}}
-  <form id="bulk-source-check-form" method="post" action="/sources/check-selected" style="margin:14px 0 0">
-    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-  </form>
-  <div class="actions" style="margin-bottom:14px">
-    <button type="submit" form="bulk-source-check-form">Check selected sources</button>
+<details class="section-disclosure sources-ops-disclosure" style="margin-top:18px">
+  <summary>
+    <div>
+      <h2 class="card-title">Source operations</h2>
+      <p class="section-disclosure-copy">Run single sources, queue selected checks, or update per-source timing without leaving this page.</p>
+    </div>
+  </summary>
+  <div class="section-disclosure-body">
+    {{if .CanManageSources}}
+    <form id="bulk-source-check-form" method="post" action="/sources/check-selected" style="margin:0">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    </form>
+    <div class="actions" style="margin-bottom:14px">
+      <button type="submit" form="bulk-source-check-form">Check selected sources</button>
+    </div>
+    {{end}}
+    <div class="table-wrap">{{template "source_config_table_typed" .}}</div>
   </div>
-  {{end}}
-  <div class="table-wrap">{{template "source_config_table_typed" .}}</div>
-</section>
+</details>
 
 <details class="section-disclosure sources-history-disclosure" style="margin-top:18px">
   <summary>

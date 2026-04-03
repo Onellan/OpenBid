@@ -85,6 +85,31 @@
 </table>
 {{end}}
 
+{{define "tenant_form"}}
+<form method="post" action="/admin/tenants/create" class="form-grid">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <label>Tenant name<input name="name" placeholder="Acme Engineering" required></label>
+  <label>Slug<input name="slug" placeholder="acme-engineering" required></label>
+  <div class="footer-note">Use a short lowercase slug with hyphens so the workspace stays easy to identify later.</div>
+  <div class="actions"><button type="submit">Create tenant</button></div>
+</form>
+{{end}}
+
+{{define "tenant_switch_form"}}
+<form method="post" action="/tenant/switch" class="form-grid tenant-switch-panel">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <input type="hidden" name="return_to" value="{{.CurrentPath}}">
+  <label>Available workspaces
+    <select name="tenant_id">
+      {{range .UserTenants}}
+      <option value="{{.Tenant.ID}}" {{if eq $.Tenant.ID .Tenant.ID}}selected{{end}}>{{.Tenant.Name}} · {{.Role}}</option>
+      {{end}}
+    </select>
+  </label>
+  <div class="actions"><button type="submit">Switch workspace</button></div>
+</form>
+{{end}}
+
 {{define "tenant_table_typed"}}
 <table>
   <tr><th>Name</th><th>Slug</th></tr>

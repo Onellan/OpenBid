@@ -3,12 +3,15 @@ services:
   app:
     image: ghcr.io/OWNER/REPO/app:latest
     environment:
+      APP_ENV: "${APP_ENV:-production}"
       APP_ADDR: ":8080"
-      DATA_PATH: "/app/data/store.json"
+      DATA_PATH: "/app/data/store.db"
       SECRET_KEY: "${SECRET_KEY}"
       SECURE_COOKIES: "${SECURE_COOKIES:-false}"
       LOW_MEMORY_MODE: "${LOW_MEMORY_MODE:-true}"
       ANALYTICS_ENABLED: "${ANALYTICS_ENABLED:-false}"
+      BOOTSTRAP_ADMIN_PASSWORD: "${BOOTSTRAP_ADMIN_PASSWORD:-}"
+      BOOTSTRAP_SYNC_ON_STARTUP: "${BOOTSTRAP_SYNC_ON_STARTUP:-false}"
       EXTRACTOR_URL: "http://extractor:9090"
       TREASURY_FEED_URL: "${TREASURY_FEED_URL:-}"
     volumes: ["./data:/app/data"]
@@ -18,10 +21,14 @@ services:
     image: ghcr.io/OWNER/REPO/app:latest
     command: ["tenderhub-worker"]
     environment:
-      DATA_PATH: "/app/data/store.json"
+      APP_ENV: "${APP_ENV:-production}"
+      DATA_PATH: "/app/data/store.db"
       SECRET_KEY: "${SECRET_KEY}"
+      SECURE_COOKIES: "${SECURE_COOKIES:-false}"
       LOW_MEMORY_MODE: "${LOW_MEMORY_MODE:-true}"
       ANALYTICS_ENABLED: "${ANALYTICS_ENABLED:-false}"
+      BOOTSTRAP_ADMIN_PASSWORD: "${BOOTSTRAP_ADMIN_PASSWORD:-}"
+      BOOTSTRAP_SYNC_ON_STARTUP: "${BOOTSTRAP_SYNC_ON_STARTUP:-false}"
       EXTRACTOR_URL: "http://extractor:9090"
       TREASURY_FEED_URL: "${TREASURY_FEED_URL:-}"
       WORKER_SYNC_MINUTES: "${WORKER_SYNC_MINUTES:-360}"

@@ -162,6 +162,22 @@ func TestSwitchTenantRejectsExternalReturnTo(t *testing.T) {
 	}
 }
 
+func TestAdminTenantsPageRendersTenantManagementContent(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := adminSession(t, a)
+	req := httptest.NewRequest(http.MethodGet, "/admin/tenants", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Switch workspace") || !strings.Contains(body, "Create tenant") || !strings.Contains(body, "action=\"/tenant/switch\"") || !strings.Contains(body, "action=\"/admin/tenants/create\"") {
+		t.Fatalf("tenant admin page missing management controls: %s", body)
+	}
+}
+
 func TestRedirectAfterActionRejectsExternalReturnTo(t *testing.T) {
 	a := newTestApp(t)
 	req := httptest.NewRequest(http.MethodPost, "/bookmark", strings.NewReader(url.Values{
@@ -1005,6 +1021,15 @@ func TestSourcesPageReordersSetupAndCollapsesHistory(t *testing.T) {
 	if !strings.Contains(body, "sources-setup-stack") || !strings.Contains(body, "sources-history-disclosure") {
 		t.Fatalf("expected updated sources layout markers, got %s", body)
 	}
+	if !strings.Contains(body, "<details class=\"section-disclosure sources-add-disclosure\" open>") {
+		t.Fatalf("expected add source disclosure open by default, got %s", body)
+	}
+	if !strings.Contains(body, "<details class=\"section-disclosure sources-scheduling-disclosure\">") || strings.Contains(body, "<details class=\"section-disclosure sources-scheduling-disclosure\" open>") {
+		t.Fatalf("expected scheduling disclosure collapsed by default, got %s", body)
+	}
+	if !strings.Contains(body, "sources-ops-disclosure") || strings.Contains(body, "sources-ops-disclosure\" open") {
+		t.Fatalf("expected source operations disclosure collapsed by default, got %s", body)
+	}
 	if strings.Index(body, "Add source") > strings.Index(body, "Scheduling") {
 		t.Fatalf("expected Add source above Scheduling, got %s", body)
 	}
@@ -1016,6 +1041,22 @@ func TestSourcesPageReordersSetupAndCollapsesHistory(t *testing.T) {
 	}
 	if !strings.Contains(body, "source-ops-table") || !strings.Contains(body, "source-inline-controls") {
 		t.Fatalf("expected compact source operations markup, got %s", body)
+	}
+}
+
+func TestSharedHeaderNoLongerRendersTenantSwitch(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := adminSession(t, a)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	body := w.Body.String()
+	if strings.Contains(body, "action=\"/tenant/switch\"") {
+		t.Fatalf("expected tenant switch removed from shared header, got %s", body)
 	}
 }
 func TestRoleBasedNavigationVisibility(t *testing.T) {

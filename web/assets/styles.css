@@ -29,7 +29,7 @@ header{background:rgba(255,255,255,0.96);backdrop-filter:blur(10px);border-botto
 main{padding-bottom:32px}
 .shell{max-width:1280px;margin:0 auto;padding:20px}
 .app-header{padding-top:12px;padding-bottom:12px}
-.app-header-row{display:flex;justify-content:space-between;gap:16px;align-items:center;flex-wrap:wrap}
+.app-header-row{display:flex;justify-content:space-between;gap:16px;align-items:center;flex-wrap:nowrap}
 .brand{display:flex;align-items:center;gap:10px;min-width:0}
 .logo-mark{width:36px;height:36px;border-radius:12px;background:linear-gradient(135deg,var(--color-primary),var(--color-secondary));display:grid;place-items:center;box-shadow:var(--shadow-soft);flex:0 0 auto}
 .logo-mark span{display:block;width:16px;height:16px;border:3px solid #fff;border-right-color:#9CEAE3;border-bottom-color:#9CEAE3;border-radius:999px;transform:rotate(-18deg)}
@@ -40,12 +40,9 @@ main{padding-bottom:32px}
 .workspace-meta{display:grid;gap:4px}
 .workspace-label{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--color-text-muted)}
 .workspace-title{font-size:16px;font-weight:700;line-height:1.2}
-.header-tools{display:grid;gap:8px;justify-items:end;align-items:center}
-.tenant-switch{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.tenant-switch form{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
-.tenant-switch select{width:auto;min-width:220px;max-width:min(42vw,320px);padding:10px 12px}
-.tenant-switch button{min-height:var(--control-height);padding:0 14px}
-.desktop-nav{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:flex-end}
+.header-tools{display:flex;gap:12px;align-items:center;justify-content:flex-end;flex:1 1 auto;min-width:0}
+.tenant-switch-panel{max-width:420px}
+.desktop-nav{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:flex-end;min-width:0}
 .nav-link{padding:8px 11px;border-radius:999px;color:var(--color-text-muted);font-weight:600;font-size:14px;line-height:1.2;border:1px solid transparent}
 .nav-link:hover,.nav-link.active{background:var(--color-primary-soft);border-color:#cfe0f1;color:var(--color-primary)}
 .nav-link.utility{background:#fff;border-color:var(--color-border)}
@@ -145,6 +142,7 @@ main{padding-bottom:32px}
 .toolbar{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}
 .list{display:grid;gap:12px}
 .feature-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
+.tenant-admin-top{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
 .feature-link{display:grid;gap:10px;background:#fff;border:1px solid var(--color-border);border-radius:18px;padding:18px;box-shadow:var(--shadow-soft)}
 .feature-link strong{font-size:18px}
 .health-strip{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(220px,1fr);gap:12px;overflow-x:auto;padding-bottom:4px}
@@ -173,5 +171,5 @@ tr:hover td{background:#FCFEFF}
 hr{border:none;border-top:1px solid var(--color-border);margin:18px 0}
 @media (max-width:1200px){.opportunity-actions{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:1100px){.split,.opportunity-card-layout{grid-template-columns:1fr}.row-4,.compact-field-grid,.source-inline-controls{grid-template-columns:1fr}}
-@media (max-width:900px){.desktop-nav{display:none}.mobile-menu{display:block}.app-header{padding-top:10px;padding-bottom:10px}.header-tools{width:100%;justify-items:stretch}.tenant-switch form{display:grid;justify-content:stretch}.tenant-switch select,.tenant-switch button{width:100%;max-width:none}}
-@media (max-width:700px){.row-4{grid-template-columns:1fr}.shell{padding:16px}.app-header-row{align-items:flex-start}.brand{align-items:flex-start}.page-hero{padding:16px}.page-title{font-size:24px}.section-title{font-size:20px}.card-title{font-size:18px}.workspace-title{font-size:15px}.brand-tag{display:none}}
+@media (max-width:900px){.desktop-nav{display:none}.mobile-menu{display:block}.app-header{padding-top:10px;padding-bottom:10px}.app-header-row{flex-wrap:wrap}.header-tools{width:100%;justify-content:flex-end}}
+@media (max-width:700px){.row-4{grid-template-columns:1fr}.shell{padding:16px}.app-header-row{align-items:flex-start}.header-tools{width:100%;justify-content:flex-start}.brand{align-items:flex-start}.page-hero{padding:16px}.page-title{font-size:24px}.section-title{font-size:20px}.card-title{font-size:18px}.workspace-title{font-size:15px}.brand-tag{display:none}}
