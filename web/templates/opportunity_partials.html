@@ -86,75 +86,86 @@
 {{end}}
 
 {{define "opportunity_action_panel"}}
-<div class="card-soft opportunity-actions">
-  <div class="opportunity-actions-head">
+<details class="section-disclosure opportunity-actions-disclosure">
+  <summary>
     <div>
       <h3 class="opportunity-actions-title">Quick actions</h3>
-      <p class="opportunity-actions-copy">Keep notes, ownership, and source links in one low-profile action bar.</p>
+      <p class="section-disclosure-copy">Collapsed by default so the card stays shorter until you want notes, workflow updates, or source links.</p>
     </div>
     <div class="opportunity-status-row">
       {{if index .Root.Bookmarked .Item.ID}}{{template "status_badge" (dict "tone" "success" "label" "Bookmarked")}}{{end}}
-      {{with index .Root.Workflows .Item.ID}}{{if .AssignedUser}}{{template "status_badge" (dict "tone" "info" "label" (printf "Owner %s" .AssignedUser))}}{{end}}{{end}}
+      {{with index .Root.Workflows .Item.ID}}{{if .Status}}{{template "status_badge" (dict "tone" "info" "label" (printf "Workflow %s" .Status))}}{{end}}{{if .AssignedUser}}{{template "status_badge" (dict "tone" "info" "label" (printf "Owner %s" .AssignedUser))}}{{end}}{{end}}
+      <span class="badge warning">Hidden by default</span>
     </div>
-    <div class="actions compact-actions">
-      {{if index .Root.Bookmarked .Item.ID}}
-      <form method="post" action="/tenders/bookmark/remove">
-        <input type="hidden" name="csrf_token" value="{{$.Root.CSRFToken}}">
-        <input type="hidden" name="return_to" value="{{$.Root.ReturnTo}}">
-        <input type="hidden" name="tender_id" value="{{$.Item.ID}}">
-        <button type="submit">Remove bookmark</button>
-      </form>
-      {{else}}
-      <form method="post" action="/tenders/bookmark">
-        <input type="hidden" name="csrf_token" value="{{$.Root.CSRFToken}}">
-        <input type="hidden" name="return_to" value="{{$.Root.ReturnTo}}">
-        <input type="hidden" name="tender_id" value="{{$.Item.ID}}">
-        <button type="submit">Add bookmark</button>
-      </form>
-      {{end}}
-    </div>
-  </div>
-
-  <div class="opportunity-action-block">
-    <div class="opportunity-action-label">Saved view</div>
-    <form method="post" action="/tenders/bookmark" class="form-grid">
-      <input type="hidden" name="csrf_token" value="{{.Root.CSRFToken}}"><input type="hidden" name="return_to" value="{{.Root.ReturnTo}}">
-      <input type="hidden" name="tender_id" value="{{.Item.ID}}">
-      <label>Saved note<textarea class="saved-note" name="note" placeholder="Why this opportunity matters">{{with index .Root.Bookmarks .Item.ID}}{{.Note}}{{end}}</textarea></label>
-      <div class="actions compact-actions"><button type="submit">{{if index .Root.Bookmarked .Item.ID}}Update saved note{{else}}Save bookmark with note{{end}}</button></div>
-    </form>
-  </div>
-
-  <div class="opportunity-action-block">
-    <div class="opportunity-action-label">Workflow</div>
-    <form method="post" action="/tenders/workflow" class="form-grid">
-      <input type="hidden" name="csrf_token" value="{{.Root.CSRFToken}}"><input type="hidden" name="return_to" value="{{.Root.ReturnTo}}">
-      <input type="hidden" name="tender_id" value="{{.Item.ID}}">
-      <div class="compact-field-grid">
-        <label>Status<input name="status" value="{{with index .Root.Workflows .Item.ID}}{{.Status}}{{end}}" placeholder="reviewing"></label>
-        <label>Priority<input name="priority" value="{{with index .Root.Workflows .Item.ID}}{{.Priority}}{{end}}" placeholder="high"></label>
-        <label>Assigned user<input name="assigned_user" value="{{with index .Root.Workflows .Item.ID}}{{.AssignedUser}}{{end}}" placeholder="owner or reviewer"></label>
-        <label class="full">Notes<textarea name="notes" placeholder="Next step, blocker, or decision">{{with index .Root.Workflows .Item.ID}}{{.Notes}}{{end}}</textarea></label>
+  </summary>
+  <div class="section-disclosure-body">
+    <div class="card-soft opportunity-actions">
+      <div class="opportunity-actions-head">
+        <div>
+          <h3 class="opportunity-actions-title">Quick actions</h3>
+          <p class="opportunity-actions-copy">Keep notes, ownership, and source links in one low-profile action bar.</p>
+        </div>
+        <div class="actions compact-actions">
+          {{if index .Root.Bookmarked .Item.ID}}
+          <form method="post" action="/tenders/bookmark/remove">
+            <input type="hidden" name="csrf_token" value="{{$.Root.CSRFToken}}">
+            <input type="hidden" name="return_to" value="{{$.Root.ReturnTo}}">
+            <input type="hidden" name="tender_id" value="{{$.Item.ID}}">
+            <button type="submit">Remove bookmark</button>
+          </form>
+          {{else}}
+          <form method="post" action="/tenders/bookmark">
+            <input type="hidden" name="csrf_token" value="{{$.Root.CSRFToken}}">
+            <input type="hidden" name="return_to" value="{{$.Root.ReturnTo}}">
+            <input type="hidden" name="tender_id" value="{{$.Item.ID}}">
+            <button type="submit">Add bookmark</button>
+          </form>
+          {{end}}
+        </div>
       </div>
-      <div class="actions compact-actions">
-        <button type="submit">Update workflow</button>
-        {{if .Item.DocumentURL}}
-        <button type="submit" formaction="/tenders/queue">Queue extraction</button>
-        {{end}}
-      </div>
-    </form>
-  </div>
 
-  <div class="opportunity-action-block opportunity-action-utility">
-    <div class="opportunity-action-label">Open and manage</div>
-    <div class="action-link-stack">
-      <a class="button secondary" href="/tenders/{{.Item.ID}}">Details</a>
-      <a class="button secondary" href="{{.Item.OriginalURL}}" target="_blank" rel="noreferrer">View source</a>
-      {{if .Item.DocumentURL}}<a class="button secondary" href="{{.Item.DocumentURL}}" target="_blank" rel="noreferrer">View document</a>{{end}}
+      <div class="opportunity-action-block">
+        <div class="opportunity-action-label">Saved view</div>
+        <form method="post" action="/tenders/bookmark" class="form-grid">
+          <input type="hidden" name="csrf_token" value="{{.Root.CSRFToken}}"><input type="hidden" name="return_to" value="{{.Root.ReturnTo}}">
+          <input type="hidden" name="tender_id" value="{{.Item.ID}}">
+          <label>Saved note<textarea class="saved-note" name="note" placeholder="Why this opportunity matters">{{with index .Root.Bookmarks .Item.ID}}{{.Note}}{{end}}</textarea></label>
+          <div class="actions compact-actions"><button type="submit">{{if index .Root.Bookmarked .Item.ID}}Update saved note{{else}}Save bookmark with note{{end}}</button></div>
+        </form>
+      </div>
+
+      <div class="opportunity-action-block">
+        <div class="opportunity-action-label">Workflow</div>
+        <form method="post" action="/tenders/workflow" class="form-grid">
+          <input type="hidden" name="csrf_token" value="{{.Root.CSRFToken}}"><input type="hidden" name="return_to" value="{{.Root.ReturnTo}}">
+          <input type="hidden" name="tender_id" value="{{.Item.ID}}">
+          <div class="compact-field-grid">
+            <label>Status<input name="status" value="{{with index .Root.Workflows .Item.ID}}{{.Status}}{{end}}" placeholder="reviewing"></label>
+            <label>Priority<input name="priority" value="{{with index .Root.Workflows .Item.ID}}{{.Priority}}{{end}}" placeholder="high"></label>
+            <label>Assigned user<input name="assigned_user" value="{{with index .Root.Workflows .Item.ID}}{{.AssignedUser}}{{end}}" placeholder="owner or reviewer"></label>
+            <label class="full">Notes<textarea name="notes" placeholder="Next step, blocker, or decision">{{with index .Root.Workflows .Item.ID}}{{.Notes}}{{end}}</textarea></label>
+          </div>
+          <div class="actions compact-actions">
+            <button type="submit">Update workflow</button>
+            {{if .Item.DocumentURL}}
+            <button type="submit" formaction="/tenders/queue">Queue extraction</button>
+            {{end}}
+          </div>
+        </form>
+      </div>
+
+      <div class="opportunity-action-block opportunity-action-utility">
+        <div class="opportunity-action-label">Open and manage</div>
+        <div class="action-link-stack">
+          <a class="button secondary" href="/tenders/{{.Item.ID}}">Details</a>
+          <a class="button secondary" href="{{.Item.OriginalURL}}" target="_blank" rel="noreferrer">View source</a>
+          {{if .Item.DocumentURL}}<a class="button secondary" href="{{.Item.DocumentURL}}" target="_blank" rel="noreferrer">View document</a>{{end}}
+        </div>
+        {{template "opportunity_danger_zone" .}}
+      </div>
     </div>
-    {{template "opportunity_danger_zone" .}}
   </div>
-</div>
+</details>
 {{end}}
 
 {{define "opportunity_danger_zone"}}

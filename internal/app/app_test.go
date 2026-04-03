@@ -658,6 +658,40 @@ func TestTendersPageRendersTendersContent(t *testing.T) {
 	}
 }
 
+func TestTendersPageUsesExpectedDisclosureDefaults(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := adminSession(t, a)
+	_ = a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:        "disclosure-tender",
+		Title:     "Disclosure Tender",
+		Issuer:    "Metro",
+		SourceKey: "treasury",
+		Status:    "open",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/tenders", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "<details class=\"section-disclosure tenders-filters-disclosure\" open>") {
+		t.Fatalf("expected expanded filters disclosure, got %s", body)
+	}
+	if !strings.Contains(body, "<details class=\"section-disclosure tenders-bulk-disclosure\">") {
+		t.Fatalf("expected collapsed bulk disclosure, got %s", body)
+	}
+	if !strings.Contains(body, "<details class=\"section-disclosure opportunity-actions-disclosure\">") {
+		t.Fatalf("expected collapsed opportunity quick actions disclosure, got %s", body)
+	}
+	bulkIndex := strings.Index(body, "tenders-bulk-disclosure")
+	filterIndex := strings.Index(body, "tenders-filters-disclosure")
+	if filterIndex == -1 || bulkIndex == -1 || bulkIndex < filterIndex {
+		t.Fatalf("expected filters before bulk actions, got %s", body)
+	}
+}
+
 func TestTendersPageRendersTypedDocumentStatus(t *testing.T) {
 	a := newTestApp(t)
 	_, _, cookie, _ := adminSession(t, a)
