@@ -2,8 +2,10 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"tenderhub-za/internal/models"
 	"tenderhub-za/internal/store"
@@ -72,6 +74,101 @@ func TestTenderDetailAndAuditLogPages(t *testing.T) {
 	a.AuditLogPage(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 got %d", w.Code)
+	}
+}
+
+func TestAuditLogPageIsTenantScopedPaginatedAndExpandedByDefault(t *testing.T) {
+	a := newTestApp(t)
+	user, tenant, cookie, _ := adminSession(t, a)
+	ctx := context.Background()
+	if err := a.Store.UpsertTenant(ctx, models.Tenant{Name: "Other Workspace", Slug: "other-workspace"}); err != nil {
+		t.Fatal(err)
+	}
+	tenants, err := a.Store.ListTenants(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherTenantID := ""
+	for _, item := range tenants {
+		if item.ID != tenant.ID && item.Slug == "other-workspace" {
+			otherTenantID = item.ID
+		}
+	}
+	if otherTenantID == "" {
+		t.Fatal("expected other tenant to be created")
+	}
+	for i := 0; i < 25; i++ {
+		if err := a.Store.AddAuditEntry(ctx, models.AuditEntry{
+			TenantID: tenant.ID,
+			UserID:   user.ID,
+			Action:   "update",
+			Entity:   "workflow",
+			EntityID: strconv.Itoa(i),
+			Summary:  fmt.Sprintf("tenant-entry-%02d", i),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := a.Store.AddAuditEntry(ctx, models.AuditEntry{
+		TenantID: otherTenantID,
+		UserID:   user.ID,
+		Action:   "delete",
+		Entity:   "workflow",
+		EntityID: "other",
+		Summary:  "other-tenant-entry",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/audit-log?page=2", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "25 total entries") {
+		t.Fatalf("expected tenant-scoped total count, got %s", body)
+	}
+	if !strings.Contains(body, "Page 2 of 2") {
+		t.Fatalf("expected pagination controls, got %s", body)
+	}
+	if !strings.Contains(body, "<details class=\"section-disclosure audit-log-disclosure\" open") {
+		t.Fatalf("expected audit log disclosure open by default, got %s", body)
+	}
+	if strings.Contains(body, "other-tenant-entry") {
+		t.Fatalf("expected other tenant entries to be hidden, got %s", body)
+	}
+}
+
+func TestHealthPageShowsOperationalCardsForAdmins(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := adminSession(t, a)
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Platform health") || !strings.Contains(body, "Worker pipeline") || !strings.Contains(body, "Database") {
+		t.Fatalf("expected health page content, got %s", body)
+	}
+}
+
+func TestHealthPageIsForbiddenForViewer(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := sessionForRole(t, a, models.RoleViewer)
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 got %d", w.Code)
 	}
 }
 

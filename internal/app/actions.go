@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -88,7 +89,7 @@ func (a *App) auditAction(ctx context.Context, ac actionContext, action, entity,
 	if ac.Tenant.ID == "" {
 		return
 	}
-	_ = a.Store.AddAuditEntry(ctx, models.AuditEntry{
+	if err := a.Store.AddAuditEntry(ctx, models.AuditEntry{
 		TenantID: ac.Tenant.ID,
 		UserID:   ac.User.ID,
 		Action:   action,
@@ -96,14 +97,16 @@ func (a *App) auditAction(ctx context.Context, ac actionContext, action, entity,
 		EntityID: entityID,
 		Summary:  summary,
 		Metadata: metadata,
-	})
+	}); err != nil {
+		log.Printf("audit write failed for tenant=%s entity=%s id=%s: %v", ac.Tenant.ID, entity, entityID, err)
+	}
 }
 
 func (a *App) addWorkflowSnapshot(ctx context.Context, ac actionContext, wf models.Workflow) {
 	if ac.Tenant.ID == "" || wf.TenderID == "" {
 		return
 	}
-	_ = a.Store.AddWorkflowEvent(ctx, models.WorkflowEvent{
+	if err := a.Store.AddWorkflowEvent(ctx, models.WorkflowEvent{
 		TenantID:     ac.Tenant.ID,
 		TenderID:     wf.TenderID,
 		ChangedBy:    ac.User.ID,
@@ -111,5 +114,7 @@ func (a *App) addWorkflowSnapshot(ctx context.Context, ac actionContext, wf mode
 		Priority:     wf.Priority,
 		AssignedUser: wf.AssignedUser,
 		Notes:        wf.Notes,
-	})
+	}); err != nil {
+		log.Printf("workflow snapshot write failed for tenant=%s tender=%s: %v", ac.Tenant.ID, wf.TenderID, err)
+	}
 }

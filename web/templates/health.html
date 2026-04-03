@@ -1,0 +1,57 @@
+{{define "health.html"}}{{template "base" .}}{{end}}{{define "content"}}
+{{template "page_hero" (dict
+  "eyebrow" "Operations"
+  "title" "Platform health"
+  "copy" "Inspect application runtime, database integrity, worker freshness, queue pressure, and extractor reachability from one operations view."
+)}}
+
+<section class="cards" style="margin-top:18px">
+  {{range .HealthCards}}
+  <div class="card">
+    <div class="toolbar">
+      <div>
+        <h2 class="card-title">{{.Name}}</h2>
+        <p class="card-subtitle">{{.Summary}}</p>
+      </div>
+      {{template "status_badge" (dict "tone" .Tone "label" .Tone)}}
+    </div>
+    <div class="list" style="margin-top:14px">
+      {{range .Details}}
+      <div class="card-soft">
+        <strong>{{.Label}}</strong>
+        <div class="footer-note" style="margin-top:6px">{{.Value}}</div>
+      </div>
+      {{end}}
+    </div>
+  </div>
+  {{end}}
+</section>
+
+<div class="split" style="margin-top:18px">
+  <section class="card">
+    {{template "card_header" (dict "title" "Queue pressure" "subtitle" "Current document extraction load across queue states.")}}
+    <div class="cards" style="margin-top:14px">
+      {{range .QueueMetrics}}
+      <div class="card-soft">
+        {{template "status_badge" (dict "tone" .Tone "label" .Label)}}
+        <div class="metric" style="font-size:28px;margin-top:10px">{{.Count}}</div>
+      </div>
+      {{else}}
+      {{template "empty_state" "Queue metrics are unavailable right now."}}
+      {{end}}
+    </div>
+  </section>
+
+  <section class="card">
+    {{template "card_header" (dict "title" "Source status mix" "subtitle" "Aggregate health view across configured source adapters.")}}
+    <div class="list" style="margin-top:14px">
+      {{range .SourceSummary}}
+      <div class="card-soft">
+        <strong>{{.Label}}</strong>
+        <div class="footer-note" style="margin-top:6px">{{.Value}}</div>
+      </div>
+      {{end}}
+    </div>
+  </section>
+</div>
+{{end}}

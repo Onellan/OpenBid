@@ -79,6 +79,10 @@ func cloneURLValues(values url.Values) url.Values {
 }
 
 func queuePageLink(values url.Values, param string, page int) string {
+	return queryPageLink("/queue", values, param, page)
+}
+
+func queryPageLink(path string, values url.Values, param string, page int) string {
 	if page < 1 {
 		page = 1
 	}
@@ -86,9 +90,9 @@ func queuePageLink(values url.Values, param string, page int) string {
 	query.Set(param, strconv.Itoa(page))
 	encoded := query.Encode()
 	if encoded == "" {
-		return "/queue"
+		return path
 	}
-	return "/queue?" + encoded
+	return path + "?" + encoded
 }
 
 func buildQueueSection(key, title, tone string, items []QueueItem, query url.Values, open bool) QueueSection {
@@ -394,7 +398,10 @@ func (a *App) ToggleBookmark(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", 303)
 		return
 	}
-	_ = a.Store.UpsertBookmark(r.Context(), models.Bookmark{TenantID: t.ID, UserID: u.ID, TenderID: r.FormValue("tender_id"), Note: r.FormValue("note")})
+	if err := a.Store.UpsertBookmark(r.Context(), models.Bookmark{TenantID: t.ID, UserID: u.ID, TenderID: r.FormValue("tender_id"), Note: r.FormValue("note")}); err != nil {
+		a.serverError(w, r, "unable to save bookmark", err)
+		return
+	}
 	a.auditAction(r.Context(), actionContext{User: u, Tenant: t}, "update", "bookmark", r.FormValue("tender_id"), "Bookmark saved", map[string]string{"note": r.FormValue("note")})
 	a.redirectAfterAction(w, r, "/tenders", "success", "Bookmark saved")
 }
@@ -415,7 +422,10 @@ func (a *App) UpdateWorkflow(w http.ResponseWriter, r *http.Request) {
 	}
 	u, _, _, _ := a.currentUserTenant(r)
 	workflow := models.Workflow{TenantID: t.ID, TenderID: r.FormValue("tender_id"), Status: r.FormValue("status"), Priority: r.FormValue("priority"), AssignedUser: r.FormValue("assigned_user"), Notes: r.FormValue("notes")}
-	_ = a.Store.UpsertWorkflow(r.Context(), workflow)
+	if err := a.Store.UpsertWorkflow(r.Context(), workflow); err != nil {
+		a.serverError(w, r, "unable to update workflow", err)
+		return
+	}
 	ac := actionContext{User: u, Tenant: t, Member: m}
 	a.addWorkflowSnapshot(r.Context(), ac, workflow)
 	a.auditAction(r.Context(), ac, "update", "workflow", workflow.TenderID, "Workflow updated", map[string]string{"status": workflow.Status, "priority": workflow.Priority})
@@ -446,8 +456,14 @@ func (a *App) QueueExtraction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tender.DocumentStatus = models.ExtractionQueued
-	_ = a.Store.UpsertTender(r.Context(), tender)
-	_ = a.Store.QueueJob(r.Context(), models.ExtractionJob{TenderID: tender.ID, DocumentURL: tender.DocumentURL, State: models.ExtractionQueued})
+	if err := a.Store.UpsertTender(r.Context(), tender); err != nil {
+		a.serverError(w, r, "unable to update tender status", err)
+		return
+	}
+	if err := a.Store.QueueJob(r.Context(), models.ExtractionJob{TenderID: tender.ID, DocumentURL: tender.DocumentURL, State: models.ExtractionQueued}); err != nil {
+		a.serverError(w, r, "unable to queue extraction", err)
+		return
+	}
 	ac := actionContext{Tenant: t, Member: m}
 	if u, _, _, ok := a.currentUserTenant(r); ok {
 		ac.User = u
@@ -471,7 +487,10 @@ func (a *App) SavedSearches(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	_ = a.Store.UpsertSavedSearch(r.Context(), models.SavedSearch{ID: r.FormValue("id"), TenantID: t.ID, UserID: u.ID, Name: r.FormValue("name"), Query: r.FormValue("query"), Filters: r.FormValue("filters")})
+	if err := a.Store.UpsertSavedSearch(r.Context(), models.SavedSearch{ID: r.FormValue("id"), TenantID: t.ID, UserID: u.ID, Name: r.FormValue("name"), Query: r.FormValue("query"), Filters: r.FormValue("filters")}); err != nil {
+		a.serverError(w, r, "unable to save saved search", err)
+		return
+	}
 	a.auditAction(r.Context(), actionContext{User: u, Tenant: t}, "create", "saved_search", "", "Saved search saved", map[string]string{"name": r.FormValue("name")})
 	a.redirectAfterAction(w, r, "/saved-searches", "success", "Saved search saved")
 }
@@ -486,7 +505,10 @@ func (a *App) DeleteSavedSearch(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", 303)
 		return
 	}
-	_ = a.Store.DeleteSavedSearch(r.Context(), t.ID, u.ID, r.FormValue("id"))
+	if err := a.Store.DeleteSavedSearch(r.Context(), t.ID, u.ID, r.FormValue("id")); err != nil {
+		a.serverError(w, r, "unable to delete saved search", err)
+		return
+	}
 	a.auditAction(r.Context(), actionContext{User: u, Tenant: t}, "delete", "saved_search", r.FormValue("id"), "Saved search deleted", nil)
 	a.redirectAfterAction(w, r, "/saved-searches", "success", "Saved search deleted")
 }
@@ -587,8 +609,50 @@ func (a *App) AuditLogPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	items, _ := a.Store.ListAuditEntries(r.Context(), t.ID)
-	a.render(w, r, "audit_log.html", map[string]any{"Title": "Audit log", "User": u, "Tenant": t, "Items": items})
+	items, err := a.Store.ListAuditEntries(r.Context(), t.ID)
+	if err != nil {
+		a.serverError(w, r, "unable to load audit entries", err)
+		return
+	}
+	pageSize := 20
+	currentPage := atoi(r.URL.Query().Get("page"), 1)
+	if currentPage < 1 {
+		currentPage = 1
+	}
+	total := len(items)
+	totalPages := total / pageSize
+	if total%pageSize != 0 {
+		totalPages++
+	}
+	if totalPages == 0 {
+		totalPages = 1
+	}
+	if currentPage > totalPages {
+		currentPage = totalPages
+	}
+	start := (currentPage - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	pageItems := items[start:end]
+	query := r.URL.Query()
+	a.render(w, r, "audit_log.html", map[string]any{
+		"Title":       "Audit log",
+		"User":        u,
+		"Tenant":      t,
+		"Items":       pageItems,
+		"EntryCount":  total,
+		"CurrentPage": currentPage,
+		"TotalPages":  totalPages,
+		"HasPrevPage": currentPage > 1,
+		"HasNextPage": currentPage < totalPages,
+		"PrevPageURL": queryPageLink("/audit-log", query, "page", currentPage-1),
+		"NextPageURL": queryPageLink("/audit-log", query, "page", currentPage+1),
+	})
 }
 
 func (a *App) QueuePage(w http.ResponseWriter, r *http.Request) {
@@ -655,8 +719,14 @@ func (a *App) QueueRequeue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tender.DocumentStatus = models.ExtractionQueued
-	_ = a.Store.UpsertTender(r.Context(), tender)
-	_ = a.Store.QueueJob(r.Context(), models.ExtractionJob{TenderID: tender.ID, DocumentURL: tender.DocumentURL, State: models.ExtractionQueued})
+	if err := a.Store.UpsertTender(r.Context(), tender); err != nil {
+		a.serverError(w, r, "unable to update tender status", err)
+		return
+	}
+	if err := a.Store.QueueJob(r.Context(), models.ExtractionJob{TenderID: tender.ID, DocumentURL: tender.DocumentURL, State: models.ExtractionQueued}); err != nil {
+		a.serverError(w, r, "unable to requeue extraction", err)
+		return
+	}
 	a.redirectAfterAction(w, r, "/queue", "success", "Job requeued")
 }
 
@@ -678,7 +748,10 @@ func (a *App) ResetWorkflow(w http.ResponseWriter, r *http.Request) {
 		TenantID: t.ID, TenderID: r.FormValue("tender_id"),
 		Status: "", Priority: "", AssignedUser: "", Notes: "",
 	}
-	_ = a.Store.UpsertWorkflow(r.Context(), workflow)
+	if err := a.Store.UpsertWorkflow(r.Context(), workflow); err != nil {
+		a.serverError(w, r, "unable to reset workflow", err)
+		return
+	}
 	a.addWorkflowSnapshot(r.Context(), actionContext{Tenant: t, Member: m}, workflow)
 	a.redirectAfterAction(w, r, "/tenders", "success", "Workflow reset")
 }
@@ -693,6 +766,9 @@ func (a *App) RemoveBookmark(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", 303)
 		return
 	}
-	_ = a.Store.DeleteBookmark(r.Context(), t.ID, u.ID, r.FormValue("tender_id"))
+	if err := a.Store.DeleteBookmark(r.Context(), t.ID, u.ID, r.FormValue("tender_id")); err != nil {
+		a.serverError(w, r, "unable to remove bookmark", err)
+		return
+	}
 	a.redirectAfterAction(w, r, "/tenders", "success", "Bookmark removed")
 }

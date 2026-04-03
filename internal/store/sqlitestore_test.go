@@ -54,6 +54,45 @@ func TestSQLiteMigrationAndRuntimeValidation(t *testing.T) {
 	}
 }
 
+func TestSQLiteRuntimeStatsReportsSchemaAndCounts(t *testing.T) {
+	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+
+	if err := s.UpsertTenant(ctx, models.Tenant{ID: "tenant-1", Name: "Tenant One", Slug: "tenant-one"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertUser(ctx, models.User{ID: "user-1", Username: "admin", IsActive: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertMembership(ctx, models.Membership{UserID: "user-1", TenantID: "tenant-1", Role: models.RoleAdmin}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertTender(ctx, models.Tender{ID: "tender-1", Title: "Civil works", Issuer: "Metro", SourceKey: "treasury", Status: "open"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddAuditEntry(ctx, models.AuditEntry{TenantID: "tenant-1", UserID: "user-1", Action: "create", Entity: "tender", EntityID: "tender-1", Summary: "Created tender"}); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := s.RuntimeStats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.SchemaVersion != currentSchemaVersion || stats.ExpectedSchemaVersion != currentSchemaVersion {
+		t.Fatalf("unexpected schema stats: %#v", stats)
+	}
+	if stats.QuickCheck == "" || stats.JournalMode == "" {
+		t.Fatalf("expected runtime health details, got %#v", stats)
+	}
+	if stats.TenantCount != 1 || stats.UserCount != 1 || stats.MembershipCount != 1 || stats.TenderCount != 1 || stats.AuditCount != 1 {
+		t.Fatalf("expected persisted counts, got %#v", stats)
+	}
+}
+
 func TestSQLiteQueueWritesDeduplicate(t *testing.T) {
 	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {

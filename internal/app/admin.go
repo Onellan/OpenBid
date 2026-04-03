@@ -62,15 +62,64 @@ func (a *App) AdminCreateUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	if err := auth.StrongEnoughPassword(r.FormValue("password")); err != nil {
+	username := normalizeUsername(r.FormValue("username"))
+	displayName := strings.TrimSpace(r.FormValue("display_name"))
+	email := normalizeEmail(r.FormValue("email"))
+	password := r.FormValue("password")
+	tenantID := strings.TrimSpace(r.FormValue("tenant_id"))
+	role := models.Role(strings.TrimSpace(r.FormValue("role")))
+	responsibilities := strings.TrimSpace(r.FormValue("responsibilities"))
+	if username == "" || displayName == "" || email == "" || tenantID == "" {
+		http.Error(w, "username, display name, email, and tenant are required", 400)
+		return
+	}
+	if !validEmailAddress(email) {
+		http.Error(w, "invalid email address", 400)
+		return
+	}
+	if !isValidRole(role) {
+		http.Error(w, "invalid role", 400)
+		return
+	}
+	if _, err := a.Store.GetTenant(r.Context(), tenantID); err != nil {
+		a.notFound(w, r, "tenant not found", err)
+		return
+	}
+	users, err := a.Store.ListUsers(r.Context())
+	if err != nil {
+		a.serverError(w, r, "unable to list users", err)
+		return
+	}
+	if hasUserWithUsername(users, username) {
+		http.Error(w, "username already exists", 409)
+		return
+	}
+	if hasUserWithEmail(users, email) {
+		http.Error(w, "email already exists", 409)
+		return
+	}
+	if err := auth.StrongEnoughPassword(password); err != nil {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	salt, hash, _ := auth.HashPassword(r.FormValue("password"))
-	_ = a.Store.UpsertUser(r.Context(), models.User{Username: r.FormValue("username"), DisplayName: r.FormValue("display_name"), Email: r.FormValue("email"), PasswordSalt: salt, PasswordHash: hash, IsActive: true})
-	users, _ := a.Store.ListUsers(r.Context())
-	user := users[len(users)-1]
-	_ = a.Store.UpsertMembership(r.Context(), models.Membership{UserID: user.ID, TenantID: r.FormValue("tenant_id"), Role: models.Role(r.FormValue("role")), Responsibilities: r.FormValue("responsibilities")})
+	salt, hash, err := auth.HashPassword(password)
+	if err != nil {
+		a.serverError(w, r, "unable to hash password", err)
+		return
+	}
+	if err := a.Store.UpsertUser(r.Context(), models.User{Username: username, DisplayName: displayName, Email: email, PasswordSalt: salt, PasswordHash: hash, IsActive: true}); err != nil {
+		a.serverError(w, r, "unable to save user", err)
+		return
+	}
+	user, err := a.Store.GetUserByUsername(r.Context(), username)
+	if err != nil {
+		a.serverError(w, r, "unable to load created user", err)
+		return
+	}
+	if err := a.Store.UpsertMembership(r.Context(), models.Membership{UserID: user.ID, TenantID: tenantID, Role: role, Responsibilities: responsibilities}); err != nil {
+		a.serverError(w, r, "unable to save membership", err)
+		return
+	}
 	http.Redirect(w, r, "/admin/users", 303)
 }
 
@@ -102,7 +151,29 @@ func (a *App) AdminCreateTenant(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	_ = a.Store.UpsertTenant(r.Context(), models.Tenant{Name: r.FormValue("name"), Slug: r.FormValue("slug")})
+	name := strings.TrimSpace(r.FormValue("name"))
+	slug := normalizeTenantSlug(r.FormValue("slug"), name)
+	if name == "" {
+		http.Error(w, "tenant name is required", 400)
+		return
+	}
+	if slug == "" {
+		http.Error(w, "tenant slug is required", 400)
+		return
+	}
+	tenants, err := a.Store.ListTenants(r.Context())
+	if err != nil {
+		a.serverError(w, r, "unable to list tenants", err)
+		return
+	}
+	if hasTenantWithSlug(tenants, slug) {
+		http.Error(w, "tenant slug already exists", 409)
+		return
+	}
+	if err := a.Store.UpsertTenant(r.Context(), models.Tenant{Name: name, Slug: slug}); err != nil {
+		a.serverError(w, r, "unable to save tenant", err)
+		return
+	}
 	http.Redirect(w, r, "/admin/tenants", 303)
 }
 
@@ -205,14 +276,17 @@ func (a *App) AdminCreateSource(w http.ResponseWriter, r *http.Request) {
 	}
 	settings := a.loadSourceScheduleSettings(r.Context())
 	now := time.Now().UTC()
-	_ = a.Store.UpsertSourceHealth(r.Context(), models.SourceHealth{
+	if err := a.Store.UpsertSourceHealth(r.Context(), models.SourceHealth{
 		SourceKey:            key,
 		LastStatus:           "configured",
 		LastMessage:          "Waiting for the next source check.",
 		LastItemCount:        0,
 		NextScheduledCheckAt: source.InitialNextCheckAt(now, cfg, settings),
 		HealthStatus:         source.ComputeHealthStatus(cfg, settings, models.SourceHealth{}),
-	})
+	}); err != nil {
+		a.serverError(w, r, "unable to initialize source health", err)
+		return
+	}
 	a.auditAction(r.Context(), actionContext{User: u, Tenant: t, Member: m}, "create", "source", key, "Source added", map[string]string{"name": name, "type": sourceType})
 	a.redirectAfterAction(w, r, "/sources", "success", "Source added")
 }
@@ -298,8 +372,14 @@ func (a *App) AdminDeleteSource(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing source details", 400)
 		return
 	}
-	_ = a.Store.DeleteSourceConfig(r.Context(), id)
-	_ = a.Store.DeleteSourceHealth(r.Context(), key)
+	if err := a.Store.DeleteSourceConfig(r.Context(), id); err != nil {
+		a.serverError(w, r, "unable to remove source configuration", err)
+		return
+	}
+	if err := a.Store.DeleteSourceHealth(r.Context(), key); err != nil {
+		a.serverError(w, r, "unable to remove source health", err)
+		return
+	}
 	a.auditAction(r.Context(), actionContext{User: u, Tenant: t, Member: m}, "delete", "source", key, "Source removed", nil)
 	a.redirectAfterAction(w, r, "/sources", "success", "Source removed")
 }
@@ -332,7 +412,10 @@ func (a *App) AdminUpdateSourceSchedule(w http.ResponseWriter, r *http.Request) 
 		a.serverError(w, r, "unable to save source schedule", err)
 		return
 	}
-	_ = a.recalculateSourceSchedules(r.Context(), time.Now().UTC())
+	if err := a.recalculateSourceSchedules(r.Context(), time.Now().UTC()); err != nil {
+		a.serverError(w, r, "unable to recalculate source schedules", err)
+		return
+	}
 	a.auditAction(r.Context(), actionContext{User: u, Tenant: t, Member: m}, "update", "source_schedule", "global", "Global source schedule updated", map[string]string{
 		"default_interval_minutes": strconv.Itoa(interval),
 		"paused":                   strconv.FormatBool(settings.Paused),
@@ -345,7 +428,10 @@ func (a *App) AdminTriggerSourceCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) AdminTriggerSelectedSourceChecks(w http.ResponseWriter, r *http.Request) {
-	_ = r.ParseForm()
+	if err := r.ParseForm(); err != nil {
+		a.badRequest(w, r, "invalid form submission", err)
+		return
+	}
 	a.triggerSourceChecks(w, r, r.Form["source_keys"], "Selected source checks queued")
 }
 
@@ -479,12 +565,20 @@ func (a *App) SwitchTenant(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", 303)
 		return
 	}
-	if _, err := a.Store.GetMembership(r.Context(), session.UserID, r.FormValue("tenant_id")); err != nil {
+	tenantID := strings.TrimSpace(r.FormValue("tenant_id"))
+	if tenantID == "" {
+		http.Error(w, "missing tenant id", 400)
+		return
+	}
+	if _, err := a.Store.GetMembership(r.Context(), session.UserID, tenantID); err != nil {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	session.TenantID = r.FormValue("tenant_id")
-	_ = auth.SetSessionCookie(w, a.Config.SecretKey, session, a.Config.SecureCookies)
+	session.TenantID = tenantID
+	if err := auth.SetSessionCookie(w, a.Config.SecretKey, session, a.Config.SecureCookies); err != nil {
+		a.serverError(w, r, "unable to update session", err)
+		return
+	}
 	http.Redirect(w, r, safeReturnTarget(r.FormValue("return_to"), "/").String(), 303)
 }
 
@@ -508,7 +602,10 @@ func (a *App) AdminToggleUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user.IsActive = !user.IsActive
-	_ = a.Store.UpsertUser(r.Context(), user)
+	if err := a.Store.UpsertUser(r.Context(), user); err != nil {
+		a.serverError(w, r, "unable to update user", err)
+		return
+	}
 	http.Redirect(w, r, "/admin/users", 303)
 }
 
@@ -539,10 +636,17 @@ func (a *App) AdminResetPassword(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	salt, hash, _ := auth.HashPassword(password)
+	salt, hash, err := auth.HashPassword(password)
+	if err != nil {
+		a.serverError(w, r, "unable to hash password", err)
+		return
+	}
 	user.PasswordSalt = salt
 	user.PasswordHash = hash
-	_ = a.Store.UpsertUser(r.Context(), user)
+	if err := a.Store.UpsertUser(r.Context(), user); err != nil {
+		a.serverError(w, r, "unable to update user password", err)
+		return
+	}
 	http.Redirect(w, r, "/admin/users", 303)
 }
 
@@ -560,7 +664,35 @@ func (a *App) AdminUpsertMembership(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	_ = a.Store.UpsertMembership(r.Context(), models.Membership{ID: r.FormValue("id"), UserID: r.FormValue("user_id"), TenantID: r.FormValue("tenant_id"), Role: models.Role(r.FormValue("role")), Responsibilities: r.FormValue("responsibilities")})
+	userID := strings.TrimSpace(r.FormValue("user_id"))
+	tenantID := strings.TrimSpace(r.FormValue("tenant_id"))
+	role := models.Role(strings.TrimSpace(r.FormValue("role")))
+	if userID == "" || tenantID == "" {
+		http.Error(w, "user and tenant are required", 400)
+		return
+	}
+	if !isValidRole(role) {
+		http.Error(w, "invalid role", 400)
+		return
+	}
+	if _, err := a.Store.GetUser(r.Context(), userID); err != nil {
+		a.notFound(w, r, "user not found", err)
+		return
+	}
+	if _, err := a.Store.GetTenant(r.Context(), tenantID); err != nil {
+		a.notFound(w, r, "tenant not found", err)
+		return
+	}
+	if err := a.Store.UpsertMembership(r.Context(), models.Membership{
+		ID:               r.FormValue("id"),
+		UserID:           userID,
+		TenantID:         tenantID,
+		Role:             role,
+		Responsibilities: strings.TrimSpace(r.FormValue("responsibilities")),
+	}); err != nil {
+		a.serverError(w, r, "unable to save membership", err)
+		return
+	}
 	http.Redirect(w, r, "/admin/users", 303)
 }
 
@@ -578,6 +710,14 @@ func (a *App) AdminDeleteMembership(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	_ = a.Store.DeleteMembership(r.Context(), r.FormValue("id"))
+	id := strings.TrimSpace(r.FormValue("id"))
+	if id == "" {
+		http.Error(w, "membership id is required", 400)
+		return
+	}
+	if err := a.Store.DeleteMembership(r.Context(), id); err != nil {
+		a.serverError(w, r, "unable to delete membership", err)
+		return
+	}
 	http.Redirect(w, r, "/admin/users", 303)
 }

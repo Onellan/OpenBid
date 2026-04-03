@@ -65,6 +65,44 @@ func templateFuncs() template.FuncMap {
 		"hasPrefix": func(value, prefix string) bool {
 			return strings.HasPrefix(value, prefix)
 		},
+		"humanBytes": func(value any) string {
+			var size float64
+			switch v := value.(type) {
+			case int:
+				size = float64(v)
+			case int64:
+				size = float64(v)
+			case uint64:
+				size = float64(v)
+			case float64:
+				size = v
+			default:
+				return fmt.Sprint(value)
+			}
+			units := []string{"B", "KB", "MB", "GB", "TB"}
+			unit := 0
+			for size >= 1024 && unit < len(units)-1 {
+				size /= 1024
+				unit++
+			}
+			if unit == 0 {
+				return fmt.Sprintf("%.0f %s", size, units[unit])
+			}
+			return fmt.Sprintf("%.1f %s", size, units[unit])
+		},
+		"formatDuration": func(value any) string {
+			d, ok := value.(time.Duration)
+			if !ok {
+				return fmt.Sprint(value)
+			}
+			if d < time.Minute {
+				return d.Truncate(time.Second).String()
+			}
+			if d < time.Hour {
+				return d.Truncate(time.Second).String()
+			}
+			return d.Truncate(time.Second).String()
+		},
 		"condTone": func(state any) string {
 			value := strings.TrimSpace(fmt.Sprint(state))
 			switch value {
@@ -156,6 +194,7 @@ func routes(a *App) http.Handler {
 	mux.HandleFunc("/bookmarks", a.RequireAuth(a.BookmarksPage))
 	mux.HandleFunc("/queue", a.RequireAuth(a.QueuePage))
 	mux.HandleFunc("/audit-log", a.RequireAuth(a.AuditLogPage))
+	mux.HandleFunc("/health", a.RequireAuth(a.HealthPage))
 	mux.HandleFunc("/queue/requeue", a.RequireAuth(a.QueueRequeue))
 	mux.HandleFunc("/settings", a.RequireAuth(a.SettingsPage))
 	mux.HandleFunc("/password", a.RequireAuth(a.PasswordPage))

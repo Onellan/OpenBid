@@ -8,7 +8,6 @@ import (
 	"log"
 	"net/http"
 
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,12 +21,11 @@ import (
 )
 
 type Config struct {
-	AppEnv                                                              string
-	AppAddr, DataPath, SecretKey, ExtractorURL                          string
-	SecureCookies, LowMemoryMode, AnalyticsEnabled                      bool
-	BootstrapSyncOnStartup                                              bool
-	SessionHours, WorkerSyncMinutes, WorkerLoopSeconds                  int
-	BootstrapAdminUsername, BootstrapAdminEmail, BootstrapAdminPassword string
+	AppEnv                                                                 string
+	AppAddr, DataPath, SecretKey, ExtractorURL, TreasuryFeedURL            string
+	SecureCookies, LowMemoryMode, AnalyticsEnabled, BootstrapSyncOnStartup bool
+	SessionHours, WorkerSyncMinutes, WorkerLoopSeconds                     int
+	BootstrapAdminUsername, BootstrapAdminEmail, BootstrapAdminPassword    string
 }
 type App struct {
 	Config    Config
@@ -36,33 +34,15 @@ type App struct {
 	Server    *http.Server
 	Sources   source.Registry
 	Extractor *extract.Client
+	StartedAt time.Time
 }
 
-func getenv(k, d string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
-	}
-	return d
-}
 func atoi(s string, d int) int {
 	v, err := strconv.Atoi(s)
 	if err != nil {
 		return d
 	}
 	return v
-}
-
-func boolenv(k string, d bool) bool {
-	v := strings.TrimSpace(os.Getenv(k))
-	if v == "" {
-		return d
-	}
-	switch strings.ToLower(v) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
 }
 
 func normalizeAppEnv(v string) string {
@@ -83,6 +63,21 @@ func usesWeakSecret(secret string) bool {
 }
 
 func validateConfig(cfg Config) error {
+	if strings.TrimSpace(cfg.AppAddr) == "" {
+		return errors.New("APP_ADDR must not be empty")
+	}
+	if strings.TrimSpace(cfg.DataPath) == "" {
+		return errors.New("DATA_PATH must not be empty")
+	}
+	if cfg.SessionHours <= 0 {
+		return errors.New("SESSION_HOURS must be greater than zero")
+	}
+	if cfg.WorkerSyncMinutes <= 0 {
+		return errors.New("WORKER_SYNC_MINUTES must be greater than zero")
+	}
+	if cfg.WorkerLoopSeconds <= 0 {
+		return errors.New("WORKER_LOOP_SECONDS must be greater than zero")
+	}
 	if cfg.BootstrapAdminPassword != "" {
 		if err := auth.StrongEnoughPassword(cfg.BootstrapAdminPassword); err != nil {
 			return fmt.Errorf("BOOTSTRAP_ADMIN_PASSWORD is not strong enough: %w", err)
@@ -105,23 +100,9 @@ func (c Config) ShowDemoCredentials() bool {
 }
 
 func New() (*App, error) {
-	appEnv := normalizeAppEnv(getenv("APP_ENV", "development"))
-	cfg := Config{
-		AppEnv:                 appEnv,
-		AppAddr:                getenv("APP_ADDR", ":8080"),
-		DataPath:               getenv("DATA_PATH", "./data/store.db"),
-		SecretKey:              getenv("SECRET_KEY", "change-me-now"),
-		SecureCookies:          boolenv("SECURE_COOKIES", false),
-		LowMemoryMode:          boolenv("LOW_MEMORY_MODE", true),
-		AnalyticsEnabled:       boolenv("ANALYTICS_ENABLED", false),
-		BootstrapSyncOnStartup: boolenv("BOOTSTRAP_SYNC_ON_STARTUP", appEnv != "production"),
-		ExtractorURL:           getenv("EXTRACTOR_URL", "http://extractor:9090"),
-		SessionHours:           atoi(getenv("SESSION_HOURS", "12"), 12),
-		WorkerSyncMinutes:      atoi(getenv("WORKER_SYNC_MINUTES", "360"), 360),
-		WorkerLoopSeconds:      atoi(getenv("WORKER_LOOP_SECONDS", "30"), 30),
-		BootstrapAdminUsername: getenv("BOOTSTRAP_ADMIN_USERNAME", "admin"),
-		BootstrapAdminEmail:    getenv("BOOTSTRAP_ADMIN_EMAIL", "admin@localhost"),
-		BootstrapAdminPassword: os.Getenv("BOOTSTRAP_ADMIN_PASSWORD"),
+	cfg, err := loadConfigFromEnv()
+	if err != nil {
+		return nil, err
 	}
 	if err := validateConfig(cfg); err != nil {
 		return nil, err
@@ -135,7 +116,7 @@ func New() (*App, error) {
 		_ = st.Close()
 		return nil, err
 	}
-	a := &App{Config: cfg, Store: st, Templates: tpl, Sources: source.NewRegistry(), Extractor: extract.New(cfg.ExtractorURL)}
+	a := &App{Config: cfg, Store: st, Templates: tpl, Sources: source.NewRegistry(), Extractor: extract.New(cfg.ExtractorURL), StartedAt: time.Now().UTC()}
 	if err := a.seed(context.Background()); err != nil {
 		_ = st.Close()
 		return nil, err
@@ -172,7 +153,9 @@ func (a *App) seed(ctx context.Context) error {
 		if len(tenants) == 0 {
 			return errors.New("failed to seed tenant")
 		}
-		_ = a.Store.UpsertMembership(ctx, models.Membership{UserID: users[0].ID, TenantID: tenants[0].ID, Role: models.RoleAdmin, Responsibilities: "Platform administration and portfolio oversight"})
+		if err := a.Store.UpsertMembership(ctx, models.Membership{UserID: users[0].ID, TenantID: tenants[0].ID, Role: models.RoleAdmin, Responsibilities: "Platform administration and portfolio oversight"}); err != nil {
+			return err
+		}
 	}
 	if seededUsers {
 		if err := a.ensureSourceConfigs(ctx); err != nil {
@@ -201,16 +184,18 @@ func (a *App) ensureSourceConfigs(ctx context.Context) error {
 	if len(configs) > 0 {
 		return nil
 	}
-	for _, cfg := range source.DefaultConfigs(source.DefaultFeedURL()) {
+	for _, cfg := range source.DefaultConfigs(a.Config.TreasuryFeedURL) {
 		if err := a.Store.UpsertSourceConfig(ctx, cfg); err != nil {
 			return err
 		}
-		_ = a.Store.UpsertSourceHealth(ctx, models.SourceHealth{
+		if err := a.Store.UpsertSourceHealth(ctx, models.SourceHealth{
 			SourceKey:     cfg.Key,
 			LastStatus:    "configured",
 			LastMessage:   "Waiting for the next sync cycle.",
 			LastItemCount: 0,
-		})
+		}); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -324,9 +309,17 @@ func (a *App) syncSources(ctx context.Context, registry source.Registry) error {
 			msg = err.Error()
 		}
 		now := time.Now().UTC()
-		_ = a.Store.AddSyncRun(ctx, models.SyncRun{SourceKey: ad.Key(), StartedAt: now, FinishedAt: now, Status: status, Message: msg, Trigger: "startup", ItemCount: len(items)})
-		cfg, _ := a.Store.GetSourceConfig(ctx, ad.Key())
-		health, _ := a.Store.GetSourceHealth(ctx, ad.Key())
+		if err := a.Store.AddSyncRun(ctx, models.SyncRun{SourceKey: ad.Key(), StartedAt: now, FinishedAt: now, Status: status, Message: msg, Trigger: "startup", ItemCount: len(items)}); err != nil {
+			return fmt.Errorf("record startup sync run for %s: %w", ad.Key(), err)
+		}
+		cfg, err := a.Store.GetSourceConfig(ctx, ad.Key())
+		if err != nil {
+			return fmt.Errorf("load source config for %s: %w", ad.Key(), err)
+		}
+		health, err := a.Store.GetSourceHealth(ctx, ad.Key())
+		if err != nil {
+			health = models.SourceHealth{SourceKey: ad.Key()}
+		}
 		health.SourceKey = ad.Key()
 		health.LastSyncAt = now
 		health.LastCheckedAt = now
@@ -342,14 +335,20 @@ func (a *App) syncSources(ctx context.Context, registry source.Registry) error {
 		}
 		health.NextScheduledCheckAt = source.NextScheduledCheckAt(now, cfg, settings, health.ConsecutiveFailures, err == nil)
 		health.HealthStatus = source.ComputeHealthStatus(cfg, settings, health)
-		_ = a.Store.UpsertSourceHealth(ctx, health)
+		if err := a.Store.UpsertSourceHealth(ctx, health); err != nil {
+			return fmt.Errorf("update source health for %s: %w", ad.Key(), err)
+		}
 		for _, t := range items {
 			if t.DocumentStatus == "" {
 				t.DocumentStatus = models.ExtractionQueued
 			}
-			_ = a.Store.UpsertTender(ctx, t)
+			if err := a.Store.UpsertTender(ctx, t); err != nil {
+				return fmt.Errorf("persist tender %s from %s: %w", t.ID, ad.Key(), err)
+			}
 			if t.DocumentURL != "" {
-				_ = a.Store.QueueJob(ctx, models.ExtractionJob{TenderID: t.ID, DocumentURL: t.DocumentURL, State: models.ExtractionQueued})
+				if err := a.Store.QueueJob(ctx, models.ExtractionJob{TenderID: t.ID, DocumentURL: t.DocumentURL, State: models.ExtractionQueued}); err != nil {
+					return fmt.Errorf("queue extraction for tender %s from %s: %w", t.ID, ad.Key(), err)
+				}
 			}
 		}
 	}
@@ -538,7 +537,9 @@ func (a *App) Login(w http.ResponseWriter, r *http.Request) {
 			u.LockedUntil = time.Now().Add(15 * time.Minute)
 			u.FailedLogins = 0
 		}
-		_ = a.Store.UpsertUser(r.Context(), u)
+		if err := a.Store.UpsertUser(r.Context(), u); err != nil {
+			log.Printf("failed to persist login attempt for user=%s: %v", u.Username, err)
+		}
 		a.render(w, r, "login.html", map[string]any{"Title": "Login", "Error": "Invalid credentials"})
 		return
 	}
@@ -548,14 +549,20 @@ func (a *App) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	u.FailedLogins = 0
 	u.LockedUntil = time.Time{}
-	_ = a.Store.UpsertUser(r.Context(), u)
+	if err := a.Store.UpsertUser(r.Context(), u); err != nil {
+		a.serverError(w, r, "unable to update login state", err)
+		return
+	}
 	memberships, _ := a.Store.ListMemberships(r.Context(), u.ID)
 	if len(memberships) == 0 {
 		http.Error(w, "No tenant membership assigned", 403)
 		return
 	}
 	s := models.Session{UserID: u.ID, TenantID: memberships[0].TenantID, Expires: time.Now().Add(time.Duration(a.Config.SessionHours) * time.Hour), CSRF: auth.RandomString(32)}
-	_ = auth.SetSessionCookie(w, a.Config.SecretKey, s, a.Config.SecureCookies)
+	if err := auth.SetSessionCookie(w, a.Config.SecretKey, s, a.Config.SecureCookies); err != nil {
+		a.serverError(w, r, "unable to start session", err)
+		return
+	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 func (a *App) Logout(w http.ResponseWriter, r *http.Request) {

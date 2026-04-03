@@ -30,6 +30,54 @@ func TestProcessJobsRetry(t *testing.T) {
 	}
 }
 
+func TestProcessJobsMarksFinalFailureAndClearsNextAttempt(t *testing.T) {
+	s, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if err := s.UpsertTender(ctx, models.Tender{
+		ID:             "final-failure",
+		Title:          "Civil",
+		DocumentURL:    "http://127.0.0.1:1/fail",
+		DocumentStatus: models.ExtractionQueued,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.QueueJob(ctx, models.ExtractionJob{
+		ID:            "j-final",
+		TenderID:      "final-failure",
+		DocumentURL:   "http://127.0.0.1:1/fail",
+		State:         models.ExtractionRetry,
+		Attempts:      2,
+		NextAttemptAt: time.Now().Add(-time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	r := Runner{Store: s, Sources: source.NewRegistry(), Extractor: extract.New("http://127.0.0.1:1"), SyncEvery: time.Hour, LoopEvery: time.Millisecond}
+	r.processJobs(ctx)
+
+	jobs, err := s.ListJobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 || jobs[0].State != models.ExtractionFailed {
+		t.Fatalf("expected failed job, got %#v", jobs)
+	}
+	if !jobs[0].NextAttemptAt.IsZero() {
+		t.Fatalf("expected terminal failure to clear retry schedule, got %#v", jobs[0])
+	}
+	tender, err := s.GetTender(ctx, "final-failure")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tender.DocumentStatus != models.ExtractionFailed {
+		t.Fatalf("expected tender status to reflect failure, got %#v", tender)
+	}
+}
+
 func TestProcessJobsPrunesOrphanJobs(t *testing.T) {
 	s, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {

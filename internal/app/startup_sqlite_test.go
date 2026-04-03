@@ -45,3 +45,21 @@ func TestProductionStartupRequiresBootstrapPasswordForEmptyDatabase(t *testing.T
 		t.Fatal("expected production startup to require a bootstrap admin password")
 	}
 }
+
+func TestStartupRejectsInvalidBooleanEnvValue(t *testing.T) {
+	t.Setenv("DATA_PATH", filepath.Join(t.TempDir(), "store.db"))
+	t.Setenv("SECURE_COOKIES", "maybe")
+
+	if _, err := New(); err == nil {
+		t.Fatal("expected startup to reject invalid boolean env values")
+	}
+}
+
+func TestStartupRejectsInvalidIntegerEnvValue(t *testing.T) {
+	t.Setenv("DATA_PATH", filepath.Join(t.TempDir(), "store.db"))
+	t.Setenv("WORKER_SYNC_MINUTES", "abc")
+
+	if _, err := New(); err == nil {
+		t.Fatal("expected startup to reject invalid integer env values")
+	}
+}

@@ -3,19 +3,35 @@
 {{template "page_hero" (dict
   "eyebrow" "Operations"
   "title" "Audit log"
-  "copy" "Track administrative and workflow actions across the workspace."
+  "copy" (printf "Track administrative and workflow actions for the %s workspace." .Tenant.Name)
 )}}
-<section class="card">
-  {{template "card_header" (dict "title" "Recent actions" "subtitle" "Latest audited actions in this tenant.")}}
-  <div class="table-wrap" style="margin-top:14px">
-    <table>
-      <tr><th>When</th><th>Action</th><th>Entity</th><th>Summary</th><th>User</th></tr>
-      {{range .Items}}
-      <tr><td>{{.CreatedAt}}</td><td>{{.Action}}</td><td>{{.Entity}} / {{.EntityID}}</td><td>{{.Summary}}</td><td>{{.UserID}}</td></tr>
-      {{else}}
-      <tr><td colspan="5">{{template "empty_state" "No audit entries yet."}}</td></tr>
-      {{end}}
-    </table>
+<details class="section-disclosure audit-log-disclosure" open style="margin-top:18px">
+  <summary>
+    <div>
+      <h2 class="card-title">Recent actions</h2>
+      <p class="section-disclosure-copy">Latest audited actions for this tenant, collapsed only when you want more room on the page.</p>
+    </div>
+  </summary>
+  <div class="section-disclosure-body">
+    <div class="actions" style="margin-bottom:14px">
+      <span class="badge info">{{.EntryCount}} total entries</span>
+      <span class="badge info">Page {{.CurrentPage}} of {{.TotalPages}}</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <tr><th>When</th><th>Action</th><th>Entity</th><th>Summary</th><th>User</th></tr>
+        {{range .Items}}
+        <tr><td>{{formatTime .CreatedAt}}</td><td>{{.Action}}</td><td>{{.Entity}} / {{.EntityID}}</td><td>{{.Summary}}</td><td>{{.UserID}}</td></tr>
+        {{else}}
+        <tr><td colspan="5">{{template "empty_state" "No audit entries yet."}}</td></tr>
+        {{end}}
+      </table>
+    </div>
+    <div class="actions" style="margin-top:14px">
+      {{if .HasPrevPage}}<a class="button secondary" href="{{.PrevPageURL}}">Previous</a>{{else}}<span class="badge warning">First page</span>{{end}}
+      <span class="badge info">Page {{.CurrentPage}} of {{.TotalPages}}</span>
+      {{if .HasNextPage}}<a class="button secondary" href="{{.NextPageURL}}">Next</a>{{else}}<span class="badge success">Last page</span>{{end}}
+    </div>
   </div>
-</section>
+</details>
 {{end}}

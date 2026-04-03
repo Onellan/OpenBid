@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -70,17 +71,37 @@ func (s *SQLiteStore) ValidateRuntime(ctx context.Context) error {
 	if userVersion != currentSchemaVersion {
 		return fmt.Errorf("unexpected schema version: got %d want %d", userVersion, currentSchemaVersion)
 	}
-	var count int
-	if err := s.db.QueryRowContext(ctx, "select count(*) from sqlite_master where type='table' and name='tenders'").Scan(&count); err != nil {
+	for _, table := range []string{"tenders", "users", "tenants", "memberships", "workflows", "bookmarks", "saved_searches", "sync_runs", "source_configs", "source_schedule_settings", "jobs", "source_health", "audit_entries", "workflow_events"} {
+		var count int
+		if err := s.db.QueryRowContext(ctx, "select count(*) from sqlite_master where type='table' and name=?", table).Scan(&count); err != nil {
+			return err
+		}
+		if count != 1 {
+			return fmt.Errorf("%s table missing", table)
+		}
+	}
+	var storedSchemaVersion string
+	if err := s.db.QueryRowContext(ctx, "select value from schema_meta where key='schema_version'").Scan(&storedSchemaVersion); err != nil {
 		return err
 	}
-	if count != 1 {
-		return fmt.Errorf("tenders table missing")
+	if storedSchemaVersion != strconv.Itoa(currentSchemaVersion) {
+		return fmt.Errorf("schema_meta version mismatch: got %s want %d", storedSchemaVersion, currentSchemaVersion)
 	}
 	return nil
 }
 
 func (s *SQLiteStore) migrate(ctx context.Context) error {
+	var currentVersion int
+	if err := s.db.QueryRowContext(ctx, "pragma user_version;").Scan(&currentVersion); err != nil {
+		return err
+	}
+	if currentVersion > currentSchemaVersion {
+		return fmt.Errorf("database schema version %d is newer than this binary supports (%d)", currentVersion, currentSchemaVersion)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
 	stmts := []string{
 		`create table if not exists schema_meta (key text primary key, value text not null);`,
 		`create table if not exists tenders (id text primary key, payload text not null);`,
@@ -98,14 +119,76 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		`create table if not exists audit_entries (id text primary key, payload text not null);`,
 		`create table if not exists workflow_events (id text primary key, payload text not null);`,
 		fmt.Sprintf(`pragma user_version = %d;`, currentSchemaVersion),
-		`insert into schema_meta(key,value) values('schema_version','2') on conflict(key) do update set value='2';`,
+		fmt.Sprintf(`insert into schema_meta(key,value) values('schema_version','%d') on conflict(key) do update set value='%d';`, currentSchemaVersion, currentSchemaVersion),
 	}
 	for _, stmt := range stmts {
-		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			_ = tx.Rollback()
 			return err
 		}
 	}
-	return nil
+	return tx.Commit()
+}
+
+func sqliteCountRows(ctx context.Context, db *sql.DB, table string) (int, error) {
+	var count int
+	if err := db.QueryRowContext(ctx, "select count(*) from "+table).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func fileSizeOrZero(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
+func (s *SQLiteStore) RuntimeStats(ctx context.Context) (RuntimeStats, error) {
+	stats := RuntimeStats{
+		Path:                  s.path,
+		ExpectedSchemaVersion: currentSchemaVersion,
+		SizeBytes:             fileSizeOrZero(s.path),
+		WALSizeBytes:          fileSizeOrZero(s.path + "-wal"),
+		SHMSizeBytes:          fileSizeOrZero(s.path + "-shm"),
+	}
+	if err := s.db.QueryRowContext(ctx, "pragma user_version;").Scan(&stats.SchemaVersion); err != nil {
+		return stats, err
+	}
+	if err := s.db.QueryRowContext(ctx, "pragma journal_mode;").Scan(&stats.JournalMode); err != nil {
+		return stats, err
+	}
+	if err := s.db.QueryRowContext(ctx, "pragma quick_check(1);").Scan(&stats.QuickCheck); err != nil {
+		return stats, err
+	}
+	counts := []struct {
+		table  string
+		target *int
+	}{
+		{"tenders", &stats.TenderCount},
+		{"users", &stats.UserCount},
+		{"tenants", &stats.TenantCount},
+		{"memberships", &stats.MembershipCount},
+		{"workflows", &stats.WorkflowCount},
+		{"bookmarks", &stats.BookmarkCount},
+		{"saved_searches", &stats.SavedSearchCount},
+		{"sync_runs", &stats.SyncRunCount},
+		{"source_configs", &stats.SourceConfigCount},
+		{"source_health", &stats.SourceHealthCount},
+		{"jobs", &stats.JobCount},
+		{"audit_entries", &stats.AuditCount},
+		{"workflow_events", &stats.WorkflowEventCount},
+	}
+	for _, item := range counts {
+		count, err := sqliteCountRows(ctx, s.db, item.table)
+		if err != nil {
+			return stats, err
+		}
+		*item.target = count
+	}
+	return stats, nil
 }
 
 func sqliteUpsertJSON[T any](ctx context.Context, db *sql.DB, table, id string, v T) error {

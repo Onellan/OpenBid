@@ -2,6 +2,8 @@ package worker
 
 import (
 	"context"
+	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"tenderhub-za/internal/extract"
@@ -20,8 +22,37 @@ type Runner struct {
 	Now                  func() time.Time
 }
 
+func (r Runner) logKV(event string, fields ...any) {
+	parts := []string{"event=" + event}
+	for i := 0; i+1 < len(fields); i += 2 {
+		key := "field_" + strconv.Itoa(i/2)
+		if rawKey, ok := fields[i].(string); ok && strings.TrimSpace(rawKey) != "" {
+			key = strings.TrimSpace(strings.ToLower(strings.ReplaceAll(rawKey, " ", "_")))
+		}
+		value := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(strings.Trim(strings.TrimSpace(toString(fields[i+1])), "\"")), "\n", " "), "\r", " "))
+		if value == "" {
+			value = "-"
+		}
+		parts = append(parts, key+"="+value)
+	}
+	log.Printf(strings.Join(parts, " "))
+}
+
+func toString(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case error:
+		return v.Error()
+	default:
+		return fmt.Sprint(v)
+	}
+}
+
 func (r Runner) Run(ctx context.Context) error {
-	_ = r.resetRunningSources(ctx)
+	if err := r.resetRunningSources(ctx); err != nil {
+		r.logKV("worker_reset_running_sources_failed", "error", err)
+	}
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -39,6 +70,54 @@ func (r Runner) Run(ctx context.Context) error {
 	}
 }
 
+func (r Runner) persistSyncRun(ctx context.Context, run models.SyncRun) {
+	if err := r.Store.AddSyncRun(ctx, run); err != nil {
+		r.logKV("worker_sync_run_write_failed", "source", run.SourceKey, "trigger", run.Trigger, "error", err)
+	}
+}
+
+func (r Runner) persistSourceHealth(ctx context.Context, health models.SourceHealth) {
+	if err := r.Store.UpsertSourceHealth(ctx, health); err != nil {
+		r.logKV("worker_source_health_write_failed", "source", health.SourceKey, "status", health.LastStatus, "error", err)
+	}
+}
+
+func (r Runner) persistTender(ctx context.Context, tender models.Tender) {
+	if err := r.Store.UpsertTender(ctx, tender); err != nil {
+		r.logKV("worker_tender_write_failed", "tender", tender.ID, "source", tender.SourceKey, "error", err)
+	}
+}
+
+func (r Runner) persistJobUpdate(ctx context.Context, job models.ExtractionJob) bool {
+	if err := r.Store.UpdateJob(ctx, job); err != nil {
+		r.logKV("worker_job_update_failed", "job", job.ID, "tender", job.TenderID, "state", job.State, "error", err)
+		return false
+	}
+	return true
+}
+
+func (r Runner) persistQueuedJob(ctx context.Context, job models.ExtractionJob) {
+	if err := r.Store.QueueJob(ctx, job); err != nil {
+		r.logKV("worker_job_queue_failed", "tender", job.TenderID, "url", job.DocumentURL, "error", err)
+	}
+}
+
+func (r Runner) deleteJob(ctx context.Context, id string) {
+	if err := r.Store.DeleteJob(ctx, id); err != nil {
+		r.logKV("worker_job_delete_failed", "job", id, "error", err)
+	}
+}
+
+func (r Runner) updateTenderDocumentState(ctx context.Context, tenderID string, state models.ExtractionState) {
+	tender, err := r.Store.GetTender(ctx, tenderID)
+	if err != nil {
+		r.logKV("worker_tender_lookup_failed", "tender", tenderID, "error", err)
+		return
+	}
+	tender.DocumentStatus = state
+	r.persistTender(ctx, tender)
+}
+
 func (r Runner) syncAll(ctx context.Context) {
 	registry := r.Sources
 	if r.SourceLoad != nil {
@@ -48,21 +127,23 @@ func (r Runner) syncAll(ctx context.Context) {
 	}
 	for _, ad := range registry.Adapters {
 		started := time.Now().UTC()
+		r.logKV("worker_sync_all_start", "source", ad.Key(), "trigger", "manual_all")
 		items, msg, err := ad.Fetch(ctx)
 		status := "success"
 		if err != nil {
 			status = "failed"
 			msg = err.Error()
+			r.logKV("worker_sync_all_failed", "source", ad.Key(), "error", err)
 		}
-		_ = r.Store.AddSyncRun(ctx, models.SyncRun{SourceKey: ad.Key(), StartedAt: started, FinishedAt: r.now(), Status: status, Message: msg, Trigger: "manual_all", ItemCount: len(items)})
-		_ = r.Store.UpsertSourceHealth(ctx, models.SourceHealth{SourceKey: ad.Key(), LastSyncAt: r.now(), LastCheckedAt: r.now(), LastStatus: status, LastMessage: msg, LastItemCount: len(items), HealthStatus: status})
+		r.persistSyncRun(ctx, models.SyncRun{SourceKey: ad.Key(), StartedAt: started, FinishedAt: r.now(), Status: status, Message: msg, Trigger: "manual_all", ItemCount: len(items)})
+		r.persistSourceHealth(ctx, models.SourceHealth{SourceKey: ad.Key(), LastSyncAt: r.now(), LastCheckedAt: r.now(), LastStatus: status, LastMessage: msg, LastItemCount: len(items), HealthStatus: status})
 		for _, t := range items {
 			if t.DocumentStatus == "" {
 				t.DocumentStatus = models.ExtractionQueued
 			}
-			_ = r.Store.UpsertTender(ctx, t)
+			r.persistTender(ctx, t)
 			if t.DocumentURL != "" {
-				_ = r.Store.QueueJob(ctx, models.ExtractionJob{TenderID: t.ID, DocumentURL: t.DocumentURL, State: models.ExtractionQueued})
+				r.persistQueuedJob(ctx, models.ExtractionJob{TenderID: t.ID, DocumentURL: t.DocumentURL, State: models.ExtractionQueued})
 			}
 		}
 	}
@@ -70,15 +151,18 @@ func (r Runner) syncAll(ctx context.Context) {
 func (r Runner) processJobs(ctx context.Context) {
 	jobs, err := r.Store.ListJobs(ctx)
 	if err != nil {
+		r.logKV("worker_jobs_list_failed", "error", err)
 		return
 	}
 	for _, job := range jobs {
 		if strings.TrimSpace(job.TenderID) == "" {
-			_ = r.Store.DeleteJob(ctx, job.ID)
+			r.logKV("worker_job_prune_missing_tender_id", "job", job.ID)
+			r.deleteJob(ctx, job.ID)
 			continue
 		}
 		if _, err := r.Store.GetTender(ctx, job.TenderID); err != nil {
-			_ = r.Store.DeleteJob(ctx, job.ID)
+			r.logKV("worker_job_prune_missing_tender", "job", job.ID, "tender", job.TenderID)
+			r.deleteJob(ctx, job.ID)
 			continue
 		}
 		if !(job.State == models.ExtractionQueued || job.State == models.ExtractionRetry) || r.now().Before(job.NextAttemptAt) {
@@ -86,7 +170,18 @@ func (r Runner) processJobs(ctx context.Context) {
 		}
 		job.State = models.ExtractionProcessing
 		job.Attempts++
-		_ = r.Store.UpdateJob(ctx, job)
+		if !r.persistJobUpdate(ctx, job) {
+			continue
+		}
+		if r.Extractor == nil || strings.TrimSpace(r.Extractor.BaseURL) == "" {
+			job.State = models.ExtractionFailed
+			job.LastError = "extractor client is not configured"
+			job.NextAttemptAt = time.Time{}
+			r.persistJobUpdate(ctx, job)
+			r.updateTenderDocumentState(ctx, job.TenderID, models.ExtractionFailed)
+			r.logKV("worker_job_extractor_unconfigured", "job", job.ID, "tender", job.TenderID)
+			continue
+		}
 		res, err := r.Extractor.Extract(ctx, job.DocumentURL)
 		if err != nil {
 			job.State = models.ExtractionRetry
@@ -94,8 +189,18 @@ func (r Runner) processJobs(ctx context.Context) {
 				job.State = models.ExtractionFailed
 			}
 			job.LastError = err.Error()
-			job.NextAttemptAt = r.now().Add(time.Duration(job.Attempts*job.Attempts) * time.Minute)
-			_ = r.Store.UpdateJob(ctx, job)
+			if job.State == models.ExtractionFailed {
+				job.NextAttemptAt = time.Time{}
+			} else {
+				job.NextAttemptAt = r.now().Add(time.Duration(job.Attempts*job.Attempts) * time.Minute)
+			}
+			r.persistJobUpdate(ctx, job)
+			if job.State == models.ExtractionFailed {
+				r.updateTenderDocumentState(ctx, job.TenderID, models.ExtractionFailed)
+			} else {
+				r.updateTenderDocumentState(ctx, job.TenderID, models.ExtractionRetry)
+			}
+			r.logKV("worker_job_extract_failed", "job", job.ID, "tender", job.TenderID, "attempts", job.Attempts, "state", job.State, "error", err)
 			continue
 		}
 		if t, err := r.Store.GetTender(ctx, job.TenderID); err == nil {
@@ -104,21 +209,29 @@ func (r Runner) processJobs(ctx context.Context) {
 			t.DocumentFacts = cloneFactMap(res.Facts)
 			applyDocumentPromotions(&t, t.DocumentFacts)
 			t.ExtractedFacts = mergeFactMaps(t.ExtractedFacts, t.PageFacts, t.DocumentFacts)
-			_ = r.Store.UpsertTender(ctx, t)
+			r.persistTender(ctx, t)
+		} else {
+			r.logKV("worker_tender_lookup_failed", "tender", job.TenderID, "error", err)
 		}
 		job.State = models.ExtractionCompleted
 		job.NextAttemptAt = time.Time{}
-		_ = r.Store.UpdateJob(ctx, job)
+		r.persistJobUpdate(ctx, job)
+		r.logKV("worker_job_extract_completed", "job", job.ID, "tender", job.TenderID, "attempts", job.Attempts)
 	}
 }
 
 func (r Runner) processSourceChecks(ctx context.Context) {
 	configs, err := r.Store.ListSourceConfigs(ctx)
 	if err != nil {
+		r.logKV("worker_source_configs_list_failed", "error", err)
 		return
 	}
 	settings := r.loadScheduleSettings(ctx)
-	healths, _ := r.Store.ListSourceHealth(ctx)
+	healths, err := r.Store.ListSourceHealth(ctx)
+	if err != nil {
+		r.logKV("worker_source_health_list_failed", "error", err)
+		return
+	}
 	healthByKey := map[string]models.SourceHealth{}
 	for _, health := range healths {
 		healthByKey[health.SourceKey] = health
@@ -132,7 +245,7 @@ func (r Runner) processSourceChecks(ctx context.Context) {
 			health.LastStatus = "skipped"
 			health.LastMessage = "Manual check skipped because the source is disabled."
 			health.HealthStatus = source.ComputeHealthStatus(cfg, settings, health)
-			_ = r.Store.UpsertSourceHealth(ctx, health)
+			r.persistSourceHealth(ctx, health)
 			continue
 		}
 		trigger, due := dueSourceTrigger(now, cfg, settings, health)
@@ -154,7 +267,8 @@ func (r Runner) runSourceCheck(ctx context.Context, cfg models.SourceConfig, set
 	health.LastStatus = "running"
 	health.LastMessage = "Checking source now."
 	health.HealthStatus = source.ComputeHealthStatus(cfg, settings, health)
-	_ = r.Store.UpsertSourceHealth(ctx, health)
+	r.persistSourceHealth(ctx, health)
+	r.logKV("worker_source_check_started", "source", cfg.Key, "trigger", trigger)
 
 	adapter, err := source.AdapterFromConfig(cfg)
 	if err != nil {
@@ -199,7 +313,7 @@ func (r Runner) finalizeSourceCheck(ctx context.Context, cfg models.SourceConfig
 		health.NextScheduledCheckAt = source.NextScheduledCheckAt(finished, cfg, settings, health.ConsecutiveFailures, runErr == nil)
 	}
 	health.HealthStatus = source.ComputeHealthStatus(cfg, settings, health)
-	_ = r.Store.AddSyncRun(ctx, models.SyncRun{
+	r.persistSyncRun(ctx, models.SyncRun{
 		SourceKey:  cfg.Key,
 		StartedAt:  started,
 		FinishedAt: finished,
@@ -208,7 +322,8 @@ func (r Runner) finalizeSourceCheck(ctx context.Context, cfg models.SourceConfig
 		Trigger:    trigger,
 		ItemCount:  len(items),
 	})
-	_ = r.Store.UpsertSourceHealth(ctx, health)
+	r.persistSourceHealth(ctx, health)
+	r.logKV("worker_source_check_finished", "source", cfg.Key, "trigger", trigger, "status", status, "items", len(items), "failures", health.ConsecutiveFailures)
 	if runErr != nil {
 		return
 	}
@@ -216,9 +331,9 @@ func (r Runner) finalizeSourceCheck(ctx context.Context, cfg models.SourceConfig
 		if t.DocumentStatus == "" {
 			t.DocumentStatus = models.ExtractionQueued
 		}
-		_ = r.Store.UpsertTender(ctx, t)
+		r.persistTender(ctx, t)
 		if t.DocumentURL != "" {
-			_ = r.Store.QueueJob(ctx, models.ExtractionJob{TenderID: t.ID, DocumentURL: t.DocumentURL, State: models.ExtractionQueued})
+			r.persistQueuedJob(ctx, models.ExtractionJob{TenderID: t.ID, DocumentURL: t.DocumentURL, State: models.ExtractionQueued})
 		}
 	}
 }

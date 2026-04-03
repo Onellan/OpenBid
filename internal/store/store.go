@@ -15,6 +15,30 @@ type ListFilter struct {
 	Page, PageSize                                                                                                        int
 }
 
+type RuntimeStats struct {
+	Path                  string
+	SizeBytes             int64
+	WALSizeBytes          int64
+	SHMSizeBytes          int64
+	SchemaVersion         int
+	ExpectedSchemaVersion int
+	JournalMode           string
+	QuickCheck            string
+	TenderCount           int
+	UserCount             int
+	TenantCount           int
+	MembershipCount       int
+	WorkflowCount         int
+	BookmarkCount         int
+	SavedSearchCount      int
+	SyncRunCount          int
+	SourceConfigCount     int
+	SourceHealthCount     int
+	JobCount              int
+	AuditCount            int
+	WorkflowEventCount    int
+}
+
 func NormalizeFilter(f ListFilter) ListFilter {
 	if f.Page < 1 {
 		f.Page = 1

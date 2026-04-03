@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"tenderhub-za/internal/models"
 	"time"
@@ -76,4 +75,3 @@ func (a *FeedAdapter) Fetch(ctx context.Context) ([]models.Tender, string, error
 	}
 	return out, "loaded remote feed", nil
 }
-func DefaultFeedURL() string { return os.Getenv("TREASURY_FEED_URL") }

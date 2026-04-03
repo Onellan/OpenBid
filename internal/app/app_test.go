@@ -242,6 +242,60 @@ func TestAdminCreateSourceStoresConfig(t *testing.T) {
 	}
 }
 
+func TestAdminCreateTenantNormalizesSlugFromName(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, csrf := adminSession(t, a)
+	form := url.Values{
+		"csrf_token": {csrf},
+		"name":       {"  Acme Engineering West  "},
+		"slug":       {""},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/tenants/create", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", w.Code)
+	}
+	tenants, err := a.Store.ListTenants(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, tenant := range tenants {
+		if tenant.Name == "Acme Engineering West" && tenant.Slug == "acme-engineering-west" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected normalized tenant slug, got %#v", tenants)
+	}
+}
+
+func TestAdminCreateUserRejectsDuplicateUsername(t *testing.T) {
+	a := newTestApp(t)
+	_, tenant, cookie, csrf := adminSession(t, a)
+	form := url.Values{
+		"csrf_token":       {csrf},
+		"username":         {"admin"},
+		"display_name":     {"Another Admin"},
+		"email":            {"another-admin@example.com"},
+		"password":         {"Strong!2026Pass"},
+		"tenant_id":        {tenant.ID},
+		"role":             {string(models.RoleAdmin)},
+		"responsibilities": {"Testing"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/users/create", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409 got %d", w.Code)
+	}
+}
+
 func TestAdminCreateETendersSourceStoresConfig(t *testing.T) {
 	a := newTestApp(t)
 	_, _, cookie, csrf := adminSession(t, a)
