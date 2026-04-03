@@ -45,8 +45,7 @@ func (c *Client) Extract(ctx context.Context, url string) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	payload, _ := json.Marshal(map[string]string{"url": url})
-	payload, _ = json.Marshal(map[string]string{"url": normalizedURL})
+	payload, _ := json.Marshal(map[string]string{"url": normalizedURL})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/extract", bytes.NewReader(payload))
 	if err != nil {
 		return Result{}, err

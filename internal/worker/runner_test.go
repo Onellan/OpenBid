@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"tenderhub-za/internal/extract"
 	"tenderhub-za/internal/models"
 	"tenderhub-za/internal/source"
@@ -17,6 +19,25 @@ import (
 func allowPrivateURLs(t *testing.T) {
 	t.Helper()
 	t.Setenv("OPENBID_ALLOW_PRIVATE_URLS", "true")
+}
+
+func TestWriteHeartbeatCreatesFreshHeartbeatFile(t *testing.T) {
+	heartbeatPath := filepath.Join(t.TempDir(), "worker", "heartbeat")
+	now := time.Date(2026, 4, 3, 10, 0, 0, 0, time.UTC)
+	r := Runner{
+		HeartbeatPath: heartbeatPath,
+		Now:           func() time.Time { return now },
+	}
+
+	r.writeHeartbeat()
+
+	payload, err := os.ReadFile(heartbeatPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(payload)) != now.Format(time.RFC3339Nano) {
+		t.Fatalf("unexpected heartbeat payload: %q", string(payload))
+	}
 }
 
 func TestProcessJobsRetry(t *testing.T) {
