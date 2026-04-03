@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"tenderhub-za/internal/models"
 )
@@ -54,15 +55,24 @@ func canEditWorkspace(role models.Role) bool {
 	return role != models.RoleViewer
 }
 
-func (a *App) redirectAfterAction(w http.ResponseWriter, r *http.Request, fallback, tone, message string) {
-	dest := r.FormValue("return_to")
+func safeReturnTarget(dest, fallback string) *url.URL {
+	fallbackURL := &url.URL{Path: fallback}
+	dest = strings.TrimSpace(dest)
 	if dest == "" {
-		dest = fallback
+		return fallbackURL
 	}
 	u, err := url.Parse(dest)
-	if err != nil || u.Path == "" {
-		u = &url.URL{Path: fallback}
+	if err != nil || u == nil {
+		return fallbackURL
 	}
+	if u.IsAbs() || u.Host != "" || strings.HasPrefix(dest, "//") || !strings.HasPrefix(u.Path, "/") {
+		return fallbackURL
+	}
+	return u
+}
+
+func (a *App) redirectAfterAction(w http.ResponseWriter, r *http.Request, fallback, tone, message string) {
+	u := safeReturnTarget(r.FormValue("return_to"), fallback)
 	query := u.Query()
 	switch tone {
 	case "danger", "error":

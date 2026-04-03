@@ -485,11 +485,7 @@ func (a *App) SwitchTenant(w http.ResponseWriter, r *http.Request) {
 	}
 	session.TenantID = r.FormValue("tenant_id")
 	_ = auth.SetSessionCookie(w, a.Config.SecretKey, session, a.Config.SecureCookies)
-	dest := r.FormValue("return_to")
-	if dest == "" {
-		dest = "/"
-	}
-	http.Redirect(w, r, dest, 303)
+	http.Redirect(w, r, safeReturnTarget(r.FormValue("return_to"), "/").String(), 303)
 }
 
 func (a *App) AdminToggleUser(w http.ResponseWriter, r *http.Request) {

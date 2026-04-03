@@ -140,6 +140,61 @@ func TestSwitchTenantRejectsUnauthorizedTenant(t *testing.T) {
 		t.Fatalf("expected forbidden, got %d", w.Code)
 	}
 }
+
+func TestSwitchTenantRejectsExternalReturnTo(t *testing.T) {
+	a := newTestApp(t)
+	_, tenant, cookie, csrf := adminSession(t, a)
+	form := url.Values{
+		"csrf_token": {csrf},
+		"tenant_id":  {tenant.ID},
+		"return_to":  {"//evil.example/phish"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/tenant/switch", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.SwitchTenant(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", w.Code)
+	}
+	if location := w.Header().Get("Location"); location != "/" {
+		t.Fatalf("expected safe fallback redirect, got %q", location)
+	}
+}
+
+func TestRedirectAfterActionRejectsExternalReturnTo(t *testing.T) {
+	a := newTestApp(t)
+	req := httptest.NewRequest(http.MethodPost, "/bookmark", strings.NewReader(url.Values{
+		"return_to": {"https://evil.example/steal"},
+	}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	a.redirectAfterAction(w, req, "/tenders", "success", "Bookmark saved")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", w.Code)
+	}
+	location := w.Header().Get("Location")
+	if location != "/tenders?message=Bookmark+saved" {
+		t.Fatalf("expected safe fallback redirect, got %q", location)
+	}
+}
+
+func TestRedirectAfterActionPreservesSafeReturnToQuery(t *testing.T) {
+	a := newTestApp(t)
+	req := httptest.NewRequest(http.MethodPost, "/bookmark", strings.NewReader(url.Values{
+		"return_to": {"/tenders?q=metro&page=2"},
+	}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	a.redirectAfterAction(w, req, "/tenders", "success", "Bookmark saved")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", w.Code)
+	}
+	location := w.Header().Get("Location")
+	if location != "/tenders?message=Bookmark+saved&page=2&q=metro" {
+		t.Fatalf("expected redirect with preserved query, got %q", location)
+	}
+}
 func TestAdminCreateSourceStoresConfig(t *testing.T) {
 	a := newTestApp(t)
 	_, _, cookie, csrf := adminSession(t, a)
@@ -544,6 +599,46 @@ func TestHomePageRendersHomepageContent(t *testing.T) {
 	}
 }
 
+func TestDashboardRouteRendersMergedHomeView(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := adminSession(t, a)
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "One home for daily bidding work and operational visibility") {
+		t.Fatalf("dashboard route did not render merged home view: %s", body)
+	}
+	if strings.Contains(body, "Operational metrics for the current workspace") {
+		t.Fatalf("dashboard route still rendered legacy dashboard copy: %s", body)
+	}
+}
+
+func TestHomePageRendersSourceHealthBeforeCollapsedRecentOpportunities(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := adminSession(t, a)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	sourceHealthIndex := strings.Index(body, "Source health")
+	recentIndex := strings.Index(body, "Recent opportunities")
+	if sourceHealthIndex == -1 || recentIndex == -1 {
+		t.Fatalf("expected source health and recent opportunities sections: %s", body)
+	}
+	if sourceHealthIndex > recentIndex {
+		t.Fatalf("expected source health before recent opportunities: %s", body)
+	}
+	if !strings.Contains(body, "<details class=\"section-disclosure\"") {
+		t.Fatalf("expected recent opportunities disclosure markup: %s", body)
+	}
+}
+
 func TestTendersPageRendersTendersContent(t *testing.T) {
 	a := newTestApp(t)
 	_, _, cookie, _ := adminSession(t, a)
@@ -615,6 +710,84 @@ func TestTendersPageShowsExplicitBookmarkActionLabels(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, "Remove bookmark") || !strings.Contains(body, "Update saved note") {
 		t.Fatalf("expected explicit bookmark controls, got %s", body)
+	}
+}
+
+func TestTendersBookmarkFlowShowsAddThenRemove(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, csrf := adminSession(t, a)
+	_ = a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:        "bookmark-flow",
+		Title:     "Bookmark Flow Tender",
+		Issuer:    "Metro",
+		SourceKey: "treasury",
+		Status:    "open",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/tenders", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	initialBody := w.Body.String()
+	if !strings.Contains(initialBody, "Add bookmark") {
+		t.Fatalf("expected add bookmark action before saving, got %s", initialBody)
+	}
+
+	form := url.Values{"csrf_token": {csrf}, "tender_id": {"bookmark-flow"}, "return_to": {"/tenders"}}
+	req = httptest.NewRequest(http.MethodPost, "/tenders/bookmark", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after bookmarking, got %d", w.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/tenders", nil)
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	updatedBody := w.Body.String()
+	if !strings.Contains(updatedBody, "Remove bookmark") {
+		t.Fatalf("expected remove bookmark action after saving, got %s", updatedBody)
+	}
+}
+
+func TestTendersBookmarkRedirectPreservesSearchState(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, csrf := adminSession(t, a)
+	_ = a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:        "bookmark-search-state",
+		Title:     "Search State Tender",
+		Issuer:    "Metro",
+		SourceKey: "treasury",
+		Status:    "open",
+	})
+
+	form := url.Values{
+		"csrf_token": {csrf},
+		"tender_id":  {"bookmark-search-state"},
+		"return_to":  {"/tenders?q=metro&page=2&sort=published_date"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/tenders/bookmark", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after bookmarking, got %d", w.Code)
+	}
+	location := w.Header().Get("Location")
+	redirectURL, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("expected valid redirect url, got %q err=%v", location, err)
+	}
+	if redirectURL.Path != "/tenders" {
+		t.Fatalf("expected redirect back to tenders, got %q", location)
+	}
+	query := redirectURL.Query()
+	if query.Get("q") != "metro" || query.Get("page") != "2" || query.Get("sort") != "published_date" {
+		t.Fatalf("expected search state to be preserved, got redirect %q", location)
 	}
 }
 
@@ -698,6 +871,9 @@ func TestRoleBasedNavigationVisibility(t *testing.T) {
 	if !strings.Contains(adminBody, "User Admin") || !strings.Contains(adminBody, "Tenant Admin") {
 		t.Fatalf("admin navigation missing admin links: %s", adminBody)
 	}
+	if strings.Contains(adminBody, "<summary class=\"nav-link utility \">Workspace</summary>") || strings.Contains(adminBody, "<summary class=\"nav-link utility \">Administration</summary>") {
+		t.Fatalf("admin navigation still shows separated settings groups: %s", adminBody)
+	}
 
 	_, _, viewerCookie, _ := sessionForRole(t, a, models.RoleViewer)
 	req = httptest.NewRequest(http.MethodGet, "/", nil)
@@ -712,6 +888,29 @@ func TestRoleBasedNavigationVisibility(t *testing.T) {
 		t.Fatalf("viewer navigation missing core links: %s", viewerBody)
 	}
 }
+
+func TestSettingsPageShowsAdminCardsOnlyForAuthorizedUsers(t *testing.T) {
+	a := newTestApp(t)
+	_, _, adminCookie, _ := adminSession(t, a)
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	req.AddCookie(adminCookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	adminBody := w.Body.String()
+	if !strings.Contains(adminBody, "User Admin") || !strings.Contains(adminBody, "Tenant Admin") {
+		t.Fatalf("expected admin settings page to show admin cards: %s", adminBody)
+	}
+
+	_, _, viewerCookie, _ := sessionForRole(t, a, models.RoleViewer)
+	req = httptest.NewRequest(http.MethodGet, "/settings", nil)
+	req.AddCookie(viewerCookie)
+	w = httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	viewerBody := w.Body.String()
+	if strings.Contains(viewerBody, "User Admin") || strings.Contains(viewerBody, "Tenant Admin") || strings.Contains(viewerBody, "Audit Log") {
+		t.Fatalf("viewer settings page exposed admin cards: %s", viewerBody)
+	}
+}
 func TestRouteAccessibilityAndPageRendering(t *testing.T) {
 	a := newTestApp(t)
 	_, _, viewerCookie, _ := sessionForRole(t, a, models.RoleViewer)
@@ -721,7 +920,7 @@ func TestRouteAccessibilityAndPageRendering(t *testing.T) {
 		"/saved-searches": "Reusable market views",
 		"/queue":          "Queue and extraction monitoring",
 		"/sources":        "Source checks, schedules, and sync health",
-		"/settings":       "Account and security settings",
+		"/settings":       "Account, workspace, and administration settings",
 	}
 	for path, marker := range routes {
 		req := httptest.NewRequest(http.MethodGet, path, nil)

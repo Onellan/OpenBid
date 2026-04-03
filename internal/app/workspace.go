@@ -214,8 +214,10 @@ func (a *App) Tenders(w http.ResponseWriter, r *http.Request) {
 	items, total, _ := a.Store.ListTenders(r.Context(), f)
 	bookmarks, _ := a.Store.ListBookmarks(r.Context(), t.ID, u.ID)
 	bookmarkByTender := map[string]models.Bookmark{}
+	bookmarked := map[string]bool{}
 	for _, bookmark := range bookmarks {
 		bookmarkByTender[bookmark.TenderID] = bookmark
+		bookmarked[bookmark.TenderID] = true
 	}
 	workflows, _ := a.Store.ListWorkflows(r.Context(), t.ID)
 	workflowByTender := map[string]models.Workflow{}
@@ -239,7 +241,8 @@ func (a *App) Tenders(w http.ResponseWriter, r *http.Request) {
 	}
 	a.render(w, r, "tenders.html", map[string]any{
 		"Title": "Tenders", "User": u, "Tenant": t, "Items": items, "Total": total,
-		"Filter": f, "Bookmarks": bookmarkByTender, "Workflows": workflowByTender,
+		"Filter": f, "Bookmarks": bookmarkByTender, "Bookmarked": bookmarked, "Workflows": workflowByTender,
+		"ReturnTo": r.URL.RequestURI(),
 		"CurrentPage": f.Page, "TotalPages": totalPages, "HasPrevPage": f.Page > 1, "HasNextPage": f.Page < totalPages,
 		"PrevPageURL": pageLink("/tenders", params, f.Page-1), "NextPageURL": pageLink("/tenders", params, f.Page+1),
 	})

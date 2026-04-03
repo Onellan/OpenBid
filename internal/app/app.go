@@ -452,7 +452,7 @@ func (a *App) render(w http.ResponseWriter, r *http.Request, name string, data m
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tpl.ExecuteTemplate(w, name, data); err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, "internal server error", 500)
 	}
 }
 func (a *App) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
@@ -497,7 +497,7 @@ func (a *App) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), 400)
+		http.Error(w, "invalid form submission", 400)
 		return
 	}
 	u, err := a.Store.GetUserByUsername(r.Context(), r.FormValue("username"))

@@ -93,21 +93,21 @@
       <p class="opportunity-actions-copy">Keep notes, ownership, and source links in one low-profile action bar.</p>
     </div>
     <div class="opportunity-status-row">
-      {{with index .Root.Bookmarks .Item.ID}}{{template "status_badge" (dict "tone" "success" "label" "Bookmarked")}}{{end}}
+      {{if index .Root.Bookmarked .Item.ID}}{{template "status_badge" (dict "tone" "success" "label" "Bookmarked")}}{{end}}
       {{with index .Root.Workflows .Item.ID}}{{if .AssignedUser}}{{template "status_badge" (dict "tone" "info" "label" (printf "Owner %s" .AssignedUser))}}{{end}}{{end}}
     </div>
     <div class="actions compact-actions">
-      {{with index .Root.Bookmarks .Item.ID}}
+      {{if index .Root.Bookmarked .Item.ID}}
       <form method="post" action="/tenders/bookmark/remove">
         <input type="hidden" name="csrf_token" value="{{$.Root.CSRFToken}}">
-        <input type="hidden" name="return_to" value="/tenders">
+        <input type="hidden" name="return_to" value="{{$.Root.ReturnTo}}">
         <input type="hidden" name="tender_id" value="{{$.Item.ID}}">
         <button type="submit">Remove bookmark</button>
       </form>
       {{else}}
       <form method="post" action="/tenders/bookmark">
         <input type="hidden" name="csrf_token" value="{{$.Root.CSRFToken}}">
-        <input type="hidden" name="return_to" value="/tenders">
+        <input type="hidden" name="return_to" value="{{$.Root.ReturnTo}}">
         <input type="hidden" name="tender_id" value="{{$.Item.ID}}">
         <button type="submit">Add bookmark</button>
       </form>
@@ -118,17 +118,17 @@
   <div class="opportunity-action-block">
     <div class="opportunity-action-label">Saved view</div>
     <form method="post" action="/tenders/bookmark" class="form-grid">
-      <input type="hidden" name="csrf_token" value="{{.Root.CSRFToken}}"><input type="hidden" name="return_to" value="/tenders">
+      <input type="hidden" name="csrf_token" value="{{.Root.CSRFToken}}"><input type="hidden" name="return_to" value="{{.Root.ReturnTo}}">
       <input type="hidden" name="tender_id" value="{{.Item.ID}}">
       <label>Saved note<textarea class="saved-note" name="note" placeholder="Why this opportunity matters">{{with index .Root.Bookmarks .Item.ID}}{{.Note}}{{end}}</textarea></label>
-      <div class="actions compact-actions"><button type="submit">{{if index .Root.Bookmarks .Item.ID}}Update saved note{{else}}Save bookmark with note{{end}}</button></div>
+      <div class="actions compact-actions"><button type="submit">{{if index .Root.Bookmarked .Item.ID}}Update saved note{{else}}Save bookmark with note{{end}}</button></div>
     </form>
   </div>
 
   <div class="opportunity-action-block">
     <div class="opportunity-action-label">Workflow</div>
     <form method="post" action="/tenders/workflow" class="form-grid">
-      <input type="hidden" name="csrf_token" value="{{.Root.CSRFToken}}"><input type="hidden" name="return_to" value="/tenders">
+      <input type="hidden" name="csrf_token" value="{{.Root.CSRFToken}}"><input type="hidden" name="return_to" value="{{.Root.ReturnTo}}">
       <input type="hidden" name="tender_id" value="{{.Item.ID}}">
       <div class="compact-field-grid">
         <label>Status<input name="status" value="{{with index .Root.Workflows .Item.ID}}{{.Status}}{{end}}" placeholder="reviewing"></label>
