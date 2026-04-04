@@ -6,22 +6,32 @@
   "copy" "Use OpenBid to discover opportunities, organise submissions, and bring consistent structure to your bid pipeline."
 )}}
 <div style="margin:14px 0">{{template "flash_messages" .}}</div>
-<div class="split">
-  <section class="card">
-    {{template "card_header" (dict
-      "title" "Filters and search"
-      "subtitle" "Refine the opportunity list by source, province, issuer, and workflow state."
-      "meta" (printf "Showing page %d of %d · %d results" .CurrentPage .TotalPages .Total)
-    )}}
-    <div style="margin-top:14px">{{template "opportunity_filter_form" .}}</div>
-  </section>
-  <section class="card">
-    {{template "card_header" (dict
-      "title" "Bulk actions"
-      "subtitle" "Update workflow state, saved status, or extraction queue in one step."
-    )}}
-    <div style="margin-top:14px">{{template "opportunity_bulk_action_form" .}}</div>
-  </section>
+<div class="stack" style="margin-top:18px">
+  <details class="section-disclosure tenders-filters-disclosure" open>
+    <summary>
+      <div>
+        <h2 class="card-title">Filters and search</h2>
+        <p class="section-disclosure-copy">Refine the opportunity list by source, province, issuer, and workflow state.</p>
+      </div>
+      <span class="badge info">Showing page {{.CurrentPage}} of {{.TotalPages}} · {{.Total}} results</span>
+    </summary>
+    <div class="section-disclosure-body">
+      {{template "opportunity_filter_form" .}}
+    </div>
+  </details>
+
+  <details class="section-disclosure tenders-bulk-disclosure">
+    <summary>
+      <div>
+        <h2 class="card-title">Bulk actions</h2>
+        <p class="section-disclosure-copy">Update workflow state, saved status, or extraction queue in one step.</p>
+      </div>
+      <span class="badge warning">Collapsed by default</span>
+    </summary>
+    <div class="section-disclosure-body">
+      {{template "opportunity_bulk_action_form" .}}
+    </div>
+  </details>
 </div>
 {{if eq .Filter.View "table"}}
 <section class="card" style="margin-top:18px">

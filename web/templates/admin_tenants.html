@@ -1,10 +1,34 @@
 {{define "admin_tenants.html"}}{{template "base" .}}{{end}}{{define "content"}}
-<div class="split">
+{{template "page_hero" (dict
+  "eyebrow" "Administration"
+  "title" "Tenant administration"
+  "copy" "Switch between available workspaces, create new tenant environments, and keep the workspace list clean from one page."
+  "actions" (slice
+    (dict "label" "Open audit log" "href" "/audit-log" "secondary" true)
+  )
+)}}
+
+<div class="cards tenant-admin-top" style="margin-top:18px">
+  <section class="card">
+    {{template "card_header" (dict "title" "Current workspace" "subtitle" "The active tenant for this session. This context only needs to be visible while managing tenant workspaces.")}}
+    <div class="workspace-meta" style="margin-top:14px">
+      <div class="workspace-label">Workspace</div>
+      <div class="workspace-title">{{.Tenant.Name}}</div>
+    </div>
+  </section>
+
+  <section class="card">
+    {{template "card_header" (dict "title" "Switch workspace" "subtitle" "Move between the tenants available to your current account without using the header.")}}
+    <div style="margin-top:14px">{{template "tenant_switch_form" .}}</div>
+  </section>
+
   <section class="card">
     {{template "card_header" (dict "title" "Create tenant" "subtitle" "Set up new business units, client environments, or portfolio spaces inside OpenBid.")}}
     <div style="margin-top:14px">{{template "tenant_form" .}}</div>
   </section>
+</div>
 
+<div style="margin-top:18px">
   {{template "entity_table_card" (dict
     "title" "Tenant list"
     "subtitle" "All configured workspaces in your OpenBid environment."

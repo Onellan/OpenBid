@@ -11,9 +11,15 @@ import (
 	"fmt"
 )
 
+func fillRandomBytes(buf []byte) {
+	if _, err := rand.Read(buf); err != nil {
+		panic(fmt.Sprintf("crypto/rand unavailable: %v", err))
+	}
+}
+
 func RandomString(n int) string {
 	b := make([]byte, n)
-	_, _ = rand.Read(b)
+	fillRandomBytes(b)
 	return base64.RawURLEncoding.EncodeToString(b)[:n]
 }
 func pbkdf2f(password, salt []byte, iter, block int) []byte {

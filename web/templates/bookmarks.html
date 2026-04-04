@@ -1,0 +1,50 @@
+{{define "bookmarks.html"}}{{template "base" .}}{{end}}{{define "content"}}
+{{template "page_hero" (dict
+  "eyebrow" "Bookmarks"
+  "title" "Keep active opportunities separate from the broader market view"
+  "copy" "Review saved opportunities and notes without carrying the full tender workspace around with you."
+  "actions" (slice
+    (dict "label" "Open tenders" "href" "/tenders")
+    (dict "label" "Saved searches" "href" "/saved-searches" "secondary" true)
+  )
+)}}
+
+<section class="kpi-band" style="margin-top:18px">
+  {{template "metric_card" (dict "label" "Saved opportunities" "value" .BookmarkCount)}}
+</section>
+
+<section class="card" style="margin-top:18px">
+  {{template "card_header" (dict "title" "Saved opportunities" "subtitle" "All bookmarked opportunities with your latest saved note.")}}
+  <div class="table-wrap" style="margin-top:14px">
+    <table>
+      <tr><th>Opportunity</th><th>Note</th><th>Workflow</th><th>Document</th><th>Actions</th></tr>
+      {{range .Items}}
+      <tr>
+        <td>
+          <a href="/tenders/{{.Tender.ID}}"><strong>{{.Tender.Title}}</strong></a>
+          <div class="footer-note" style="margin-top:6px">{{.Tender.Issuer}} · {{.Tender.ClosingDate}}</div>
+        </td>
+        <td>{{if .Bookmark.Note}}{{.Bookmark.Note}}{{else}}<span class="footer-note">No note saved.</span>{{end}}</td>
+        <td>{{if .Workflow.Status}}{{.Workflow.Status}}{{else}}<span class="footer-note">No workflow yet.</span>{{end}}</td>
+        <td>{{if .Tender.DocumentStatus}}{{template "status_badge" (dict "tone" (condTone .Tender.DocumentStatus) "label" .Tender.DocumentStatus)}}{{else}}<span class="footer-note">No source doc</span>{{end}}</td>
+        <td>
+          <div class="actions">
+            <a class="button secondary" href="/tenders/{{.Tender.ID}}">Open</a>
+            {{template "confirm_destructive_action" (dict
+              "action" "/tenders/bookmark/remove"
+              "confirm" (printf "Remove bookmark for '%s'?" .Tender.Title)
+              "csrf" $.CSRFToken
+              "inline" true
+              "hidden" (slice (dict "name" "tender_id" "value" .Tender.ID) (dict "name" "return_to" "value" "/bookmarks"))
+              "label" "Remove"
+            )}}
+          </div>
+        </td>
+      </tr>
+      {{else}}
+      <tr><td colspan="5">{{template "empty_state" "No bookmarked opportunities yet."}}</td></tr>
+      {{end}}
+    </table>
+  </div>
+</section>
+{{end}}

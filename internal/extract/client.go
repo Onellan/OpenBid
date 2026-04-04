@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"openbid/internal/netguard"
 	"time"
 )
 
@@ -22,8 +23,29 @@ type Result struct {
 func New(base string) *Client {
 	return &Client{BaseURL: base, HTTP: &http.Client{Timeout: 90 * time.Second}}
 }
+
+func (c *Client) Healthz(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/healthz", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("extractor health returned %d", resp.StatusCode)
+	}
+	return nil
+}
+
 func (c *Client) Extract(ctx context.Context, url string) (Result, error) {
-	payload, _ := json.Marshal(map[string]string{"url": url})
+	normalizedURL, err := netguard.NormalizePublicHTTPURL(url)
+	if err != nil {
+		return Result{}, err
+	}
+	payload, _ := json.Marshal(map[string]string{"url": normalizedURL})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/extract", bytes.NewReader(payload))
 	if err != nil {
 		return Result{}, err

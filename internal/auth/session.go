@@ -6,8 +6,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"openbid/internal/models"
 	"strings"
-	"tenderhub-za/internal/models"
 	"time"
 )
 
@@ -25,8 +25,12 @@ func EncodeSession(secret string, s models.Session) (string, error) {
 	return p + "." + sign(secret, p), nil
 }
 func DecodeSession(secret, raw string) (models.Session, bool) {
-	parts := strings.Split(raw, ".")
-	if len(parts) != 2 || sign(secret, parts[0]) != parts[1] {
+	parts := strings.SplitN(raw, ".", 2)
+	if len(parts) != 2 {
+		return models.Session{}, false
+	}
+	expected := sign(secret, parts[0])
+	if !hmac.Equal([]byte(expected), []byte(parts[1])) {
 		return models.Session{}, false
 	}
 	b, err := base64.RawURLEncoding.DecodeString(parts[0])
@@ -44,7 +48,11 @@ func SetSessionCookie(w http.ResponseWriter, secret string, s models.Session, se
 	if err != nil {
 		return err
 	}
-	http.SetCookie(w, &http.Cookie{Name: "th_session", Value: raw, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode, Expires: s.Expires})
+	maxAge := int(time.Until(s.Expires).Seconds())
+	if maxAge < 0 {
+		maxAge = 0
+	}
+	http.SetCookie(w, &http.Cookie{Name: "th_session", Value: raw, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode, Expires: s.Expires, MaxAge: maxAge})
 	return nil
 }
 func ClearSessionCookie(w http.ResponseWriter, secure bool) {

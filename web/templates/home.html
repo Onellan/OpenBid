@@ -1,0 +1,50 @@
+{{define "home.html"}}{{template "base" .}}{{end}}{{define "content"}}
+{{template "page_hero" (dict
+  "eyebrow" "Workspace overview"
+  "title" "One home for daily bidding work and operational visibility"
+  "copy" "Use this merged home and dashboard view to move between tenders, review your working metrics, and expand the latest opportunities only when you need them."
+  "actions" (slice
+    (dict "label" "Browse tenders" "href" "/tenders")
+    (dict "label" "Open health" "href" "/health" "secondary" true)
+  )
+)}}
+
+<section class="feature-grid" style="margin-top:18px">
+  <a class="feature-link" href="/tenders"><strong>Tenders</strong><span class="footer-note">Search, filter, and manage live opportunities.</span><span class="badge info">{{.Dashboard.TotalTenders}} total</span></a>
+  <a class="feature-link" href="/bookmarks"><strong>Bookmarks</strong><span class="footer-note">Return to the opportunities you are actively tracking.</span><span class="badge info">{{.BookmarkCount}} saved</span></a>
+  <a class="feature-link" href="/saved-searches"><strong>Saved Searches</strong><span class="footer-note">Jump back into your most useful market views.</span><span class="badge info">{{.SavedCount}} saved</span></a>
+  <a class="feature-link" href="/queue"><strong>Queue</strong><span class="footer-note">Watch extraction retries, failures, and completions.</span><span class="badge warning">{{.QueueSummary.Queued}} queued</span></a>
+  <a class="feature-link" href="/sources"><strong>Sources</strong><span class="footer-note">See what is syncing and which feeds need attention.</span><span class="badge success">{{.SourceHealthCount}} feeds</span></a>
+  <a class="feature-link" href="/settings"><strong>Settings</strong><span class="footer-note">Manage account security and workspace preferences.</span><span class="badge">{{.Member.Role}}</span></a>
+</section>
+
+<section class="kpi-band" style="margin-top:18px">
+  {{template "metric_card" (dict "label" "Open tenders" "value" .Dashboard.OpenTenders)}}
+  {{template "metric_card" (dict "label" "Engineering relevant" "value" .Dashboard.EngineeringRelevant)}}
+  {{template "metric_card" (dict "label" "Source docs linked" "value" .Dashboard.WithDocuments)}}
+  {{template "metric_card" (dict "label" "Docs extracted" "value" .Dashboard.ExtractedDocuments)}}
+  {{template "metric_card" (dict "label" "Queue backlog" "value" .QueueSummary.Queued)}}
+  {{template "metric_card" (dict "label" "Total opportunities" "value" .Dashboard.TotalTenders)}}
+</section>
+
+<details class="section-disclosure" style="margin-top:18px">
+  <summary>
+    <div>
+      <h2 class="card-title">Recent opportunities</h2>
+      <p class="section-disclosure-copy">Collapsed by default so the landing page stays calmer. Expand this section when you want the latest opportunity list.</p>
+    </div>
+  </summary>
+  <div class="section-disclosure-body">
+    <div class="table-wrap">
+      <table>
+        <tr><th>Opportunity</th><th>Issuer</th><th>Closing</th><th>Status</th></tr>
+        {{range .Dashboard.RecentTenders}}
+        <tr><td><a href="/tenders/{{.ID}}">{{.Title}}</a></td><td>{{.Issuer}}</td><td>{{.ClosingDate}}</td><td>{{template "status_badge" (dict "tone" "info" "label" .Status)}}</td></tr>
+        {{else}}
+        <tr><td colspan="4">{{template "empty_state" "No opportunities available yet."}}</td></tr>
+        {{end}}
+      </table>
+    </div>
+  </div>
+</details>
+{{end}}

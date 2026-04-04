@@ -1,13 +1,25 @@
 {{define "create_user_form"}}
 <form method="post" action="/admin/users/create" class="form-grid">
   <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-  <label>Username<input name="username" required></label>
-  <label>Display name<input name="display_name" required></label>
-  <label>Email<input name="email" type="email" required></label>
-  <label>Password<input name="password" type="password" required></label>
-  <label>Tenant<select name="tenant_id">{{range .Tenants}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></label>
-  <label>Role<select name="role"><option>admin</option><option>portfolio_manager</option><option>tenant_admin</option><option>analyst</option><option>reviewer</option><option>operator</option><option>viewer</option></select></label>
-  <label>Responsibilities<textarea name="responsibilities"></textarea></label>
+  <fieldset class="form-fieldset">
+    <legend>Create user details</legend>
+    <label for="create-user-username">Username<input id="create-user-username" name="username" autocomplete="username" required></label>
+    <label for="create-user-display-name">Display name<input id="create-user-display-name" name="display_name" autocomplete="name" required></label>
+    <label for="create-user-email">Email<input id="create-user-email" name="email" type="email" autocomplete="email" required></label>
+    <label for="create-user-password">Password<input id="create-user-password" name="password" type="password" autocomplete="new-password" aria-describedby="role-scope-guide" required></label>
+    <label for="create-user-tenant">Tenant<select id="create-user-tenant" name="tenant_id" aria-describedby="role-scope-guide">{{range .Tenants}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></label>
+    <label for="create-user-platform-role">Platform role
+      <select id="create-user-platform-role" name="platform_role" aria-describedby="role-scope-guide">
+        {{range .PlatformRoleOptions}}<option value="{{.Value}}">{{.Label}}</option>{{end}}
+      </select>
+    </label>
+    <label for="create-user-tenant-role">Tenant role
+      <select id="create-user-tenant-role" name="tenant_role" aria-describedby="role-scope-guide">
+        {{range .TenantRoleOptions}}<option value="{{.Value}}">{{.Label}}</option>{{end}}
+      </select>
+    </label>
+    <label for="create-user-responsibilities">Responsibilities<textarea id="create-user-responsibilities" name="responsibilities"></textarea></label>
+  </fieldset>
   <div class="actions"><button type="submit">Create user</button></div>
 </form>
 {{end}}
@@ -15,23 +27,52 @@
 {{define "membership_upsert_form"}}
 <form method="post" action="/admin/memberships/upsert" class="form-grid">
   <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-  <div class="row-4">
-    <label>User ID<input name="user_id" required></label>
-    <label>Tenant<select name="tenant_id">{{range .Tenants}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></label>
-    <label>Role<select name="role"><option>admin</option><option>portfolio_manager</option><option>tenant_admin</option><option>analyst</option><option>reviewer</option><option>operator</option><option>viewer</option></select></label>
-    <label>Responsibilities<input name="responsibilities"></label>
-  </div>
+  <fieldset class="form-fieldset">
+    <legend>Membership details</legend>
+    <datalist id="membership-user-options">
+      {{range .Items}}
+      <option value="{{.ID}}">{{.Username}} · {{.Email}}</option>
+      {{end}}
+    </datalist>
+    <div class="row-4">
+      <label for="membership-user-id">User ID<input id="membership-user-id" name="user_id" list="membership-user-options" aria-describedby="role-scope-guide" required></label>
+      <label for="membership-tenant-id">Tenant<select id="membership-tenant-id" name="tenant_id">{{range .Tenants}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></label>
+      <label for="membership-role">Tenant role
+        <select id="membership-role" name="tenant_role" aria-describedby="role-scope-guide">
+          {{range .TenantRoleOptions}}<option value="{{.Value}}">{{.Label}}</option>{{end}}
+        </select>
+      </label>
+      <label for="membership-responsibilities">Responsibilities<input id="membership-responsibilities" name="responsibilities"></label>
+    </div>
+  </fieldset>
   <div class="actions"><button type="submit">Save membership</button></div>
 </form>
 {{end}}
 
 {{define "user_table_typed"}}
 <table>
-  <tr><th>Username</th><th>Email</th><th>Active</th><th>Actions</th></tr>
+  <caption class="sr-only">User administration table with platform role, activation, and password reset actions.</caption>
+  <tr><th scope="col">Username</th><th scope="col">Email</th><th scope="col">Platform role</th><th scope="col">Active</th><th scope="col">Actions</th></tr>
   {{range .Items}}
   <tr>
     <td>{{.Username}}</td>
     <td>{{.Email}}</td>
+    <td>
+      <div>{{platformRoleLabel .PlatformRole}}</div>
+      {{if $.CanAssignPlatformRoles}}
+      {{$user := .}}
+      <form method="post" action="/admin/users/platform-role" class="source-inline-form" style="margin-top:10px">
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <input type="hidden" name="user_id" value="{{.ID}}">
+        <div class="source-inline-controls">
+          <select name="platform_role" aria-label="Platform role for {{.Username}}">
+            {{range $.PlatformRoleOptions}}<option value="{{.Value}}" {{if eq (printf "%s" $user.PlatformRole) .Value}}selected{{end}}>{{.Label}}</option>{{end}}
+          </select>
+        </div>
+        <div class="actions compact-actions"><button type="submit">Save role</button></div>
+      </form>
+      {{end}}
+    </td>
     <td>{{.IsActive}}</td>
     <td>
       {{template "confirm_destructive_action" (dict
@@ -40,6 +81,7 @@
         "csrf" $.CSRFToken
         "inline" true
         "hidden" (slice (dict "name" "user_id" "value" .ID))
+        "button_aria_label" (printf "Toggle active status for %s" .Username)
         "label" "Toggle active"
       )}}
       {{template "confirm_destructive_action" (dict
@@ -48,25 +90,27 @@
         "csrf" $.CSRFToken
         "inline" true
         "hidden" (slice (dict "name" "user_id" "value" .ID))
-        "text_input" (dict "name" "new_password" "placeholder" "Reset!2026Pass")
+        "text_input" (dict "id" (printf "reset-password-%s" .ID) "name" "new_password" "label" (printf "New password for %s" .Username) "placeholder" "Reset!2026Pass" "type" "password" "autocomplete" "new-password")
+        "button_aria_label" (printf "Reset password for %s" .Username)
         "label" "Reset password"
       )}}
     </td>
   </tr>
   {{else}}
-  <tr><td colspan="4">{{template "empty_state" "No users available."}}</td></tr>
+  <tr><td colspan="5">{{template "empty_state" "No users available."}}</td></tr>
   {{end}}
 </table>
 {{end}}
 
 {{define "membership_table_typed"}}
 <table>
-  <tr><th>User</th><th>Tenant</th><th>Role</th><th>Responsibilities</th><th>Actions</th></tr>
+  <caption class="sr-only">Workspace membership table with tenant role assignments.</caption>
+  <tr><th scope="col">User</th><th scope="col">Tenant</th><th scope="col">Tenant role</th><th scope="col">Responsibilities</th><th scope="col">Actions</th></tr>
   {{range .Memberships}}
   <tr>
-    <td class="mono small">{{.UserID}}</td>
-    <td class="mono small">{{.TenantID}}</td>
-    <td>{{.Role}}</td>
+    <td>{{(index $.UsersByID .UserID).Username}}<div class="footer-note mono small">{{.UserID}}</div></td>
+    <td>{{(index $.TenantsByID .TenantID).Name}}<div class="footer-note mono small">{{.TenantID}}</div></td>
+    <td>{{tenantRoleLabel .Role}}</td>
     <td>{{.Responsibilities}}</td>
     <td>
       {{template "confirm_destructive_action" (dict
@@ -75,6 +119,7 @@
         "csrf" $.CSRFToken
         "inline" true
         "hidden" (slice (dict "name" "id" "value" .ID))
+        "button_aria_label" (printf "Delete membership for user %s in tenant %s" .UserID .TenantID)
         "label" "Delete"
       )}}
     </td>
@@ -85,13 +130,177 @@
 </table>
 {{end}}
 
+{{define "tenant_form"}}
+<form method="post" action="/admin/tenants/create" class="form-grid">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <fieldset class="form-fieldset">
+    <legend>Create workspace</legend>
+    <label for="create-tenant-name">Tenant name<input id="create-tenant-name" name="name" autocomplete="organization" placeholder="Acme Engineering" required></label>
+    <label for="create-tenant-slug">Slug<input id="create-tenant-slug" name="slug" autocapitalize="off" autocomplete="off" placeholder="acme-engineering" required></label>
+  </fieldset>
+  <div class="footer-note">Use a short lowercase slug with hyphens so the workspace stays easy to identify later.</div>
+  <div class="actions"><button type="submit">Create tenant</button></div>
+</form>
+{{end}}
+
+{{define "tenant_switch_form"}}
+<form method="post" action="/tenant/switch" class="form-grid tenant-switch-panel">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <input type="hidden" name="return_to" value="{{.CurrentPath}}">
+  <fieldset class="form-fieldset">
+    <legend>Switch workspace</legend>
+    <label for="tenant-switch-id">Available workspaces
+    <select id="tenant-switch-id" name="tenant_id">
+      {{range .UserTenants}}
+      <option value="{{.Tenant.ID}}" {{if eq $.Tenant.ID .Tenant.ID}}selected{{end}}>{{.Tenant.Name}} · {{tenantRoleLabel .Role}}</option>
+      {{end}}
+    </select>
+  </label>
+  </fieldset>
+  <div class="actions"><button type="submit">Switch workspace</button></div>
+</form>
+{{end}}
+
 {{define "tenant_table_typed"}}
 <table>
-  <tr><th>Name</th><th>Slug</th></tr>
+  <caption class="sr-only">Tenant workspace list.</caption>
+  <tr><th scope="col">Name</th><th scope="col">Slug</th></tr>
   {{range .Items}}
   <tr><td>{{.Name}}</td><td>{{.Slug}}</td></tr>
   {{else}}
   <tr><td colspan="2">{{template "empty_state" "No tenants created yet."}}</td></tr>
+  {{end}}
+</table>
+{{end}}
+
+{{define "create_source_form"}}
+<form method="post" action="/sources/create" class="form-grid">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <fieldset class="form-fieldset">
+    <legend>Source definition</legend>
+    <label for="source-name">Display name<input id="source-name" name="name" placeholder="City of Cape Town" required></label>
+    <label for="source-key">Source key<input id="source-key" name="key" autocapitalize="off" autocomplete="off" placeholder="Optional. Derived from the name if left blank."></label>
+    <label for="source-feed-url">Feed URL<input id="source-feed-url" name="feed_url" type="url" inputmode="url" placeholder="https://example.org/feed.json" required></label>
+    <label for="source-type">Source type
+    <select id="source-type" name="type">
+      <option value="json_feed">JSON releases feed</option>
+      <option value="etenders_portal">eTenders opportunities page</option>
+      <option value="publicworks_portal">Public Works tenders page</option>
+      <option value="cidb_portal">CIDB current tenders page</option>
+      <option value="eskom_portal">Eskom tender bulletin page</option>
+      <option value="onlinetenders_portal">OnlineTenders listing page</option>
+    </select>
+  </label>
+  </fieldset>
+  <div class="footer-note">Use <span class="mono">json_feed</span> for feeds with a top-level <span class="mono">releases</span> array and per-item <span class="mono">original_url</span> or <span class="mono">document_url</span>. Use <span class="mono">etenders_portal</span> with a public opportunities page such as <span class="mono">https://www.etenders.gov.za/Home/opportunities?id=1</span>. Use <span class="mono">publicworks_portal</span> with <span class="mono">http://www.publicworks.gov.za/tenders.html</span>. Use <span class="mono">cidb_portal</span> with <span class="mono">https://www.cidb.org.za/cidb-tenders/current-tenders/</span>. Use <span class="mono">eskom_portal</span> with <span class="mono">https://tenderbulletin.eskom.co.za/?pageSize=5&pageNumber=1</span>. Use <span class="mono">onlinetenders_portal</span> with <span class="mono">https://www.onlinetenders.co.za/tenders/south-africa?tcs=civil%23engineering%20consultants</span>.</div>
+  <div class="actions"><button type="submit">Add source</button></div>
+</form>
+{{end}}
+
+{{define "source_schedule_form"}}
+<form method="post" action="/sources/schedule" class="form-grid">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <fieldset class="form-fieldset">
+    <legend>Global scheduling</legend>
+    <label for="source-default-interval">Default check interval (minutes)
+    <input id="source-default-interval" name="default_interval_minutes" type="number" min="1" value="{{.ScheduleSettings.DefaultIntervalMinutes}}" required>
+  </label>
+  <label for="source-schedule-paused" style="display:flex;align-items:center;gap:10px;margin-top:24px">
+    <input id="source-schedule-paused" type="checkbox" name="paused" {{if .ScheduleSettings.Paused}}checked{{end}}>
+    <span>Pause all scheduled checks</span>
+  </label>
+  </fieldset>
+  <div class="actions">
+    <button type="submit">Save schedule</button>
+  </div>
+</form>
+{{end}}
+
+{{define "source_config_table_typed"}}
+<table class="source-ops-table">
+  <caption class="sr-only">Configured sources with health, scheduling, and manual actions.</caption>
+  <tr><th scope="col">Select</th><th scope="col">Source</th><th scope="col">Health</th><th scope="col">Schedule</th><th scope="col">Actions</th></tr>
+  {{range .Items}}
+  <tr>
+    <td>
+      {{if $.CanManageSources}}
+      <input type="checkbox" name="source_keys" value="{{.Config.Key}}" form="bulk-source-check-form" aria-label="Select {{.Config.Name}} for bulk source checks" {{if not .Config.Enabled}}disabled{{end}}>
+      {{else}}
+      <span class="footer-note">View</span>
+      {{end}}
+    </td>
+    <td>
+      <strong>{{.Config.Name}}</strong>
+      <div class="footer-note mono small" style="margin-top:6px">{{.Config.Key}} · {{.Config.Type}}</div>
+      <div class="footer-note small" style="margin-top:6px"><a href="{{.Config.FeedURL}}" target="_blank" rel="noreferrer">{{.Config.FeedURL}}</a></div>
+    </td>
+    <td>
+      {{template "status_badge" (dict "tone" (condTone .Health.HealthStatus) "label" .Health.HealthStatus)}}
+      <div class="footer-note" style="margin-top:6px">Failures: {{.Health.ConsecutiveFailures}} · Items: {{.Health.LastItemCount}}</div>
+      <div class="footer-note" style="margin-top:6px">Last: {{formatTime .Health.LastCheckedAt}}{{if .RecentRun.Trigger}} · {{.RecentRun.Trigger}}{{end}}</div>
+    </td>
+    <td>
+      <div class="footer-note">{{if .Config.Enabled}}Enabled{{else}}Disabled{{end}} · {{if .Config.AutoCheckEnabled}}Auto{{else}}Manual only{{end}}</div>
+      <div class="footer-note" style="margin-top:6px">Every {{if gt .Config.IntervalMinutes 0}}{{.Config.IntervalMinutes}}{{else}}{{$.ScheduleSettings.DefaultIntervalMinutes}}{{end}} min · Next {{formatTime .Health.NextScheduledCheckAt}}</div>
+      {{if $.CanManageSources}}
+      <form method="post" action="/sources/update" class="form-grid source-inline-form" style="margin-top:10px">
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <input type="hidden" name="key" value="{{.Config.Key}}">
+        <div class="source-inline-controls">
+          <label class="toggle-inline"><input type="checkbox" name="enabled" {{if .Config.Enabled}}checked{{end}}><span>Enabled</span></label>
+          <label class="toggle-inline"><input type="checkbox" name="auto_check_enabled" {{if .Config.AutoCheckEnabled}}checked{{end}}><span>Auto-check</span></label>
+          <label class="source-interval-field">Override min
+            <input type="number" min="0" name="interval_minutes" value="{{.Config.IntervalMinutes}}" placeholder="0 = global">
+          </label>
+        </div>
+        <div class="actions compact-actions"><button type="submit">Save</button></div>
+      </form>
+      {{end}}
+    </td>
+    <td class="source-actions-cell">
+      {{if $.CanManageSources}}
+        <div class="actions compact-actions">
+        <form method="post" action="/sources/check" style="display:inline-flex">
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+          <input type="hidden" name="key" value="{{.Config.Key}}">
+          <button type="submit" aria-label="Check source {{.Config.Name}} now" {{if not .Config.Enabled}}disabled{{end}}>Check now</button>
+        </form>
+        {{template "confirm_destructive_action" (dict
+          "action" "/sources/delete"
+          "confirm" (printf "Remove source %s?" .Config.Name)
+          "csrf" $.CSRFToken
+          "inline" true
+          "hidden" (slice (dict "name" "id" "value" .Config.ID) (dict "name" "key" "value" .Config.Key))
+          "button_aria_label" (printf "Delete source %s" .Config.Name)
+          "label" "Delete"
+        )}}
+        </div>
+      {{else}}
+        <span class="footer-note">View only</span>
+      {{end}}
+    </td>
+  </tr>
+  {{else}}
+  <tr><td colspan="5">{{template "empty_state" "No sources configured yet."}}</td></tr>
+  {{end}}
+</table>
+{{end}}
+
+{{define "source_recent_runs_table"}}
+<table>
+  <caption class="sr-only">Recent source execution history.</caption>
+  <tr><th scope="col">Started</th><th scope="col">Source</th><th scope="col">Trigger</th><th scope="col">Status</th><th scope="col">Items</th><th scope="col">Message</th></tr>
+  {{range .RecentRuns}}
+  <tr>
+    <td>{{formatTime .StartedAt}}</td>
+    <td>{{.SourceKey}}</td>
+    <td>{{.Trigger}}</td>
+    <td>{{template "status_badge" (dict "tone" (condTone .Status) "label" .Status)}}</td>
+    <td>{{.ItemCount}}</td>
+    <td>{{.Message}}</td>
+  </tr>
+  {{else}}
+  <tr><td colspan="6">{{template "empty_state" "No source runs recorded yet."}}</td></tr>
   {{end}}
 </table>
 {{end}}

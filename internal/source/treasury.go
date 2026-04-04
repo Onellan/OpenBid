@@ -5,21 +5,27 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
+	"openbid/internal/models"
 	"strings"
-	"tenderhub-za/internal/models"
 	"time"
 )
 
-type TreasuryAdapter struct {
-	FeedURL string
-	Client  *http.Client
+type FeedAdapter struct {
+	SourceKey string
+	FeedURL   string
+	Client    *http.Client
 }
 
-func NewTreasuryAdapter(feedURL string) *TreasuryAdapter {
-	return &TreasuryAdapter{FeedURL: feedURL, Client: &http.Client{Timeout: 30 * time.Second}}
+func NewFeedAdapter(sourceKey, feedURL string) *FeedAdapter {
+	return &FeedAdapter{SourceKey: NormalizeKey(sourceKey), FeedURL: strings.TrimSpace(feedURL), Client: &http.Client{Timeout: 30 * time.Second}}
 }
-func (a *TreasuryAdapter) Key() string { return "treasury" }
+func NewTreasuryAdapter(feedURL string) *FeedAdapter { return NewFeedAdapter("treasury", feedURL) }
+func (a *FeedAdapter) Key() string {
+	if a.SourceKey == "" {
+		return "treasury"
+	}
+	return a.SourceKey
+}
 func score(s string) float64 {
 	s = strings.ToLower(s)
 	hits := 0
@@ -37,11 +43,11 @@ func score(s string) float64 {
 	return float64(hits) / 9
 }
 func stringy(v any) string { return strings.TrimSpace(fmt.Sprint(v)) }
-func (a *TreasuryAdapter) Fetch(ctx context.Context) ([]models.Tender, string, error) {
+func (a *FeedAdapter) Fetch(ctx context.Context) ([]models.Tender, string, error) {
 	if a.FeedURL == "" {
 		return []models.Tender{
-			{SourceKey: "treasury", ExternalID: "demo-001", Title: "Civil engineering maintenance services", Issuer: "City Infrastructure Unit", Province: "Gauteng", Category: "Civil Engineering", TenderNumber: "THZA-001", PublishedDate: "2026-04-01", ClosingDate: "2026-04-18", Status: "open", CIDBGrading: "6CE", Summary: "Term tender for civil maintenance and stormwater works.", OriginalURL: "https://example.org/tenders/1", DocumentURL: "https://example.org/docs/1.pdf", EngineeringRelevant: true, RelevanceScore: 0.94, DocumentStatus: models.ExtractionQueued, ExtractedFacts: map[string]string{}},
-			{SourceKey: "treasury", ExternalID: "demo-002", Title: "Electrical substation upgrade", Issuer: "Provincial Works", Province: "KwaZulu-Natal", Category: "Electrical Engineering", TenderNumber: "THZA-002", PublishedDate: "2026-03-28", ClosingDate: "2026-04-22", Status: "open", CIDBGrading: "7EP", Summary: "Upgrade and commissioning of distribution assets.", OriginalURL: "https://example.org/tenders/2", DocumentURL: "https://example.org/docs/2.html", EngineeringRelevant: true, RelevanceScore: 0.97, DocumentStatus: models.ExtractionQueued, ExtractedFacts: map[string]string{}},
+			NormalizeTenderIdentity(models.Tender{SourceKey: a.Key(), ExternalID: "demo-001", Title: "Civil engineering maintenance services", Issuer: "City Infrastructure Unit", Province: "Gauteng", Category: "Civil Engineering", TenderNumber: "THZA-001", PublishedDate: "2026-04-01", ClosingDate: "2026-04-18", Status: "open", CIDBGrading: "6CE", Summary: "Term tender for civil maintenance and stormwater works.", OriginalURL: "https://example.org/tenders/1", DocumentURL: "https://example.org/docs/1.pdf", EngineeringRelevant: true, RelevanceScore: 0.94, DocumentStatus: models.ExtractionQueued, ExtractedFacts: map[string]string{}}),
+			NormalizeTenderIdentity(models.Tender{SourceKey: a.Key(), ExternalID: "demo-002", Title: "Electrical substation upgrade", Issuer: "Provincial Works", Province: "KwaZulu-Natal", Category: "Electrical Engineering", TenderNumber: "THZA-002", PublishedDate: "2026-03-28", ClosingDate: "2026-04-22", Status: "open", CIDBGrading: "7EP", Summary: "Upgrade and commissioning of distribution assets.", OriginalURL: "https://example.org/tenders/2", DocumentURL: "https://example.org/docs/2.html", EngineeringRelevant: true, RelevanceScore: 0.97, DocumentStatus: models.ExtractionQueued, ExtractedFacts: map[string]string{}}),
 		}, "loaded embedded sample feed", nil
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.FeedURL, nil)
@@ -65,8 +71,7 @@ func (a *TreasuryAdapter) Fetch(ctx context.Context) ([]models.Tender, string, e
 	out := []models.Tender{}
 	for _, r := range payload.Releases {
 		rel := score(stringy(r["title"]) + " " + stringy(r["category"]) + " " + stringy(r["issuer"]))
-		out = append(out, models.Tender{SourceKey: a.Key(), ExternalID: stringy(r["ocid"]), Title: stringy(r["title"]), Issuer: stringy(r["issuer"]), Province: stringy(r["province"]), Category: stringy(r["category"]), TenderNumber: stringy(r["tender_number"]), PublishedDate: stringy(r["published_date"]), ClosingDate: stringy(r["closing_date"]), Status: stringy(r["status"]), CIDBGrading: stringy(r["cidb_grading"]), Summary: stringy(r["summary"]), OriginalURL: stringy(r["original_url"]), DocumentURL: stringy(r["document_url"]), EngineeringRelevant: rel > 0.5, RelevanceScore: rel, DocumentStatus: models.ExtractionQueued, ExtractedFacts: map[string]string{}})
+		out = append(out, NormalizeTenderIdentity(models.Tender{SourceKey: a.Key(), ExternalID: stringy(r["ocid"]), Title: stringy(r["title"]), Issuer: stringy(r["issuer"]), Province: stringy(r["province"]), Category: stringy(r["category"]), TenderNumber: stringy(r["tender_number"]), PublishedDate: stringy(r["published_date"]), ClosingDate: stringy(r["closing_date"]), Status: stringy(r["status"]), CIDBGrading: stringy(r["cidb_grading"]), Summary: stringy(r["summary"]), OriginalURL: stringy(r["original_url"]), DocumentURL: stringy(r["document_url"]), EngineeringRelevant: rel > 0.5, RelevanceScore: rel, DocumentStatus: models.ExtractionQueued, ExtractedFacts: map[string]string{}}))
 	}
 	return out, "loaded remote feed", nil
 }
-func DefaultFeedURL() string { return os.Getenv("TREASURY_FEED_URL") }

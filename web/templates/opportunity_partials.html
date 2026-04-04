@@ -2,24 +2,55 @@
 <form method="get" action="/tenders" class="form-grid">
   <div class="row-4">
     <label>Keyword<input name="q" value="{{.Filter.Query}}"></label>
-    <label>Source<input name="source" value="{{.Filter.Source}}"></label>
-    <label>Province<input name="province" value="{{.Filter.Province}}"></label>
-    <label>Status<input name="status" value="{{.Filter.Status}}"></label>
+    <label>Source<select name="source">
+      <option value="">Any source</option>
+      {{range .FilterOptions.Sources}}<option value="{{.Value}}" {{if eq $.Filter.Source .Value}}selected{{end}}>{{.Label}}</option>{{end}}
+    </select></label>
+    <label>Province<select name="province">
+      <option value="">Any province</option>
+      {{range .FilterOptions.Provinces}}<option value="{{.}}" {{if eq $.Filter.Province .}}selected{{end}}>{{.}}</option>{{end}}
+    </select></label>
+    <label>Status<select name="status">
+      <option value="">Any status</option>
+      {{range .FilterOptions.Statuses}}<option value="{{.}}" {{if eq $.Filter.Status .}}selected{{end}}>{{.}}</option>{{end}}
+    </select></label>
   </div>
   <div class="row-4">
-    <label>Category<input name="category" value="{{.Filter.Category}}"></label>
-    <label>Issuer<input name="issuer" value="{{.Filter.Issuer}}"></label>
-    <label>CIDB<input name="cidb" value="{{.Filter.CIDB}}"></label>
+    <label>Category<select name="category">
+      <option value="">Any category</option>
+      {{range .FilterOptions.Categories}}<option value="{{.}}" {{if eq $.Filter.Category .}}selected{{end}}>{{.}}</option>{{end}}
+    </select></label>
+    <label>Issuer<select name="issuer">
+      <option value="">Any issuer</option>
+      {{range .FilterOptions.Issuers}}<option value="{{.}}" {{if eq $.Filter.Issuer .}}selected{{end}}>{{.}}</option>{{end}}
+    </select></label>
+    <label>CIDB<select name="cidb">
+      <option value="">Any CIDB</option>
+      {{range .FilterOptions.CIDBGradings}}<option value="{{.}}" {{if eq $.Filter.CIDB .}}selected{{end}}>{{.}}</option>{{end}}
+    </select></label>
     <label>Sort<select name="sort">
       <option value="closing_date" {{if eq .Filter.Sort "closing_date"}}selected{{end}}>Closing date</option>
       <option value="published_date" {{if eq .Filter.Sort "published_date"}}selected{{end}}>Published date</option>
       <option value="relevance" {{if eq .Filter.Sort "relevance"}}selected{{end}}>Relevance</option>
+      <option value="source" {{if eq .Filter.Sort "source"}}selected{{end}}>Source</option>
+      <option value="province" {{if eq .Filter.Sort "province"}}selected{{end}}>Province</option>
+      <option value="status" {{if eq .Filter.Sort "status"}}selected{{end}}>Status</option>
+      <option value="category" {{if eq .Filter.Sort "category"}}selected{{end}}>Category</option>
+      <option value="issuer" {{if eq .Filter.Sort "issuer"}}selected{{end}}>Issuer</option>
       <option value="cidb" {{if eq .Filter.Sort "cidb"}}selected{{end}}>CIDB</option>
+      <option value="workflow_status" {{if eq .Filter.Sort "workflow_status"}}selected{{end}}>Workflow status</option>
+      <option value="document_status" {{if eq .Filter.Sort "document_status"}}selected{{end}}>Document status</option>
     </select></label>
   </div>
   <div class="row-4">
-    <label>Workflow status<input name="workflow_status" value="{{.Filter.WorkflowStatus}}"></label>
-    <label>Document status<input name="document_status" value="{{.Filter.DocumentStatus}}"></label>
+    <label>Workflow status<select name="workflow_status">
+      <option value="">Any workflow status</option>
+      {{range .FilterOptions.WorkflowStatus}}<option value="{{.}}" {{if eq $.Filter.WorkflowStatus .}}selected{{end}}>{{.}}</option>{{end}}
+    </select></label>
+    <label>Document status<select name="document_status">
+      <option value="">Any document status</option>
+      {{range .FilterOptions.DocumentStatus}}<option value="{{.}}" {{if eq $.Filter.DocumentStatus .}}selected{{end}}>{{.}}</option>{{end}}
+    </select></label>
     <label>View<select name="view">
       <option value="cards" {{if eq .Filter.View "cards"}}selected{{end}}>Cards</option>
       <option value="table" {{if eq .Filter.View "table"}}selected{{end}}>Table</option>
@@ -42,7 +73,6 @@
     <label>Action<select name="action">
       <option value="workflow">Update workflow</option>
       <option value="bookmark">Toggle saved</option>
-      <option value="queue">Queue extraction</option>
     </select></label>
     <label>Status<input name="status" placeholder="reviewing"></label>
     <label>Priority<input name="priority" placeholder="high"></label>
@@ -55,93 +85,171 @@
 
 {{define "opportunity_table"}}
 <table>
-  <tr><th>ID</th><th>Opportunity</th><th>Issuer</th><th>Closing</th><th>Workflow</th><th>Document</th></tr>
+  <tr><th>ID</th><th>Opportunity</th><th>Issuer</th><th>Type</th><th>Closing</th><th>Workflow</th><th>Document</th><th>Quick actions</th></tr>
   {{range .Items}}
   <tr>
     <td class="small mono">{{.ID}}</td>
-    <td>{{.Title}}</td>
+    <td>{{.Title}}<div class="footer-note mono" style="margin-top:6px">{{.TenderNumber}}</div></td>
     <td>{{.Issuer}}</td>
+    <td>{{if .TenderType}}{{.TenderType}}{{else}}Not set{{end}}</td>
     <td>{{.ClosingDate}}</td>
     <td>{{with index $.Workflows .ID}}{{.Status}} / {{.Priority}}{{end}}</td>
-    <td>{{.DocumentStatus}}</td>
+    <td>{{.DocumentStatus}}<div class="footer-note" style="margin-top:6px">{{len .Documents}} docs</div></td>
+    <td>
+      <div class="actions compact-actions">
+        <a class="button secondary" href="/tenders/{{.ID}}">Details</a>
+        {{if index $.Bookmarked .ID}}
+        <form method="post" action="/tenders/bookmark/remove">
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+          <input type="hidden" name="return_to" value="{{$.ReturnTo}}">
+          <input type="hidden" name="tender_id" value="{{.ID}}">
+          <button type="submit">Remove bookmark</button>
+        </form>
+        {{else}}
+        <form method="post" action="/tenders/bookmark">
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+          <input type="hidden" name="return_to" value="{{$.ReturnTo}}">
+          <input type="hidden" name="tender_id" value="{{.ID}}">
+          <button type="submit">Add bookmark</button>
+        </form>
+        {{end}}
+      </div>
+    </td>
   </tr>
   {{else}}
-  <tr><td colspan="6">{{template "empty_state" "No opportunities matched your filters."}}</td></tr>
+  <tr><td colspan="8">{{template "empty_state" "No opportunities matched your filters."}}</td></tr>
   {{end}}
 </table>
 {{end}}
 
 {{define "opportunity_status_cluster"}}
-<div class="actions">
+<div class="opportunity-cluster">
+  <div class="opportunity-status-row">
   {{template "status_badge" (dict "tone" "info" "label" .Item.Status)}}
-  {{template "status_badge" (dict "tone" "info" "label" (printf "CIDB %s" .Item.CIDBGrading))}}
-  {{template "status_badge" (dict "tone" (condTone .Item.DocumentStatus) "label" (printf "Doc %s" .Item.DocumentStatus))}}
+  {{if .Item.CIDBGrading}}{{template "status_badge" (dict "tone" "info" "label" (printf "CIDB %s" .Item.CIDBGrading))}}{{end}}
+  {{if .Item.TenderType}}{{template "status_badge" (dict "tone" "info" "label" .Item.TenderType)}}{{end}}
+  {{template "status_badge" (dict "tone" "info" "label" (printf "%d docs" (len .Item.Documents)))}}
+  {{if .Item.DocumentStatus}}{{template "status_badge" (dict "tone" (condTone .Item.DocumentStatus) "label" (printf "Doc %s" .Item.DocumentStatus))}}{{end}}
   {{with index .Root.Workflows .Item.ID}}{{if .Status}}{{template "status_badge" (dict "tone" "success" "label" (printf "Workflow %s" .Status))}}{{end}}{{if .Priority}}{{template "status_badge" (dict "tone" "warning" "label" (printf "Priority %s" .Priority))}}{{end}}{{end}}
-  <a class="button secondary" href="/tenders/{{.Item.ID}}">Details</a>
-  <a class="button secondary" href="{{.Item.OriginalURL}}" target="_blank" rel="noreferrer">View source</a>
-  {{if .Item.DocumentURL}}<a class="button secondary" href="{{.Item.DocumentURL}}" target="_blank" rel="noreferrer">View document</a>{{end}}
-</div>
-{{end}}
-
-{{define "opportunity_action_panel"}}
-<div class="card-soft" style="padding:16px">
-  {{template "card_header" (dict "title" "Opportunity actions" "subtitle" "Save notes, manage workflow, and queue extraction.")}}
-  <form method="post" action="/tenders/bookmark" class="form-grid" style="margin-top:14px">
-    <input type="hidden" name="csrf_token" value="{{.Root.CSRFToken}}"><input type="hidden" name="return_to" value="/tenders">
-    <input type="hidden" name="tender_id" value="{{.Item.ID}}">
-    <label>Saved note<textarea name="note">{{with index .Root.Bookmarks .Item.ID}}{{.Note}}{{end}}</textarea></label>
-    <div class="actions"><button type="submit">Toggle saved</button></div>
-  </form>
-  <form method="post" action="/tenders/workflow" class="form-grid" style="margin-top:14px">
-    <input type="hidden" name="csrf_token" value="{{.Root.CSRFToken}}"><input type="hidden" name="return_to" value="/tenders">
-    <input type="hidden" name="tender_id" value="{{.Item.ID}}">
-    <label>Status<input name="status" value="{{with index .Root.Workflows .Item.ID}}{{.Status}}{{end}}" placeholder="reviewing"></label>
-    <label>Priority<input name="priority" value="{{with index .Root.Workflows .Item.ID}}{{.Priority}}{{end}}" placeholder="high"></label>
-    <label>Assigned user<input name="assigned_user" value="{{with index .Root.Workflows .Item.ID}}{{.AssignedUser}}{{end}}"></label>
-    <label>Notes<textarea name="notes">{{with index .Root.Workflows .Item.ID}}{{.Notes}}{{end}}</textarea></label>
-    <div class="actions"><button type="submit">Update workflow</button></div>
-  </form>
-  {{if .Item.DocumentURL}}
-  <form method="post" action="/tenders/queue" style="margin-top:14px">
-    <input type="hidden" name="csrf_token" value="{{.Root.CSRFToken}}"><input type="hidden" name="return_to" value="/tenders">
-    <input type="hidden" name="tender_id" value="{{.Item.ID}}">
-    <div class="actions"><button type="submit">Queue extraction</button></div>
-  </form>
-  {{end}}
-</div>
-{{end}}
-
-{{define "opportunity_danger_zone"}}
-<div class="card-soft" style="padding:16px;border-color:#f2caca;background:#fffafa">
-  {{template "card_header" (dict "title" "Danger zone" "subtitle" "Use caution with destructive or reset actions on this opportunity.")}}
-  <div class="actions" style="margin-top:14px">
-    {{template "confirm_destructive_action" (dict
-      "action" "/tenders/workflow/reset"
-      "confirm" (printf "Reset workflow for '%s'?" .Item.Title)
-      "csrf" .Root.CSRFToken
-      "inline" true
-      "hidden" (slice (dict "name" "tender_id" "value" .Item.ID))
-      "label" "Reset workflow"
-    )}}
-    {{template "confirm_destructive_action" (dict
-      "action" "/tenders/bookmark/remove"
-      "confirm" (printf "Remove saved note/bookmark for '%s'?" .Item.Title)
-      "csrf" .Root.CSRFToken
-      "inline" true
-      "hidden" (slice (dict "name" "tender_id" "value" .Item.ID))
-      "label" "Remove saved"
-    )}}
   </div>
 </div>
 {{end}}
 
+{{define "opportunity_action_panel"}}
+<details class="section-disclosure opportunity-actions-disclosure">
+  <summary>
+    <div>
+      <h3 class="opportunity-actions-title">Quick actions</h3>
+      <p class="section-disclosure-copy">Collapsed by default so the card stays shorter until you want notes, workflow updates, or source links.</p>
+    </div>
+    <div class="opportunity-status-row">
+      {{if index .Root.Bookmarked .Item.ID}}{{template "status_badge" (dict "tone" "success" "label" "Bookmarked")}}{{end}}
+      {{with index .Root.Workflows .Item.ID}}{{if .Status}}{{template "status_badge" (dict "tone" "info" "label" (printf "Workflow %s" .Status))}}{{end}}{{if .AssignedUser}}{{template "status_badge" (dict "tone" "info" "label" (printf "Owner %s" .AssignedUser))}}{{end}}{{end}}
+      <span class="badge warning">Hidden by default</span>
+    </div>
+  </summary>
+  <div class="section-disclosure-body">
+    <div class="card-soft opportunity-actions">
+      <div class="opportunity-actions-head">
+        <div>
+          <h3 class="opportunity-actions-title">Quick actions</h3>
+          <p class="opportunity-actions-copy">Keep notes, ownership, and source links in one low-profile action bar.</p>
+        </div>
+        <div class="actions compact-actions">
+          {{if index .Root.Bookmarked .Item.ID}}
+          <form method="post" action="/tenders/bookmark/remove">
+            <input type="hidden" name="csrf_token" value="{{$.Root.CSRFToken}}">
+            <input type="hidden" name="return_to" value="{{$.Root.ReturnTo}}">
+            <input type="hidden" name="tender_id" value="{{$.Item.ID}}">
+            <button type="submit">Remove bookmark</button>
+          </form>
+          {{else}}
+          <form method="post" action="/tenders/bookmark">
+            <input type="hidden" name="csrf_token" value="{{$.Root.CSRFToken}}">
+            <input type="hidden" name="return_to" value="{{$.Root.ReturnTo}}">
+            <input type="hidden" name="tender_id" value="{{$.Item.ID}}">
+            <button type="submit">Add bookmark</button>
+          </form>
+          {{end}}
+        </div>
+      </div>
+
+      <div class="opportunity-action-block">
+        <div class="opportunity-action-label">Saved view</div>
+        <form method="post" action="/tenders/bookmark" class="form-grid">
+          <input type="hidden" name="csrf_token" value="{{.Root.CSRFToken}}"><input type="hidden" name="return_to" value="{{.Root.ReturnTo}}">
+          <input type="hidden" name="tender_id" value="{{.Item.ID}}">
+          <label>Saved note<textarea class="saved-note" name="note" placeholder="Why this opportunity matters">{{with index .Root.Bookmarks .Item.ID}}{{.Note}}{{end}}</textarea></label>
+          <div class="actions compact-actions"><button type="submit">{{if index .Root.Bookmarked .Item.ID}}Update saved note{{else}}Save bookmark with note{{end}}</button></div>
+        </form>
+      </div>
+
+      <div class="opportunity-action-block">
+        <div class="opportunity-action-label">Workflow</div>
+        <form method="post" action="/tenders/workflow" class="form-grid">
+          <input type="hidden" name="csrf_token" value="{{.Root.CSRFToken}}"><input type="hidden" name="return_to" value="{{.Root.ReturnTo}}">
+          <input type="hidden" name="tender_id" value="{{.Item.ID}}">
+          <div class="compact-field-grid">
+            <label>Status<input name="status" value="{{with index .Root.Workflows .Item.ID}}{{.Status}}{{end}}" placeholder="reviewing"></label>
+            <label>Priority<input name="priority" value="{{with index .Root.Workflows .Item.ID}}{{.Priority}}{{end}}" placeholder="high"></label>
+            <label>Assigned user<input name="assigned_user" value="{{with index .Root.Workflows .Item.ID}}{{.AssignedUser}}{{end}}" placeholder="owner or reviewer"></label>
+            <label class="full">Notes<textarea name="notes" placeholder="Next step, blocker, or decision">{{with index .Root.Workflows .Item.ID}}{{.Notes}}{{end}}</textarea></label>
+          </div>
+          <div class="actions compact-actions">
+            <button type="submit">Update workflow</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="opportunity-action-block opportunity-action-utility">
+        <div class="opportunity-action-label">Open and manage</div>
+        <div class="action-link-stack">
+          <a class="button secondary" href="/tenders/{{.Item.ID}}">Details</a>
+          <a class="button secondary" href="{{.Item.OriginalURL}}" target="_blank" rel="noreferrer">View source</a>
+          {{if .Item.DocumentURL}}<a class="button secondary" href="{{.Item.DocumentURL}}" target="_blank" rel="noreferrer">View document</a>{{end}}
+        </div>
+        {{template "opportunity_danger_zone" .}}
+      </div>
+    </div>
+  </div>
+</details>
+{{end}}
+
+{{define "opportunity_danger_zone"}}
+<details class="danger-disclosure">
+  <summary>Reset or remove</summary>
+  <div class="danger-body">
+    <p class="danger-copy">Only open this if you need to clear saved state or start the workflow over.</p>
+    <div class="actions compact-actions">
+      {{template "confirm_destructive_action" (dict
+        "action" "/tenders/workflow/reset"
+        "confirm" (printf "Reset workflow for '%s'?" .Item.Title)
+        "csrf" .Root.CSRFToken
+        "inline" true
+        "hidden" (slice (dict "name" "tender_id" "value" .Item.ID))
+        "label" "Reset workflow"
+      )}}
+      {{template "confirm_destructive_action" (dict
+        "action" "/tenders/bookmark/remove"
+        "confirm" (printf "Remove saved note/bookmark for '%s'?" .Item.Title)
+        "csrf" .Root.CSRFToken
+        "inline" true
+        "hidden" (slice (dict "name" "tender_id" "value" .Item.ID))
+        "label" "Remove saved"
+      )}}
+    </div>
+  </div>
+</details>
+{{end}}
+
 {{define "opportunity_card"}}
 <section class="card">
-  <div class="split" style="align-items:start">
-    <div>
+  <div class="opportunity-card-layout">
+    <div class="opportunity-card-main">
       <div class="small mono">{{.Item.ID}}</div>
-      <h2 class="card-title" style="font-size:24px;margin-top:8px">{{.Item.Title}}</h2>
+      <h2 class="card-title" style="font-size:20px;margin-top:8px">{{.Item.Title}}</h2>
       <p class="card-subtitle">{{.Item.Issuer}} · {{.Item.Province}} · {{.Item.Category}} · {{.Item.TenderNumber}}</p>
+      <p class="footer-note" style="margin:8px 0 0 0">Published {{.Item.PublishedDate}} · Closing {{.Item.ClosingDate}}{{if .Item.ValidityDays}} · Validity {{.Item.ValidityDays}} days{{end}}</p>
       <p>{{.Item.Summary}}</p>
       {{template "opportunity_status_cluster" .}}
       {{if .Item.Excerpt}}
@@ -153,6 +261,5 @@
     </div>
     {{template "opportunity_action_panel" .}}
   </div>
-  <div style="margin-top:16px">{{template "opportunity_danger_zone" .}}</div>
 </section>
 {{end}}

@@ -1,5 +1,13 @@
 {{define "mfa_setup.html"}}{{template "base" .}}{{end}}{{define "content"}}
-<section class="card" style="max-width:760px">
+{{template "page_hero" (dict
+  "eyebrow" "Settings"
+  "title" "Set up multi-factor authentication"
+  "copy" "Pair your authenticator app and confirm the generated code."
+  "actions" (slice
+    (dict "label" "Back to MFA" "href" "/settings/mfa" "secondary" true)
+  )
+)}}
+<section class="card" style="max-width:760px;margin-top:18px">
   {{template "card_header" (dict "title" "Enable multi-factor authentication" "subtitle" "Add this secret to your authenticator app, then confirm the 6-digit code below.")}}
   <div style="margin-top:10px">{{template "flash_messages" .}}</div>
   <div class="card-soft" style="margin-top:14px"><div class="mono" style="font-size:22px">{{.Message}}</div></div>

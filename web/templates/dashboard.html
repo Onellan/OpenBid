@@ -1,19 +1,19 @@
 {{define "dashboard.html"}}{{template "base" .}}{{end}}{{define "content"}}
 {{template "page_hero" (dict
-  "eyebrow" "Overview"
-  "title" "A clearer workspace for opportunity tracking and submission readiness"
-  "copy" "Track opportunities, team actions, document readiness, and source activity from one structured operations dashboard."
+  "eyebrow" "Dashboard"
+  "title" "Operational metrics for the current workspace"
+  "copy" "Use the dashboard for the dense operational view while the homepage stays focused on navigation and next actions."
   "actions" (slice
-    (dict "label" "View opportunities" "href" "/tenders")
-    (dict "label" "Open pipeline" "href" "/queue" "secondary" true)
+    (dict "label" "Go to home" "href" "/")
+    (dict "label" "View opportunities" "href" "/tenders" "secondary" true)
   )
 )}}
 
 <section class="kpi-band">
   {{template "metric_card" (dict "label" "Open opportunities" "value" .Dashboard.OpenTenders)}}
   {{template "metric_card" (dict "label" "Relevant opportunities" "value" .Dashboard.EngineeringRelevant)}}
-  {{template "metric_card" (dict "label" "Documents available" "value" .Dashboard.WithDocuments)}}
-  {{template "metric_card" (dict "label" "Submission ready" "value" .Dashboard.ExtractedDocuments)}}
+  {{template "metric_card" (dict "label" "Source docs linked" "value" .Dashboard.WithDocuments)}}
+  {{template "metric_card" (dict "label" "Docs extracted" "value" .Dashboard.ExtractedDocuments)}}
   {{template "metric_card" (dict "label" "Queue actions" "value" .Dashboard.QueuedDocuments)}}
   {{template "metric_card" (dict "label" "Total opportunities" "value" .Dashboard.TotalTenders)}}
 </section>

@@ -1,19 +1,31 @@
 {{define "admin_users.html"}}{{template "base" .}}{{end}}{{define "content"}}
 {{template "page_hero" (dict
   "eyebrow" "Administration"
-  "title" "Manage users, access, and tenant memberships"
-  "copy" "Control account access, team roles, and workspace assignments through a clear and structured admin flow."
+  "title" "User administration"
+  "copy" "Manage platform access, tenant memberships, and account controls from one workspace-aware administration screen."
 )}}
 
-<div class="split">
+<div class="split" style="margin-top:18px">
   <section class="card">
-    {{template "card_header" (dict "title" "Create user" "subtitle" "Set up new team members and assign their initial tenant role.")}}
+    {{template "card_header" (dict "title" "Create user" "subtitle" "Set up a user with separate platform and tenant roles.")}}
+    <section id="role-scope-guide" class="card-soft" style="margin-top:14px" aria-labelledby="role-scope-guide-title">
+      <h3 id="role-scope-guide-title" class="card-title" style="font-size:18px">Role scope guide</h3>
+      <ul class="access-list" style="margin-top:10px">
+        <li><strong>Platform Super Admin</strong> has full control across OpenBid, including platform users, tenant management, sources, health, and audit operations.</li>
+        <li><strong>Platform Admin</strong> can run platform operations across tenants, but cannot take super-admin-only actions.</li>
+        <li><strong>Tenant Owner</strong> is the highest authority inside a tenant and can manage tenant settings, admins, and users.</li>
+        <li><strong>Tenant Admin</strong> manages tenant users and settings, but cannot grant ownership.</li>
+        <li><strong>Super User</strong> can handle advanced day-to-day operational work inside the tenant without administrative ownership powers.</li>
+        <li><strong>User</strong> handles normal operational workflows inside the tenant.</li>
+        <li><strong>Viewer</strong> has read-only access inside the tenant.</li>
+      </ul>
+    </section>
     <div style="margin-top:14px">{{template "create_user_form" .}}</div>
   </section>
 
   {{template "entity_table_card" (dict
     "title" "Users"
-    "subtitle" "Manage account activation and password resets."
+    "subtitle" "Manage activation, passwords, and platform roles."
     "inner" "user_table_typed"
     "context" .
   )}}
@@ -27,7 +39,7 @@
     "context" .
   )}}
   <div class="card-soft" style="margin-top:16px">
-    {{template "card_header" (dict "title" "Upsert membership" "subtitle" "Create or update a tenant role assignment.")}}
+    {{template "card_header" (dict "title" "Upsert membership" "subtitle" "Create or update a tenant-scoped role assignment.")}}
     <div style="margin-top:14px">{{template "membership_upsert_form" .}}</div>
   </div>
 </section>

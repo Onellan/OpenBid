@@ -2,16 +2,19 @@ package models
 
 import "time"
 
-type Role string
+type PlatformRole string
+type TenantRole string
 
 const (
-	RoleAdmin            Role = "admin"
-	RolePortfolioManager Role = "portfolio_manager"
-	RoleTenantAdmin      Role = "tenant_admin"
-	RoleAnalyst          Role = "analyst"
-	RoleReviewer         Role = "reviewer"
-	RoleOperator         Role = "operator"
-	RoleViewer           Role = "viewer"
+	PlatformRoleNone       PlatformRole = ""
+	PlatformRoleSuperAdmin PlatformRole = "platform_super_admin"
+	PlatformRoleAdmin      PlatformRole = "platform_admin"
+
+	TenantRoleOwner     TenantRole = "tenant_owner"
+	TenantRoleAdmin     TenantRole = "tenant_admin"
+	TenantRoleSuperUser TenantRole = "super_user"
+	TenantRoleUser      TenantRole = "user"
+	TenantRoleViewer    TenantRole = "viewer"
 )
 
 type ExtractionState string
@@ -24,18 +27,70 @@ const (
 	ExtractionFailed     ExtractionState = "failed"
 )
 
+type TenderDocument struct {
+	URL, FileName, MIMEType, Role, Source, LastModified string
+	SizeBytes                                           int64
+}
+
+type TenderContact struct {
+	Role, Name, Email, Telephone, Fax, Mobile string
+}
+
+type TenderBriefing struct {
+	Label, DateTime, Venue, Address, Notes string
+	Required                               bool
+}
+
+type TenderSubmission struct {
+	Method, Address, DeliveryLocation, Instructions string
+	ElectronicAllowed, PhysicalAllowed              bool
+	TwoEnvelope                                     bool
+}
+
+type TenderEvaluation struct {
+	Method                    string
+	PricePoints               int
+	PreferencePoints          int
+	MinimumFunctionalityScore float64
+	Notes                     string
+}
+
+type TenderRequirement struct {
+	Category, Description string
+	Required              bool
+}
+
+type TenderLocation struct {
+	Site, DeliveryLocation, Street, Suburb, Town, PostalCode, Province, Coordinates string
+}
+
 type Tender struct {
 	ID, SourceKey, ExternalID, Title, Issuer, Province, Category, TenderNumber, PublishedDate, ClosingDate, Status, CIDBGrading, Summary, OriginalURL, DocumentURL, Excerpt string
 	EngineeringRelevant                                                                                                                                                     bool
 	RelevanceScore                                                                                                                                                          float64
+	TenderType                                                                                                                                                              string
+	Scope                                                                                                                                                                   string
+	ValidityDays                                                                                                                                                            int
 	DocumentStatus                                                                                                                                                          ExtractionState
 	ExtractedFacts                                                                                                                                                          map[string]string
+	PageFacts                                                                                                                                                               map[string]string
+	DocumentFacts                                                                                                                                                           map[string]string
+	SourceMetadata                                                                                                                                                          map[string]string
+	Location                                                                                                                                                                TenderLocation
+	Submission                                                                                                                                                              TenderSubmission
+	Evaluation                                                                                                                                                              TenderEvaluation
+	Contacts                                                                                                                                                                []TenderContact
+	Briefings                                                                                                                                                               []TenderBriefing
+	Documents                                                                                                                                                               []TenderDocument
+	Requirements                                                                                                                                                            []TenderRequirement
 	CreatedAt, UpdatedAt                                                                                                                                                    time.Time
 }
 type User struct {
 	ID, Username, DisplayName, Email, PasswordHash, PasswordSalt, MFASecret string
+	PlatformRole                                                            PlatformRole
 	IsActive, MFAEnabled                                                    bool
 	FailedLogins                                                            int
+	SessionVersion                                                          int
 	LockedUntil                                                             time.Time
 	RecoveryCodes                                                           []string
 	CreatedAt, UpdatedAt                                                    time.Time
@@ -46,7 +101,7 @@ type Tenant struct {
 }
 type Membership struct {
 	ID, UserID, TenantID, Responsibilities string
-	Role                                   Role
+	Role                                   TenantRole
 	CreatedAt, UpdatedAt                   time.Time
 }
 type Workflow struct {
@@ -62,8 +117,9 @@ type SavedSearch struct {
 	CreatedAt, UpdatedAt                       time.Time
 }
 type SyncRun struct {
-	ID, SourceKey, Status, Message string
-	StartedAt, FinishedAt          time.Time
+	ID, SourceKey, Status, Message, Trigger string
+	ItemCount                               int
+	StartedAt, FinishedAt                   time.Time
 }
 type ExtractionJob struct {
 	ID, TenderID, DocumentURL, LastError string
@@ -72,13 +128,31 @@ type ExtractionJob struct {
 	NextAttemptAt, CreatedAt, UpdatedAt  time.Time
 }
 type SourceHealth struct {
-	SourceKey, LastStatus, LastMessage string
-	LastSyncAt                         time.Time
-	LastItemCount                      int
+	SourceKey, LastStatus, LastMessage, HealthStatus, LastTrigger          string
+	LastSyncAt, LastCheckedAt, LastSuccessfulCheckAt, NextScheduledCheckAt time.Time
+	LastItemCount, ConsecutiveFailures                                     int
+	Running, PendingManualCheck                                            bool
+}
+type SourceConfig struct {
+	ID, Key, Name, Type, FeedURL                   string
+	Enabled, ManualChecksEnabled, AutoCheckEnabled bool
+	IntervalMinutes                                int
+	CreatedAt, UpdatedAt                           time.Time
+}
+type SourceScheduleSettings struct {
+	ID                     string
+	DefaultIntervalMinutes int
+	Paused                 bool
+	CreatedAt, UpdatedAt   time.Time
+}
+type TenantSourceAssignment struct {
+	ID, TenantID, SourceKey string
+	CreatedAt, UpdatedAt    time.Time
 }
 type Session struct {
-	UserID, TenantID, CSRF string
-	Expires                time.Time
+	ID, UserID, TenantID, CSRF    string
+	SessionVersion                int
+	Expires, CreatedAt, UpdatedAt time.Time
 }
 type Dashboard struct {
 	TotalTenders, EngineeringRelevant, WithDocuments, ExtractedDocuments, QueuedDocuments, OpenTenders int
@@ -87,7 +161,6 @@ type Dashboard struct {
 	SourceHealth                                                                                       []SourceHealth
 	LowMemoryMode, AnalyticsEnabled                                                                    bool
 }
-
 
 type AuditEntry struct {
 	ID        string            `json:"id"`

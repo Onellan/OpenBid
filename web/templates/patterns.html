@@ -17,7 +17,7 @@
 <section class="card">
   {{template "card_header" (dict "title" .title "subtitle" .subtitle "meta" .meta)}}
   <div class="table-wrap" style="margin-top:14px">
-    {{template .inner .context}}
+    {{if eq .inner "saved_search_table_typed"}}{{template "saved_search_table_typed" .context}}{{else if eq .inner "pipeline_jobs_table_typed"}}{{template "pipeline_jobs_table_typed" .context}}{{else if eq .inner "queue_section_table_typed"}}{{template "queue_section_table_typed" .context}}{{else if eq .inner "user_table_typed"}}{{template "user_table_typed" .context}}{{else if eq .inner "membership_table_typed"}}{{template "membership_table_typed" .context}}{{else if eq .inner "tenant_table_typed"}}{{template "tenant_table_typed" .context}}{{else if eq .inner "source_config_table_typed"}}{{template "source_config_table_typed" .context}}{{else}}{{template "empty_state" "Unknown table view."}}{{end}}
   </div>
 </section>
 {{end}}
@@ -31,7 +31,7 @@
 {{end}}
 
 {{define "status_badge"}}
-<span class="badge {{if eq .tone "success"}}success{{else if eq .tone "warning"}}warning{{else if eq .tone "danger"}}danger{{else if eq .tone "info"}}info{{end}}">{{.label}}</span>
+<span class="badge {{if eq .tone "success"}}success{{else if eq .tone "warning"}}warning{{else if or (eq .tone "danger") (eq .tone "critical")}}danger{{else if eq .tone "info"}}info{{end}}">{{.label}}</span>
 {{end}}
 
 {{define "confirm_destructive_action"}}
@@ -41,8 +41,10 @@
     <input type="hidden" name="{{.name}}" value="{{.value}}">
   {{end}}
   {{if .text_input}}
-    <input name="{{.text_input.name}}" placeholder="{{.text_input.placeholder}}">
+    <label class="sr-only" for="{{.text_input.id}}">{{if .text_input.label}}{{.text_input.label}}{{else}}{{.label}}{{end}}</label>
+    <input id="{{.text_input.id}}" name="{{.text_input.name}}" placeholder="{{.text_input.placeholder}}" {{if .text_input.type}}type="{{.text_input.type}}"{{end}} {{if .text_input.autocomplete}}autocomplete="{{.text_input.autocomplete}}"{{end}}>
   {{end}}
-  <button type="submit">{{.label}}</button>
+  <button type="submit" {{if .button_aria_label}}aria-label="{{.button_aria_label}}"{{end}}>{{.label}}</button>
 </form>
 {{end}}
+

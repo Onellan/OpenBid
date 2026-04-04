@@ -1,8 +1,12 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"log"
-	"tenderhub-za/internal/app"
+	"openbid/internal/app"
+	"os/signal"
+	"syscall"
 )
 
 func main() {
@@ -10,5 +14,18 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Fatal(a.RunWorker())
+	defer func() {
+		if err := a.Close(); err != nil {
+			log.Printf("worker store close failed: %v", err)
+		}
+	}()
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	log.Printf("worker starting")
+	if err := a.RunWorkerContext(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		log.Fatal(err)
+	}
+	log.Printf("worker stopped")
 }

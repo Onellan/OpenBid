@@ -1,5 +1,11 @@
 {{define "saved_searches.html"}}{{template "base" .}}{{end}}{{define "content"}}
-<div class="split">
+{{template "page_hero" (dict
+  "eyebrow" "Saved Searches"
+  "title" "Reusable market views for recurring procurement work"
+  "copy" "Store the tender filters your team comes back to most often and reopen them without rebuilding query combinations."
+)}}
+
+<div class="split" style="margin-top:18px">
   <section class="card">
     {{template "card_header" (dict "title" "Reusable search filters" "subtitle" "Save common opportunity views for faster tracking and reporting.")}}
     <div style="margin-top:14px">{{template "saved_search_form_typed" .}}</div>
