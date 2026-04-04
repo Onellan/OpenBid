@@ -1,7 +1,6 @@
 package app
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -136,7 +135,7 @@ func (a *App) WithRecovery(next http.Handler) http.Handler {
 			if recovered := recover(); recovered != nil {
 				requestID := requestIDFromContext(r.Context())
 				log.Printf("event=http_panic request_id=%s method=%s path=%s panic=%v", requestID, r.Method, r.URL.Path, recovered)
-				http.Error(w, fmt.Sprintf("internal server error"), http.StatusInternalServerError)
+				http.Error(w, "internal server error", http.StatusInternalServerError)
 			}
 		}()
 		next.ServeHTTP(w, r)
