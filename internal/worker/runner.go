@@ -39,8 +39,8 @@ func (r Runner) logKV(event string, fields ...any) {
 		}
 		parts = append(parts, key+"="+value)
 	}
-		log.Print(strings.Join(parts, " "))
-	}
+	log.Print(strings.Join(parts, " "))
+}
 
 func toString(value any) string {
 	switch v := value.(type) {
@@ -159,7 +159,8 @@ func (r Runner) syncAll(ctx context.Context) {
 		r.persistSyncRun(ctx, models.SyncRun{SourceKey: ad.Key(), StartedAt: started, FinishedAt: r.now(), Status: status, Message: msg, Trigger: "manual_all", ItemCount: len(items)})
 		r.persistSourceHealth(ctx, models.SourceHealth{SourceKey: ad.Key(), LastSyncAt: r.now(), LastCheckedAt: r.now(), LastStatus: status, LastMessage: msg, LastItemCount: len(items), HealthStatus: status})
 		for _, t := range items {
-			if t.DocumentStatus == "" {
+			t = source.NormalizeTenderIdentity(t)
+			if t.DocumentStatus == "" && (t.DocumentURL != "" || len(t.Documents) > 0) {
 				t.DocumentStatus = models.ExtractionQueued
 			}
 			r.persistTender(ctx, t)
@@ -358,7 +359,7 @@ func (r Runner) finalizeSourceCheck(ctx context.Context, cfg models.SourceConfig
 		return
 	}
 	for _, t := range items {
-		if t.DocumentStatus == "" {
+		if t.DocumentStatus == "" && (t.DocumentURL != "" || len(t.Documents) > 0) {
 			t.DocumentStatus = models.ExtractionQueued
 		}
 		r.persistTender(ctx, t)

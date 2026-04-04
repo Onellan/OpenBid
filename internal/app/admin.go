@@ -164,7 +164,14 @@ func (a *App) AdminTenants(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenants, _ := a.Store.ListTenants(r.Context())
-	a.render(w, r, "admin_tenants.html", map[string]any{"Title": "Tenants", "User": u, "Tenant": t, "Items": tenants, "CSRFToken": a.mustCSRF(r)})
+	a.render(w, r, "admin_tenants.html", map[string]any{
+		"Title":       "Tenants",
+		"User":        u,
+		"Tenant":      t,
+		"Items":       tenants,
+		"UserTenants": a.userTenants(r.Context(), u.ID),
+		"CSRFToken":   a.mustCSRF(r),
+	})
 }
 
 func (a *App) AdminCreateTenant(w http.ResponseWriter, r *http.Request) {

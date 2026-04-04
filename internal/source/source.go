@@ -2,6 +2,8 @@ package source
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
 	"openbid/internal/models"
 	"openbid/internal/netguard"
@@ -14,6 +16,10 @@ const (
 	TypeETendersPortal = "etenders_portal"
 	TypePublicWorks    = "publicworks_portal"
 	TypeCIDBPortal     = "cidb_portal"
+	TypeEskomPortal    = "eskom_portal"
+	TypeOnlineTenders  = "onlinetenders_portal"
+
+	DefaultEskomPageURL = "https://tenderbulletin.eskom.co.za/?pageSize=5&pageNumber=1"
 )
 
 type Adapter interface {
@@ -54,21 +60,82 @@ func NormalizeKey(raw string) string {
 	return strings.Trim(b.String(), "-")
 }
 
+func NormalizeTenderIdentity(t models.Tender) models.Tender {
+	t.SourceKey = NormalizeKey(t.SourceKey)
+	t.ExternalID = strings.TrimSpace(t.ExternalID)
+	t.TenderNumber = strings.TrimSpace(t.TenderNumber)
+	t.DocumentURL = strings.TrimSpace(t.DocumentURL)
+	t.OriginalURL = strings.TrimSpace(t.OriginalURL)
+	t.Title = strings.TrimSpace(t.Title)
+	t.Issuer = strings.TrimSpace(t.Issuer)
+	t.ClosingDate = strings.TrimSpace(t.ClosingDate)
+	if strings.TrimSpace(t.ID) != "" {
+		return t
+	}
+	sourceKey := t.SourceKey
+	if sourceKey == "" {
+		sourceKey = "source"
+	}
+	candidates := []string{}
+	if t.ExternalID != "" {
+		candidates = append(candidates, "external:"+t.ExternalID)
+	}
+	if t.DocumentURL != "" {
+		candidates = append(candidates, "document:"+t.DocumentURL)
+	}
+	if t.OriginalURL != "" && t.TenderNumber != "" {
+		candidates = append(candidates, "listing:"+t.OriginalURL+"|"+t.TenderNumber)
+	}
+	if t.Title != "" {
+		candidates = append(candidates, "title:"+t.Title+"|"+t.Issuer+"|"+t.ClosingDate)
+	}
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		sum := sha1.Sum([]byte(candidate))
+		t.ID = sourceKey + "-" + hex.EncodeToString(sum[:8])
+		break
+	}
+	return t
+}
+
 func DefaultConfigs(feedURL string) []models.SourceConfig {
-	return []models.SourceConfig{{
-		Key:                 "treasury",
-		Name:                "National Treasury",
-		Type:                TypeJSONFeed,
-		FeedURL:             strings.TrimSpace(feedURL),
-		Enabled:             true,
-		ManualChecksEnabled: true,
-		AutoCheckEnabled:    true,
-	}}
+	return []models.SourceConfig{
+		{
+			Key:                 "treasury",
+			Name:                "National Treasury",
+			Type:                TypeJSONFeed,
+			FeedURL:             strings.TrimSpace(feedURL),
+			Enabled:             true,
+			ManualChecksEnabled: true,
+			AutoCheckEnabled:    true,
+		},
+		{
+			Key:                 "eskom",
+			Name:                "Eskom Tender Bulletin",
+			Type:                TypeEskomPortal,
+			FeedURL:             DefaultEskomPageURL,
+			Enabled:             true,
+			ManualChecksEnabled: true,
+			AutoCheckEnabled:    true,
+		},
+		{
+			Key:                 "onlinetenders",
+			Name:                "OnlineTenders South Africa",
+			Type:                TypeOnlineTenders,
+			FeedURL:             DefaultOnlineTendersPageURL,
+			Enabled:             true,
+			ManualChecksEnabled: true,
+			AutoCheckEnabled:    true,
+		},
+	}
 }
 
 func IsSupportedType(sourceType string) bool {
 	switch strings.TrimSpace(sourceType) {
-	case "", TypeJSONFeed, TypeETendersPortal, TypePublicWorks, TypeCIDBPortal:
+	case "", TypeJSONFeed, TypeETendersPortal, TypePublicWorks, TypeCIDBPortal, TypeEskomPortal, TypeOnlineTenders:
 		return true
 	default:
 		return false
@@ -94,6 +161,10 @@ func AdapterFromConfig(cfg models.SourceConfig) (Adapter, error) {
 		return NewPublicWorksAdapter(key, cfg.FeedURL), nil
 	case TypeCIDBPortal:
 		return NewCIDBAdapter(key, cfg.FeedURL), nil
+	case TypeEskomPortal:
+		return NewEskomAdapter(key, cfg.FeedURL), nil
+	case TypeOnlineTenders:
+		return NewOnlineTendersAdapter(key, cfg.FeedURL), nil
 	default:
 		return nil, fmt.Errorf("unsupported source type %q", cfg.Type)
 	}

@@ -43,6 +43,9 @@ func TestETendersAdapterFetchMapsRowsAcrossPages(t *testing.T) {
 	if first.ExternalID != "101" || first.TenderNumber != "ABC-1" {
 		t.Fatalf("unexpected first tender identity: %#v", first)
 	}
+	if first.ID == "" {
+		t.Fatalf("expected stable tender id, got %#v", first)
+	}
 	if first.DocumentURL != server.URL+"/home/Download/?blobName=doc-1.pdf&downloadedFileName=spec.pdf" {
 		t.Fatalf("unexpected document url: %s", first.DocumentURL)
 	}
@@ -71,6 +74,9 @@ func TestETendersAdapterFetchMapsRowsAcrossPages(t *testing.T) {
 	second := items[1]
 	if second.ExternalID != "102" || second.Issuer != "Provincial Works" {
 		t.Fatalf("unexpected second tender mapping: %#v", second)
+	}
+	if second.ID == "" {
+		t.Fatalf("expected stable tender id for second tender, got %#v", second)
 	}
 	if second.DocumentURL != "" {
 		t.Fatalf("expected empty document url, got %s", second.DocumentURL)

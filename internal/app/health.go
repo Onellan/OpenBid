@@ -46,15 +46,17 @@ func (a *App) HealthPage(w http.ResponseWriter, r *http.Request) {
 	runtimeCards := a.runtimeHealthCards(r.Context(), now)
 	queueMetrics := a.healthQueueMetrics(r.Context())
 	sourceSummary := a.healthSourceSummary(r.Context(), now)
+	sourceHealthItems, _ := a.Store.ListSourceHealth(r.Context())
 	a.render(w, r, "health.html", map[string]any{
-		"Title":         "Health",
-		"User":          u,
-		"Tenant":        t,
-		"HealthCards":   runtimeCards,
-		"QueueMetrics":  queueMetrics,
-		"SourceSummary": sourceSummary,
-		"GeneratedAt":   now,
-		"Uptime":        now.Sub(a.StartedAt),
+		"Title":             "Health",
+		"User":              u,
+		"Tenant":            t,
+		"HealthCards":       runtimeCards,
+		"QueueMetrics":      queueMetrics,
+		"SourceSummary":     sourceSummary,
+		"SourceHealthItems": sourceHealthItems,
+		"GeneratedAt":       now,
+		"Uptime":            now.Sub(a.StartedAt),
 	})
 }
 
@@ -155,9 +157,9 @@ func (a *App) workerHealthCard(ctx context.Context, now time.Time) HealthCard {
 	}
 	configs, configErr := a.Store.ListSourceConfigs(ctx)
 	healthItems, healthErr := a.Store.ListSourceHealth(ctx)
-	jobs, jobErr := a.Store.ListJobs(ctx)
-	runs, runErr := a.Store.ListSyncRuns(ctx)
-	if configErr != nil || healthErr != nil || jobErr != nil || runErr != nil {
+	jobCounts, jobErr := a.Store.JobStateCounts(ctx)
+	latestRun, runErr := a.Store.LatestSyncRun(ctx)
+	if configErr != nil || healthErr != nil || jobErr != nil || (runErr != nil && runErr != store.ErrNotFound) {
 		card.Tone = "danger"
 		card.Summary = "Worker state could not be fully evaluated."
 		if configErr != nil {
@@ -207,9 +209,9 @@ func (a *App) workerHealthCard(ctx context.Context, now time.Time) HealthCard {
 		}
 	}
 
-	latestRun := "none"
-	if len(runs) > 0 {
-		latestRun = runs[0].StartedAt.Local().Format("2006-01-02 15:04:05")
+	latestRunValue := "none"
+	if runErr == nil {
+		latestRunValue = latestRun.StartedAt.Local().Format("2006-01-02 15:04:05")
 	}
 	if overdue == 0 {
 		card.Tone = "success"
@@ -223,21 +225,11 @@ func (a *App) workerHealthCard(ctx context.Context, now time.Time) HealthCard {
 		{Label: "Running checks", Value: fmt.Sprintf("%d", running)},
 		{Label: "Pending manual", Value: fmt.Sprintf("%d", pendingManual)},
 		{Label: "Overdue sources", Value: fmt.Sprintf("%d", overdue)},
-		{Label: "Queued/retry jobs", Value: fmt.Sprintf("%d", healthQueuedJobs(jobs))},
-		{Label: "Latest source run", Value: latestRun},
+		{Label: "Queued/retry jobs", Value: fmt.Sprintf("%d", jobCounts.Queued+jobCounts.Retry+jobCounts.Processing)},
+		{Label: "Latest source run", Value: latestRunValue},
 		{Label: "Default interval", Value: fmt.Sprintf("%d minutes", settings.DefaultIntervalMinutes)},
 	}
 	return card
-}
-
-func healthQueuedJobs(jobs []models.ExtractionJob) int {
-	count := 0
-	for _, job := range jobs {
-		if job.State == models.ExtractionQueued || job.State == models.ExtractionRetry || job.State == models.ExtractionProcessing {
-			count++
-		}
-	}
-	return count
 }
 
 func formatBytes(value uint64) string {
@@ -255,16 +247,15 @@ func formatBytes(value uint64) string {
 }
 
 func (a *App) healthQueueMetrics(ctx context.Context) []QueueMetric {
-	jobs, err := a.Store.ListJobs(ctx)
+	counts, err := a.Store.JobStateCounts(ctx)
 	if err != nil {
 		return nil
 	}
-	summary := queueSummary(jobs)
 	metrics := []QueueMetric{
-		{Label: "Queued", Count: summary.Queued, Tone: "info"},
-		{Label: "Processing", Count: summary.Processing, Tone: "warning"},
-		{Label: "Failed", Count: summary.Failed, Tone: "danger"},
-		{Label: "Completed", Count: summary.Completed, Tone: "success"},
+		{Label: "Queued", Count: counts.Queued + counts.Retry, Tone: "info"},
+		{Label: "Processing", Count: counts.Processing, Tone: "warning"},
+		{Label: "Failed", Count: counts.Failed, Tone: "danger"},
+		{Label: "Completed", Count: counts.Completed, Tone: "success"},
 	}
 	return metrics
 }

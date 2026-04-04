@@ -41,6 +41,15 @@ type App struct {
 	LoginRateLimiter *LoginRateLimiter
 }
 
+type authContextKey struct{}
+
+type authContextValue struct {
+	User       models.User
+	Tenant     models.Tenant
+	Membership models.Membership
+	OK         bool
+}
+
 func atoi(s string, d int) int {
 	v, err := strconv.Atoi(s)
 	if err != nil {
@@ -130,6 +139,18 @@ func New() (*App, error) {
 		Config: cfg, Store: st, Templates: tpl, Sources: source.NewRegistry(), Extractor: extract.New(cfg.ExtractorURL), StartedAt: time.Now().UTC(),
 		LoginRateLimiter: NewLoginRateLimiter(time.Duration(cfg.LoginRateLimitWindowSeconds)*time.Second, cfg.LoginRateLimitMaxAttempts),
 	}
+	if deduper, ok := any(st).(interface {
+		DeduplicateTenders(context.Context) (int, error)
+	}); ok {
+		removed, err := deduper.DeduplicateTenders(context.Background())
+		if err != nil {
+			_ = st.Close()
+			return nil, fmt.Errorf("deduplicate tenders: %w", err)
+		}
+		if removed > 0 {
+			log.Printf("deduplicated %d stored tender records", removed)
+		}
+	}
 	if err := a.seed(context.Background()); err != nil {
 		_ = st.Close()
 		return nil, err
@@ -177,10 +198,8 @@ func (a *App) seed(ctx context.Context) error {
 			return err
 		}
 	}
-	if seededUsers {
-		if err := a.ensureSourceConfigs(ctx); err != nil {
-			return err
-		}
+	if err := a.ensureSourceConfigs(ctx); err != nil {
+		return err
 	}
 	if err := a.ensureSourceScheduleSettings(ctx, seededUsers); err != nil {
 		return err
@@ -201,10 +220,14 @@ func (a *App) ensureSourceConfigs(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if len(configs) > 0 {
-		return nil
+	existing := map[string]bool{}
+	for _, cfg := range configs {
+		existing[cfg.Key] = true
 	}
 	for _, cfg := range source.DefaultConfigs(a.Config.TreasuryFeedURL) {
+		if existing[cfg.Key] {
+			continue
+		}
 		if err := a.Store.UpsertSourceConfig(ctx, cfg); err != nil {
 			return err
 		}
@@ -216,6 +239,7 @@ func (a *App) ensureSourceConfigs(ctx context.Context) error {
 		}); err != nil {
 			return err
 		}
+		existing[cfg.Key] = true
 	}
 	return nil
 }
@@ -359,7 +383,8 @@ func (a *App) syncSources(ctx context.Context, registry source.Registry) error {
 			return fmt.Errorf("update source health for %s: %w", ad.Key(), err)
 		}
 		for _, t := range items {
-			if t.DocumentStatus == "" {
+			t = source.NormalizeTenderIdentity(t)
+			if t.DocumentStatus == "" && (t.DocumentURL != "" || len(t.Documents) > 0) {
 				t.DocumentStatus = models.ExtractionQueued
 			}
 			if err := a.Store.UpsertTender(ctx, t); err != nil {
@@ -390,6 +415,13 @@ func (a *App) currentSession(r *http.Request) (models.Session, bool) {
 	return session, true
 }
 func (a *App) currentUserTenant(r *http.Request) (models.User, models.Tenant, models.Membership, bool) {
+	if cached, ok := r.Context().Value(authContextKey{}).(authContextValue); ok {
+		return cached.User, cached.Tenant, cached.Membership, cached.OK
+	}
+	return a.resolveCurrentUserTenant(r)
+}
+
+func (a *App) resolveCurrentUserTenant(r *http.Request) (models.User, models.Tenant, models.Membership, bool) {
 	sess, ok := a.currentSession(r)
 	if !ok {
 		return models.User{}, models.Tenant{}, models.Membership{}, false
@@ -545,9 +577,6 @@ func (a *App) renderStatus(w http.ResponseWriter, r *http.Request, status int, n
 		if _, exists := data["CSRFToken"]; !exists {
 			data["CSRFToken"] = a.mustCSRF(r)
 		}
-		if _, exists := data["UserTenants"]; !exists {
-			data["UserTenants"] = a.userTenants(r.Context(), u.ID)
-		}
 		if _, exists := data["Member"]; !exists {
 			data["Member"] = m
 		}
@@ -617,7 +646,7 @@ func (a *App) serverError(w http.ResponseWriter, r *http.Request, message string
 
 func (a *App) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		_, _, m, ok := a.currentUserTenant(r)
+		u, t, m, ok := a.resolveCurrentUserTenant(r)
 		if !ok {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
@@ -626,7 +655,13 @@ func (a *App) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
-		next(w, r)
+		ctx := context.WithValue(r.Context(), authContextKey{}, authContextValue{
+			User:       u,
+			Tenant:     t,
+			Membership: m,
+			OK:         true,
+		})
+		next(w, r.WithContext(ctx))
 	}
 }
 func (a *App) Healthz(w http.ResponseWriter, r *http.Request) {

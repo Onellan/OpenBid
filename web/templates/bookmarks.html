@@ -26,7 +26,7 @@
         </td>
         <td>{{if .Bookmark.Note}}{{.Bookmark.Note}}{{else}}<span class="footer-note">No note saved.</span>{{end}}</td>
         <td>{{if .Workflow.Status}}{{.Workflow.Status}}{{else}}<span class="footer-note">No workflow yet.</span>{{end}}</td>
-        <td>{{template "status_badge" (dict "tone" (condTone .Tender.DocumentStatus) "label" .Tender.DocumentStatus)}}</td>
+        <td>{{if .Tender.DocumentStatus}}{{template "status_badge" (dict "tone" (condTone .Tender.DocumentStatus) "label" .Tender.DocumentStatus)}}{{else}}<span class="footer-note">No source doc</span>{{end}}</td>
         <td>
           <div class="actions">
             <a class="button secondary" href="/tenders/{{.Tender.ID}}">Open</a>

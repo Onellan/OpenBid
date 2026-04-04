@@ -145,6 +145,13 @@ func TestAuditLogPageIsTenantScopedPaginatedAndExpandedByDefault(t *testing.T) {
 func TestHealthPageShowsOperationalCardsForAdmins(t *testing.T) {
 	a := newTestApp(t)
 	_, _, cookie, _ := adminSession(t, a)
+	_ = a.Store.UpsertSourceHealth(t.Context(), models.SourceHealth{
+		SourceKey:      "treasury",
+		LastStatus:     "success",
+		LastMessage:    "2 items fetched",
+		LastItemCount:  2,
+		HealthStatus:   "healthy",
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	req.AddCookie(cookie)
@@ -154,7 +161,7 @@ func TestHealthPageShowsOperationalCardsForAdmins(t *testing.T) {
 		t.Fatalf("expected 200 got %d", w.Code)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, "Platform health") || !strings.Contains(body, "Worker pipeline") || !strings.Contains(body, "Database") {
+	if !strings.Contains(body, "Platform health") || !strings.Contains(body, "Worker pipeline") || !strings.Contains(body, "Database") || !strings.Contains(body, "Source health") || !strings.Contains(body, "treasury") {
 		t.Fatalf("expected health page content, got %s", body)
 	}
 }

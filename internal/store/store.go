@@ -39,6 +39,30 @@ type RuntimeStats struct {
 	WorkflowEventCount    int
 }
 
+type JobStateCounts struct {
+	Queued     int
+	Processing int
+	Retry      int
+	Failed     int
+	Completed  int
+}
+
+type NamedValue struct {
+	Value string
+	Label string
+}
+
+type TenderFilterOptions struct {
+	Sources        []NamedValue
+	Provinces      []string
+	Statuses       []string
+	Categories     []string
+	Issuers        []string
+	CIDBGradings   []string
+	WorkflowStatus []string
+	DocumentStatus []string
+}
+
 func NormalizeFilter(f ListFilter) ListFilter {
 	if f.Page < 1 {
 		f.Page = 1
@@ -53,7 +77,7 @@ func NormalizeFilter(f ListFilter) ListFilter {
 		f.Sort = "closing_date"
 	}
 	if f.View == "" {
-		f.View = "cards"
+		f.View = "table"
 	}
 	return f
 }
@@ -62,6 +86,7 @@ func ContainsCI(s, q string) bool { return strings.Contains(strings.ToLower(s), 
 
 type Store interface {
 	ListTenders(context.Context, ListFilter) ([]models.Tender, int, error)
+	TenderFilterOptions(context.Context, string) (TenderFilterOptions, error)
 	GetTender(context.Context, string) (models.Tender, error)
 	UpsertTender(context.Context, models.Tender) error
 
@@ -83,18 +108,23 @@ type Store interface {
 
 	GetWorkflow(context.Context, string, string) (models.Workflow, error)
 	ListWorkflows(context.Context, string) ([]models.Workflow, error)
+	GetWorkflowsByTenderIDs(context.Context, string, []string) (map[string]models.Workflow, error)
 	UpsertWorkflow(context.Context, models.Workflow) error
 
 	ListBookmarks(context.Context, string, string) ([]models.Bookmark, error)
+	GetBookmarksByTenderIDs(context.Context, string, string, []string) (map[string]models.Bookmark, error)
+	CountBookmarks(context.Context, string, string) (int, error)
 	UpsertBookmark(context.Context, models.Bookmark) error
 	ToggleBookmark(context.Context, models.Bookmark) error
 	DeleteBookmark(context.Context, string, string, string) error
 
 	ListSavedSearches(context.Context, string, string) ([]models.SavedSearch, error)
+	CountSavedSearches(context.Context, string, string) (int, error)
 	UpsertSavedSearch(context.Context, models.SavedSearch) error
 	DeleteSavedSearch(context.Context, string, string, string) error
 
 	ListSyncRuns(context.Context) ([]models.SyncRun, error)
+	LatestSyncRun(context.Context) (models.SyncRun, error)
 	AddSyncRun(context.Context, models.SyncRun) error
 	ListSourceConfigs(context.Context) ([]models.SourceConfig, error)
 	GetSourceConfig(context.Context, string) (models.SourceConfig, error)
@@ -108,11 +138,15 @@ type Store interface {
 	UpsertSourceScheduleSettings(context.Context, models.SourceScheduleSettings) error
 
 	ListJobs(context.Context) ([]models.ExtractionJob, error)
+	ListValidJobs(context.Context) ([]models.ExtractionJob, error)
+	PruneInvalidJobs(context.Context) (int, error)
+	JobStateCounts(context.Context) (JobStateCounts, error)
 	QueueJob(context.Context, models.ExtractionJob) error
 	UpdateJob(context.Context, models.ExtractionJob) error
 	DeleteJob(context.Context, string) error
 
 	ListAuditEntries(context.Context, string) ([]models.AuditEntry, error)
+	ListAuditEntriesPage(context.Context, string, int, int) ([]models.AuditEntry, int, error)
 	AddAuditEntry(context.Context, models.AuditEntry) error
 	ListWorkflowEvents(context.Context, string, string) ([]models.WorkflowEvent, error)
 	AddWorkflowEvent(context.Context, models.WorkflowEvent) error
@@ -121,5 +155,6 @@ type Store interface {
 	UpsertSession(context.Context, models.Session) error
 	DeleteSession(context.Context, string) error
 
+	GetTendersByIDs(context.Context, []string) (map[string]models.Tender, error)
 	Dashboard(context.Context, string, bool, bool) (models.Dashboard, error)
 }

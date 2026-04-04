@@ -43,3 +43,37 @@ func TestRegistryFromConfigsSkipsDisabledInvalidAndDuplicateEntries(t *testing.T
 		t.Fatalf("expected adapters sorted by display name and deduplicated, got %#v %#v", registry.Adapters[0].Key(), registry.Adapters[1].Key())
 	}
 }
+
+func TestNormalizeTenderIdentityProducesStableIDs(t *testing.T) {
+	t.Parallel()
+
+	first := NormalizeTenderIdentity(models.Tender{
+		SourceKey:   "etenders",
+		ExternalID:  "152485",
+		Title:       "Plant and equipment panel",
+		Issuer:      "Madibeng Local Municipality",
+		ClosingDate: "2026-04-30 10:00",
+	})
+	second := NormalizeTenderIdentity(models.Tender{
+		SourceKey:   "etenders",
+		ExternalID:  "152485",
+		Title:       "Plant and equipment panel",
+		Issuer:      "Madibeng Local Municipality",
+		ClosingDate: "2026-04-30 10:00",
+	})
+	documentOnly := NormalizeTenderIdentity(models.Tender{
+		SourceKey:   "treasury",
+		DocumentURL: "https://example.org/docs/spec.pdf",
+		Title:       "Treasury tender",
+	})
+
+	if first.ID == "" {
+		t.Fatal("expected stable id for external-id-backed tender")
+	}
+	if first.ID != second.ID {
+		t.Fatalf("expected matching ids for same tender identity, got %q and %q", first.ID, second.ID)
+	}
+	if documentOnly.ID == "" {
+		t.Fatal("expected stable id for document-backed tender")
+	}
+}

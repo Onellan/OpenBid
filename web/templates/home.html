@@ -2,10 +2,10 @@
 {{template "page_hero" (dict
   "eyebrow" "Workspace overview"
   "title" "One home for daily bidding work and operational visibility"
-  "copy" "Use this merged home and dashboard view to move between tenders, watch source health, and expand the latest opportunities only when you need them."
+  "copy" "Use this merged home and dashboard view to move between tenders, review your working metrics, and expand the latest opportunities only when you need them."
   "actions" (slice
     (dict "label" "Browse tenders" "href" "/tenders")
-    (dict "label" "Open sources" "href" "/sources" "secondary" true)
+    (dict "label" "Open health" "href" "/health" "secondary" true)
   )
 )}}
 
@@ -14,32 +14,17 @@
   <a class="feature-link" href="/bookmarks"><strong>Bookmarks</strong><span class="footer-note">Return to the opportunities you are actively tracking.</span><span class="badge info">{{.BookmarkCount}} saved</span></a>
   <a class="feature-link" href="/saved-searches"><strong>Saved Searches</strong><span class="footer-note">Jump back into your most useful market views.</span><span class="badge info">{{.SavedCount}} saved</span></a>
   <a class="feature-link" href="/queue"><strong>Queue</strong><span class="footer-note">Watch extraction retries, failures, and completions.</span><span class="badge warning">{{.QueueSummary.Queued}} queued</span></a>
-  <a class="feature-link" href="/sources"><strong>Sources</strong><span class="footer-note">See what is syncing and which feeds need attention.</span><span class="badge success">{{len .Dashboard.SourceHealth}} feeds</span></a>
+  <a class="feature-link" href="/sources"><strong>Sources</strong><span class="footer-note">See what is syncing and which feeds need attention.</span><span class="badge success">{{.SourceHealthCount}} feeds</span></a>
   <a class="feature-link" href="/settings"><strong>Settings</strong><span class="footer-note">Manage account security and workspace preferences.</span><span class="badge">{{.Member.Role}}</span></a>
 </section>
 
 <section class="kpi-band" style="margin-top:18px">
   {{template "metric_card" (dict "label" "Open tenders" "value" .Dashboard.OpenTenders)}}
   {{template "metric_card" (dict "label" "Engineering relevant" "value" .Dashboard.EngineeringRelevant)}}
-  {{template "metric_card" (dict "label" "Documents available" "value" .Dashboard.WithDocuments)}}
-  {{template "metric_card" (dict "label" "Documents ready" "value" .Dashboard.ExtractedDocuments)}}
+  {{template "metric_card" (dict "label" "Source docs linked" "value" .Dashboard.WithDocuments)}}
+  {{template "metric_card" (dict "label" "Docs extracted" "value" .Dashboard.ExtractedDocuments)}}
   {{template "metric_card" (dict "label" "Queue backlog" "value" .QueueSummary.Queued)}}
   {{template "metric_card" (dict "label" "Total opportunities" "value" .Dashboard.TotalTenders)}}
-</section>
-
-<section class="card" style="margin-top:18px">
-  {{template "card_header" (dict "title" "Source health" "subtitle" "A horizontal pulse-check on configured feeds before you dive into fresh opportunities.")}}
-  <div class="health-strip" style="margin-top:14px">
-    {{range .Dashboard.SourceHealth}}
-    {{template "soft_list_item" (dict
-      "title" .SourceKey
-      "meta" (printf "%s · %d items" .LastStatus .LastItemCount)
-      "body" .LastMessage
-    )}}
-    {{else}}
-    {{template "empty_state" "No source health updates yet."}}
-    {{end}}
-  </div>
 </section>
 
 <details class="section-disclosure" style="margin-top:18px">

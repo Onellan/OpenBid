@@ -16,6 +16,7 @@ import (
 
 func newTestApp(t *testing.T) *App {
 	t.Setenv("DATA_PATH", filepath.Join(t.TempDir(), "store.db"))
+	t.Setenv("BOOTSTRAP_SYNC_ON_STARTUP", "false")
 	a, err := New()
 	if err != nil {
 		t.Fatal(err)
@@ -122,7 +123,7 @@ func TestPasswordChangeFlow(t *testing.T) {
 }
 func TestExportCSVIncludesWorkflowColumns(t *testing.T) {
 	a := newTestApp(t)
-	_, tenant, cookie, _ := adminSession(t, a)
+	user, tenant, cookie, _ := adminSession(t, a)
 	_ = a.Store.UpsertTender(t.Context(), models.Tender{
 		ID:             "csv1",
 		Title:          "Electrical",
@@ -137,14 +138,25 @@ func TestExportCSVIncludesWorkflowColumns(t *testing.T) {
 		Documents:      []models.TenderDocument{{URL: "https://example.org/doc.pdf", FileName: "doc.pdf", Role: "notice"}},
 		Contacts:       []models.TenderContact{{Name: "Jane Doe", Role: "listing_contact"}},
 	})
+	_ = a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:             "csv2",
+		Title:          "Filtered Out",
+		Issuer:         "Town",
+		SourceKey:      "treasury",
+		DocumentStatus: models.ExtractionQueued,
+	})
 	_ = a.Store.UpsertWorkflow(t.Context(), models.Workflow{TenantID: tenant.ID, TenderID: "csv1", Status: "reviewing", Priority: "high", AssignedUser: "alice"})
-	req := httptest.NewRequest(http.MethodGet, "/tenders/export.csv", nil)
+	_ = a.Store.UpsertBookmark(t.Context(), models.Bookmark{TenantID: tenant.ID, UserID: user.ID, TenderID: "csv1"})
+	req := httptest.NewRequest(http.MethodGet, "/tenders/export.csv?workflow_status=reviewing&bookmarked_only=1&document_status=completed", nil)
 	req.AddCookie(cookie)
 	w := httptest.NewRecorder()
 	a.ExportCSV(w, req)
 	body := w.Body.String()
 	if !strings.Contains(body, "workflow_status") || !strings.Contains(body, "tender_type") || !strings.Contains(body, "documents_json") || !strings.Contains(body, "close soon") || !strings.Contains(body, "reviewing") || !strings.Contains(body, "CIDB 6EP") {
 		t.Fatalf("csv missing enriched fields: %s", body)
+	}
+	if strings.Contains(body, "Filtered Out") {
+		t.Fatalf("csv should respect export filters, got %s", body)
 	}
 }
 func TestSwitchTenantRejectsUnauthorizedTenant(t *testing.T) {
@@ -408,6 +420,38 @@ func TestAdminCreateCIDBSourceStoresConfig(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected stored CIDB source config, got %#v", configs)
+	}
+}
+
+func TestAdminCreateEskomSourceStoresConfig(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, csrf := adminSession(t, a)
+	form := url.Values{
+		"csrf_token": {csrf},
+		"name":       {"Eskom Tender Bulletin"},
+		"feed_url":   {"https://tenderbulletin.eskom.co.za/?pageSize=5&pageNumber=1"},
+		"type":       {"eskom_portal"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/sources/create", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", w.Code)
+	}
+	configs, err := a.Store.ListSourceConfigs(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, cfg := range configs {
+		if cfg.Key == "eskom-tender-bulletin" && cfg.Type == "eskom_portal" && cfg.FeedURL == "https://tenderbulletin.eskom.co.za/?pageSize=5&pageNumber=1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected stored Eskom source config, got %#v", configs)
 	}
 }
 
@@ -872,8 +916,11 @@ func TestHomePageRendersHomepageContent(t *testing.T) {
 	if !strings.Contains(body, "One home for daily bidding work and operational visibility") || !strings.Contains(body, "Bookmarks") {
 		t.Fatalf("home page missing expected content: %s", body)
 	}
-	if !strings.Contains(body, "Source health") || !strings.Contains(body, "Recent opportunities") {
-		t.Fatalf("home page missing merged dashboard sections: %s", body)
+	if !strings.Contains(body, "Recent opportunities") {
+		t.Fatalf("home page missing recent opportunities section: %s", body)
+	}
+	if strings.Contains(body, "<h2 class=\"card-title\">Source health</h2>") {
+		t.Fatalf("home page should not render source health card anymore: %s", body)
 	}
 }
 
@@ -896,7 +943,7 @@ func TestDashboardRouteRendersMergedHomeView(t *testing.T) {
 	}
 }
 
-func TestHomePageRendersSourceHealthBeforeCollapsedRecentOpportunities(t *testing.T) {
+func TestHomePageCollapsesRecentOpportunitiesWithoutSourceHealthCard(t *testing.T) {
 	a := newTestApp(t)
 	_, _, cookie, _ := adminSession(t, a)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -904,13 +951,12 @@ func TestHomePageRendersSourceHealthBeforeCollapsedRecentOpportunities(t *testin
 	w := httptest.NewRecorder()
 	a.Server.Handler.ServeHTTP(w, req)
 	body := w.Body.String()
-	sourceHealthIndex := strings.Index(body, "Source health")
 	recentIndex := strings.Index(body, "Recent opportunities")
-	if sourceHealthIndex == -1 || recentIndex == -1 {
-		t.Fatalf("expected source health and recent opportunities sections: %s", body)
+	if recentIndex == -1 {
+		t.Fatalf("expected recent opportunities section: %s", body)
 	}
-	if sourceHealthIndex > recentIndex {
-		t.Fatalf("expected source health before recent opportunities: %s", body)
+	if strings.Contains(body, "<h2 class=\"card-title\">Source health</h2>") {
+		t.Fatalf("expected source health card to move off the home page: %s", body)
 	}
 	if !strings.Contains(body, "<details class=\"section-disclosure\"") {
 		t.Fatalf("expected recent opportunities disclosure markup: %s", body)
@@ -920,7 +966,7 @@ func TestHomePageRendersSourceHealthBeforeCollapsedRecentOpportunities(t *testin
 func TestTendersPageRendersTendersContent(t *testing.T) {
 	a := newTestApp(t)
 	_, _, cookie, _ := adminSession(t, a)
-	req := httptest.NewRequest(http.MethodGet, "/tenders", nil)
+	req := httptest.NewRequest(http.MethodGet, "/tenders?view=cards", nil)
 	req.AddCookie(cookie)
 	w := httptest.NewRecorder()
 	a.Server.Handler.ServeHTTP(w, req)
@@ -946,7 +992,8 @@ func TestTendersPageUsesExpectedDisclosureDefaults(t *testing.T) {
 		SourceKey: "treasury",
 		Status:    "open",
 	})
-	req := httptest.NewRequest(http.MethodGet, "/tenders", nil)
+	const tendersDefaultPath = "/tenders"
+	req := httptest.NewRequest(http.MethodGet, tendersDefaultPath, nil)
 	req.AddCookie(cookie)
 	w := httptest.NewRecorder()
 	a.Server.Handler.ServeHTTP(w, req)
@@ -960,8 +1007,14 @@ func TestTendersPageUsesExpectedDisclosureDefaults(t *testing.T) {
 	if !strings.Contains(body, "<details class=\"section-disclosure tenders-bulk-disclosure\">") {
 		t.Fatalf("expected collapsed bulk disclosure, got %s", body)
 	}
-	if !strings.Contains(body, "<details class=\"section-disclosure opportunity-actions-disclosure\">") {
-		t.Fatalf("expected collapsed opportunity quick actions disclosure, got %s", body)
+	if !strings.Contains(body, "Quick actions") || !strings.Contains(body, "Add bookmark") {
+		t.Fatalf("default tenders view should keep lightweight quick actions, got %s", body)
+	}
+	if strings.Contains(body, "Queue extraction") || strings.Contains(body, "Re-run extraction") {
+		t.Fatalf("default tenders view should not expose manual extraction controls, got %s", body)
+	}
+	if strings.Contains(body, "<details class=\"section-disclosure opportunity-actions-disclosure\">") {
+		t.Fatalf("default tenders view should avoid heavy card action disclosures, got %s", body)
 	}
 	bulkIndex := strings.Index(body, "tenders-bulk-disclosure")
 	filterIndex := strings.Index(body, "tenders-filters-disclosure")
@@ -982,7 +1035,7 @@ func TestTendersPageRendersTypedDocumentStatus(t *testing.T) {
 		DocumentStatus: models.ExtractionQueued,
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/tenders", nil)
+	req := httptest.NewRequest(http.MethodGet, "/tenders?view=cards", nil)
 	req.AddCookie(cookie)
 	w := httptest.NewRecorder()
 	a.Server.Handler.ServeHTTP(w, req)
@@ -995,6 +1048,54 @@ func TestTendersPageRendersTypedDocumentStatus(t *testing.T) {
 	}
 	if strings.Contains(body, "template:") {
 		t.Fatalf("unexpected template execution error: %s", body)
+	}
+}
+
+func TestTendersPageRendersFilterDropdownOptionsFromDatabase(t *testing.T) {
+	a := newTestApp(t)
+	_, tenant, cookie, _ := adminSession(t, a)
+	_ = a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:             "filter-options",
+		Title:          "Filter Options Tender",
+		Issuer:         "Metro Water",
+		SourceKey:      "treasury",
+		Province:       "Gauteng",
+		Status:         "open",
+		Category:       "Civil Engineering",
+		CIDBGrading:    "7CE",
+		DocumentStatus: models.ExtractionCompleted,
+	})
+	_ = a.Store.UpsertWorkflow(t.Context(), models.Workflow{
+		TenantID: tenant.ID,
+		TenderID: "filter-options",
+		Status:   "reviewing",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/tenders?view=cards", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	for _, expected := range []string{
+		`<option value="treasury"`,
+		`>National Treasury</option>`,
+		`<option value="Gauteng"`,
+		`<option value="open"`,
+		`<option value="Civil Engineering"`,
+		`<option value="Metro Water"`,
+		`<option value="7CE"`,
+		`<option value="reviewing"`,
+		`<option value="completed"`,
+		`<option value="source"`,
+		`<option value="workflow_status"`,
+		`<option value="document_status"`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("expected filter dropdown content %q, got %s", expected, body)
+		}
 	}
 }
 
@@ -1015,7 +1116,7 @@ func TestTendersPageShowsExplicitBookmarkActionLabels(t *testing.T) {
 		Note:     "track this one",
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/tenders", nil)
+	req := httptest.NewRequest(http.MethodGet, "/tenders?view=cards", nil)
 	req.AddCookie(cookie)
 	w := httptest.NewRecorder()
 	a.Server.Handler.ServeHTTP(w, req)
@@ -1036,7 +1137,7 @@ func TestTendersBookmarkFlowShowsAddThenRemove(t *testing.T) {
 		Status:    "open",
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/tenders", nil)
+	req := httptest.NewRequest(http.MethodGet, "/tenders?view=cards", nil)
 	req.AddCookie(cookie)
 	w := httptest.NewRecorder()
 	a.Server.Handler.ServeHTTP(w, req)
@@ -1055,7 +1156,7 @@ func TestTendersBookmarkFlowShowsAddThenRemove(t *testing.T) {
 		t.Fatalf("expected redirect after bookmarking, got %d", w.Code)
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/tenders", nil)
+	req = httptest.NewRequest(http.MethodGet, "/tenders?view=cards", nil)
 	req.AddCookie(cookie)
 	w = httptest.NewRecorder()
 	a.Server.Handler.ServeHTTP(w, req)
@@ -1125,6 +1226,54 @@ func TestTenderDetailShowsAddBookmarkAction(t *testing.T) {
 	}
 }
 
+func TestTenderDetailShowsRerunExtractionForFailedDocuments(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := adminSession(t, a)
+	_ = a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:             "detail-rerun",
+		Title:          "Detail Rerun Tender",
+		Issuer:         "Metro",
+		SourceKey:      "treasury",
+		Status:         "open",
+		OriginalURL:    "https://example.org/tender",
+		DocumentURL:    "https://example.org/tender.pdf",
+		DocumentStatus: models.ExtractionFailed,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/tenders/detail-rerun", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	if !strings.Contains(body, "Re-run extraction") {
+		t.Fatalf("expected detail page to offer extraction retry, got %s", body)
+	}
+}
+
+func TestTenderDetailHidesRerunExtractionForCompletedDocuments(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := adminSession(t, a)
+	_ = a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:             "detail-complete",
+		Title:          "Detail Complete Tender",
+		Issuer:         "Metro",
+		SourceKey:      "treasury",
+		Status:         "open",
+		OriginalURL:    "https://example.org/tender",
+		DocumentURL:    "https://example.org/tender.pdf",
+		DocumentStatus: models.ExtractionCompleted,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/tenders/detail-complete", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	if strings.Contains(body, "Re-run extraction") {
+		t.Fatalf("did not expect detail page retry control for completed extraction, got %s", body)
+	}
+}
+
 func TestQueuePagePrunesOrphanJobsAndRendersTypedStates(t *testing.T) {
 	a := newTestApp(t)
 	_, _, cookie, _ := adminSession(t, a)
@@ -1168,7 +1317,19 @@ func TestQueuePagePrunesOrphanJobsAndRendersTypedStates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(jobs) != 1 || jobs[0].ID != "job-valid" {
+	var sawValid, sawOrphan bool
+	for _, job := range jobs {
+		if job.ID == "job-valid" {
+			sawValid = true
+		}
+		if job.ID == "job-orphan" || job.TenderID == "missing-tender" {
+			sawOrphan = true
+		}
+	}
+	if !sawValid {
+		t.Fatalf("expected valid queue job to remain, got %#v", jobs)
+	}
+	if sawOrphan {
 		t.Fatalf("expected orphan job to be pruned, got %#v", jobs)
 	}
 }

@@ -93,7 +93,7 @@ func loadConfigFromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	bootstrapSyncOnStartup, err := envBool("BOOTSTRAP_SYNC_ON_STARTUP", appEnv != "production")
+	bootstrapSyncOnStartup, err := envBool("BOOTSTRAP_SYNC_ON_STARTUP", false)
 	if err != nil {
 		return Config{}, err
 	}

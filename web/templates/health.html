@@ -54,4 +54,19 @@
     </div>
   </section>
 </div>
+
+<section class="card" style="margin-top:18px">
+  {{template "card_header" (dict "title" "Source health" "subtitle" "Per-source sync and feed status in one operational view.")}}
+  <div class="health-strip" style="margin-top:14px">
+    {{range .SourceHealthItems}}
+    {{template "soft_list_item" (dict
+      "title" .SourceKey
+      "meta" (printf "%s · %d items" .LastStatus .LastItemCount)
+      "body" .LastMessage
+    )}}
+    {{else}}
+    {{template "empty_state" "No source health updates yet."}}
+    {{end}}
+  </div>
+</section>
 {{end}}

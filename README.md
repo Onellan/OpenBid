@@ -66,7 +66,7 @@ Common variables:
 - `SECURE_COOKIES`: must be `true` in production
 - `BOOTSTRAP_ADMIN_PASSWORD`: initial admin password for first boot in production
 - `BOOTSTRAP_ADMIN_PASSWORD_FILE`: preferred production path for a mounted bootstrap password file
-- `BOOTSTRAP_SYNC_ON_STARTUP`: whether to sync sources on the first startup
+- `BOOTSTRAP_SYNC_ON_STARTUP`: whether to sync sources on the first startup. Default: `false`
 - `LOW_MEMORY_MODE`: keep `true` on smaller machines such as Raspberry Pi
 - `WORKER_SYNC_MINUTES`: default source check interval
 - `WORKER_LOOP_SECONDS`: worker polling loop interval

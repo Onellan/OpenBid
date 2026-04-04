@@ -215,7 +215,7 @@ func (a *ETendersAdapter) mapOpportunity(pageURL *url.URL, item eTendersOpportun
 		"department":     strings.TrimSpace(item.Department),
 	}
 
-	return models.Tender{
+	return NormalizeTenderIdentity(models.Tender{
 		SourceKey:           a.Key(),
 		ExternalID:          strconv.Itoa(item.ID),
 		Title:               strings.TrimSpace(item.Description),
@@ -251,7 +251,7 @@ func (a *ETendersAdapter) mapOpportunity(pageURL *url.URL, item eTendersOpportun
 		Briefings:    briefings,
 		Documents:    documents,
 		Requirements: eTendersRequirements(item),
-	}
+	})
 }
 
 func eTendersDocuments(pageURL *url.URL, docs []eTendersSupportDocument) []models.TenderDocument {

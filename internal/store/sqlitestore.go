@@ -258,20 +258,198 @@ func sqliteDelete(ctx context.Context, db *sql.DB, table, id string) error {
 	return err
 }
 
+func placeholders(count int) string {
+	if count <= 0 {
+		return ""
+	}
+	return strings.TrimRight(strings.Repeat("?,", count), ",")
+}
+
 func (s *SQLiteStore) listAllTenders(ctx context.Context) ([]models.Tender, error) {
 	return sqliteListJSON[models.Tender](ctx, s.db, "tenders")
 }
 
+func (s *SQLiteStore) GetTendersByIDs(ctx context.Context, ids []string) (map[string]models.Tender, error) {
+	out := map[string]models.Tender{}
+	ordered := make([]string, 0, len(ids))
+	seen := map[string]bool{}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ordered = append(ordered, id)
+	}
+	if len(ordered) == 0 {
+		return out, nil
+	}
+	args := make([]any, 0, len(ordered))
+	for _, id := range ordered {
+		args = append(args, id)
+	}
+	rows, err := s.db.QueryContext(ctx, "select payload from tenders where id in ("+placeholders(len(args))+")", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		var tender models.Tender
+		if err := json.Unmarshal([]byte(raw), &tender); err != nil {
+			return nil, err
+		}
+		out[tender.ID] = tender
+	}
+	return out, rows.Err()
+}
+
 func (s *SQLiteStore) ListTenders(ctx context.Context, f ListFilter) ([]models.Tender, int, error) {
 	f = NormalizeFilter(f)
-	if f.WorkflowStatus != "" || f.BookmarkedOnly {
-		return s.listTendersInMemory(ctx, f)
-	}
 	items, total, err := s.listTendersSQL(ctx, f)
 	if err == nil {
 		return items, total, nil
 	}
 	return s.listTendersInMemory(ctx, f)
+}
+
+func (s *SQLiteStore) TenderFilterOptions(ctx context.Context, tenantID string) (TenderFilterOptions, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		select
+			trim(coalesce(json_extract(payload, '$.SourceKey'), '')),
+			trim(coalesce(json_extract(payload, '$.Province'), '')),
+			trim(coalesce(json_extract(payload, '$.Status'), '')),
+			trim(coalesce(json_extract(payload, '$.Category'), '')),
+			trim(coalesce(json_extract(payload, '$.Issuer'), '')),
+			trim(coalesce(json_extract(payload, '$.CIDBGrading'), '')),
+			trim(coalesce(json_extract(payload, '$.DocumentStatus'), ''))
+		from tenders
+	`)
+	if err != nil {
+		return TenderFilterOptions{}, err
+	}
+	defer rows.Close()
+
+	sourceKeySet := map[string]struct{}{}
+	provinceSet := map[string]struct{}{}
+	statusSet := map[string]struct{}{}
+	categorySet := map[string]struct{}{}
+	issuerSet := map[string]struct{}{}
+	cidbSet := map[string]struct{}{}
+	documentStatusSet := map[string]struct{}{}
+	for rows.Next() {
+		var sourceKey, province, status, category, issuer, cidb, documentStatus string
+		if err := rows.Scan(&sourceKey, &province, &status, &category, &issuer, &cidb, &documentStatus); err != nil {
+			return TenderFilterOptions{}, err
+		}
+		addDistinctValue(sourceKeySet, sourceKey)
+		addDistinctValue(provinceSet, province)
+		addDistinctValue(statusSet, status)
+		addDistinctValue(categorySet, category)
+		addDistinctValue(issuerSet, issuer)
+		addDistinctValue(cidbSet, cidb)
+		addDistinctValue(documentStatusSet, documentStatus)
+	}
+	if err := rows.Err(); err != nil {
+		return TenderFilterOptions{}, err
+	}
+
+	sourceConfigs, err := s.ListSourceConfigs(ctx)
+	if err != nil {
+		return TenderFilterOptions{}, err
+	}
+	sourceLabels := map[string]string{}
+	for _, cfg := range sourceConfigs {
+		key := strings.TrimSpace(cfg.Key)
+		if key == "" {
+			continue
+		}
+		label := strings.TrimSpace(cfg.Name)
+		if label == "" {
+			label = key
+		}
+		sourceLabels[key] = label
+	}
+	sourceKeys := sortedDistinctValues(sourceKeySet)
+	sources := make([]NamedValue, 0, len(sourceKeys))
+	for _, key := range sourceKeys {
+		label := sourceLabels[key]
+		if label == "" {
+			label = key
+		}
+		sources = append(sources, NamedValue{Value: key, Label: label})
+	}
+	sort.Slice(sources, func(i, j int) bool {
+		if strings.EqualFold(sources[i].Label, sources[j].Label) {
+			return sources[i].Value < sources[j].Value
+		}
+		return strings.ToLower(sources[i].Label) < strings.ToLower(sources[j].Label)
+	})
+
+	workflowStatuses := []string{}
+	if strings.TrimSpace(tenantID) != "" {
+		workflowStatuses, err = s.distinctWorkflowStatuses(ctx, tenantID)
+		if err != nil {
+			return TenderFilterOptions{}, err
+		}
+	}
+
+	return TenderFilterOptions{
+		Sources:        sources,
+		Provinces:      sortedDistinctValues(provinceSet),
+		Statuses:       sortedDistinctValues(statusSet),
+		Categories:     sortedDistinctValues(categorySet),
+		Issuers:        sortedDistinctValues(issuerSet),
+		CIDBGradings:   sortedDistinctValues(cidbSet),
+		WorkflowStatus: workflowStatuses,
+		DocumentStatus: sortedDistinctValues(documentStatusSet),
+	}, nil
+}
+
+func addDistinctValue(values map[string]struct{}, value string) {
+	value = strings.TrimSpace(value)
+	if value != "" {
+		values[value] = struct{}{}
+	}
+}
+
+func sortedDistinctValues(values map[string]struct{}) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if strings.EqualFold(out[i], out[j]) {
+			return out[i] < out[j]
+		}
+		return strings.ToLower(out[i]) < strings.ToLower(out[j])
+	})
+	return out
+}
+
+func (s *SQLiteStore) distinctWorkflowStatuses(ctx context.Context, tenantID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		select distinct trim(status)
+		from workflow_records
+		where tenant_id = ? and trim(status) <> ''
+		order by lower(trim(status)) asc
+	`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := []string{}
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			return nil, err
+		}
+		values = append(values, strings.TrimSpace(value))
+	}
+	return values, rows.Err()
 }
 
 func (s *SQLiteStore) listTendersInMemory(ctx context.Context, f ListFilter) ([]models.Tender, int, error) {
@@ -338,12 +516,26 @@ func (s *SQLiteStore) listTendersInMemory(ctx context.Context, f ListFilter) ([]
 
 	sort.Slice(out, func(i, j int) bool {
 		switch f.Sort {
+		case "source":
+			return strings.ToLower(out[i].SourceKey) < strings.ToLower(out[j].SourceKey)
+		case "province":
+			return strings.ToLower(out[i].Province) < strings.ToLower(out[j].Province)
+		case "status":
+			return strings.ToLower(out[i].Status) < strings.ToLower(out[j].Status)
+		case "category":
+			return strings.ToLower(out[i].Category) < strings.ToLower(out[j].Category)
+		case "issuer":
+			return strings.ToLower(out[i].Issuer) < strings.ToLower(out[j].Issuer)
 		case "published_date":
 			return out[i].PublishedDate > out[j].PublishedDate
 		case "relevance":
 			return out[i].RelevanceScore > out[j].RelevanceScore
 		case "cidb":
-			return out[i].CIDBGrading > out[j].CIDBGrading
+			return strings.ToLower(out[i].CIDBGrading) < strings.ToLower(out[j].CIDBGrading)
+		case "workflow_status":
+			return strings.ToLower(workflowByTender[out[i].ID].Status) < strings.ToLower(workflowByTender[out[j].ID].Status)
+		case "document_status":
+			return strings.ToLower(string(out[i].DocumentStatus)) < strings.ToLower(string(out[j].DocumentStatus))
 		default:
 			return out[i].ClosingDate < out[j].ClosingDate
 		}
@@ -360,64 +552,109 @@ func (s *SQLiteStore) listTendersInMemory(ctx context.Context, f ListFilter) ([]
 	return out[start:end], total, nil
 }
 
-func tenderOrderClause(sortKey string) string {
-	switch sortKey {
+func tenderOrderClause(f ListFilter) string {
+	switch f.Sort {
+	case "source":
+		return "lower(coalesce(json_extract(t.payload, '$.SourceKey'), '')) asc, t.id asc"
+	case "province":
+		return "lower(coalesce(json_extract(t.payload, '$.Province'), '')) asc, t.id asc"
+	case "status":
+		return "lower(coalesce(json_extract(t.payload, '$.Status'), '')) asc, t.id asc"
+	case "category":
+		return "lower(coalesce(json_extract(t.payload, '$.Category'), '')) asc, t.id asc"
+	case "issuer":
+		return "lower(coalesce(json_extract(t.payload, '$.Issuer'), '')) asc, t.id asc"
 	case "published_date":
-		return "coalesce(json_extract(payload, '$.PublishedDate'), '') desc, id asc"
+		return "coalesce(json_extract(t.payload, '$.PublishedDate'), '') desc, t.id asc"
 	case "relevance":
-		return "coalesce(json_extract(payload, '$.RelevanceScore'), 0) desc, id asc"
+		return "coalesce(json_extract(t.payload, '$.RelevanceScore'), 0) desc, t.id asc"
 	case "cidb":
-		return "coalesce(json_extract(payload, '$.CIDBGrading'), '') desc, id asc"
+		return "lower(coalesce(json_extract(t.payload, '$.CIDBGrading'), '')) asc, t.id asc"
+	case "workflow_status":
+		if strings.TrimSpace(f.TenantID) == "" {
+			return "coalesce(json_extract(t.payload, '$.ClosingDate'), '') asc, t.id asc"
+		}
+		return "lower(coalesce(w.status, '')) asc, t.id asc"
+	case "document_status":
+		return "lower(coalesce(json_extract(t.payload, '$.DocumentStatus'), '')) asc, t.id asc"
 	default:
-		return "coalesce(json_extract(payload, '$.ClosingDate'), '') asc, id asc"
+		return "coalesce(json_extract(t.payload, '$.ClosingDate'), '') asc, t.id asc"
 	}
 }
 
-func buildTenderSQLFilter(f ListFilter) (string, []any) {
+func buildTenderSQLFilter(f ListFilter) (string, []any, []string) {
 	clauses := []string{"1=1"}
-	args := []any{}
+	joins := []string{}
+	joinArgs := []any{}
+	whereArgs := []any{}
 	if f.Query != "" {
 		term := "%" + strings.ToLower(f.Query) + "%"
-		clauses = append(clauses, "(lower(coalesce(json_extract(payload, '$.Title'), '')) like ? or lower(coalesce(json_extract(payload, '$.Issuer'), '')) like ? or lower(coalesce(json_extract(payload, '$.Summary'), '')) like ? or lower(coalesce(json_extract(payload, '$.TenderNumber'), '')) like ?)")
-		args = append(args, term, term, term, term)
+		clauses = append(clauses, "(lower(coalesce(json_extract(t.payload, '$.Title'), '')) like ? or lower(coalesce(json_extract(t.payload, '$.Issuer'), '')) like ? or lower(coalesce(json_extract(t.payload, '$.Summary'), '')) like ? or lower(coalesce(json_extract(t.payload, '$.TenderNumber'), '')) like ?)")
+		whereArgs = append(whereArgs, term, term, term, term)
 	}
 	if f.Source != "" {
-		clauses = append(clauses, "coalesce(json_extract(payload, '$.SourceKey'), '') = ?")
-		args = append(args, f.Source)
+		clauses = append(clauses, "coalesce(json_extract(t.payload, '$.SourceKey'), '') = ?")
+		whereArgs = append(whereArgs, f.Source)
 	}
 	if f.Province != "" {
-		clauses = append(clauses, "lower(coalesce(json_extract(payload, '$.Province'), '')) = ?")
-		args = append(args, strings.ToLower(f.Province))
+		clauses = append(clauses, "lower(coalesce(json_extract(t.payload, '$.Province'), '')) = ?")
+		whereArgs = append(whereArgs, strings.ToLower(f.Province))
 	}
 	if f.Category != "" {
-		clauses = append(clauses, "lower(coalesce(json_extract(payload, '$.Category'), '')) = ?")
-		args = append(args, strings.ToLower(f.Category))
+		clauses = append(clauses, "lower(coalesce(json_extract(t.payload, '$.Category'), '')) = ?")
+		whereArgs = append(whereArgs, strings.ToLower(f.Category))
 	}
 	if f.Issuer != "" {
-		clauses = append(clauses, "lower(coalesce(json_extract(payload, '$.Issuer'), '')) like ?")
-		args = append(args, "%"+strings.ToLower(f.Issuer)+"%")
+		clauses = append(clauses, "lower(coalesce(json_extract(t.payload, '$.Issuer'), '')) like ?")
+		whereArgs = append(whereArgs, "%"+strings.ToLower(f.Issuer)+"%")
 	}
 	if f.Status != "" {
-		clauses = append(clauses, "lower(coalesce(json_extract(payload, '$.Status'), '')) = ?")
-		args = append(args, strings.ToLower(f.Status))
+		clauses = append(clauses, "lower(coalesce(json_extract(t.payload, '$.Status'), '')) = ?")
+		whereArgs = append(whereArgs, strings.ToLower(f.Status))
 	}
 	if f.CIDB != "" {
-		clauses = append(clauses, "lower(coalesce(json_extract(payload, '$.CIDBGrading'), '')) like ?")
-		args = append(args, "%"+strings.ToLower(f.CIDB)+"%")
+		clauses = append(clauses, "lower(coalesce(json_extract(t.payload, '$.CIDBGrading'), '')) like ?")
+		whereArgs = append(whereArgs, "%"+strings.ToLower(f.CIDB)+"%")
 	}
 	if f.DocumentStatus != "" {
-		clauses = append(clauses, "coalesce(json_extract(payload, '$.DocumentStatus'), '') = ?")
-		args = append(args, f.DocumentStatus)
+		clauses = append(clauses, "coalesce(json_extract(t.payload, '$.DocumentStatus'), '') = ?")
+		whereArgs = append(whereArgs, f.DocumentStatus)
 	}
 	if f.HasDocuments {
-		clauses = append(clauses, "coalesce(json_extract(payload, '$.DocumentURL'), '') <> ''")
+		clauses = append(clauses, "coalesce(json_extract(t.payload, '$.DocumentURL'), '') <> ''")
 	}
-	return strings.Join(clauses, " and "), args
+	if f.WorkflowStatus != "" {
+		if strings.TrimSpace(f.TenantID) == "" {
+			clauses = append(clauses, "1=0")
+		} else {
+			joins = append(joins, "join workflow_records w on w.tenant_id = ? and w.tender_id = t.id")
+			joinArgs = append(joinArgs, f.TenantID)
+			clauses = append(clauses, "lower(w.status) = ?")
+			whereArgs = append(whereArgs, strings.ToLower(f.WorkflowStatus))
+		}
+	}
+	if f.BookmarkedOnly {
+		if strings.TrimSpace(f.TenantID) == "" || strings.TrimSpace(f.UserID) == "" {
+			clauses = append(clauses, "1=0")
+		} else {
+			joins = append(joins, "join bookmark_records b on b.tenant_id = ? and b.user_id = ? and b.tender_id = t.id")
+			joinArgs = append(joinArgs, f.TenantID, f.UserID)
+		}
+	}
+	if f.Sort == "workflow_status" && f.WorkflowStatus == "" && strings.TrimSpace(f.TenantID) != "" {
+		joins = append(joins, "left join workflow_records w on w.tenant_id = ? and w.tender_id = t.id")
+		joinArgs = append(joinArgs, f.TenantID)
+	}
+	return strings.Join(clauses, " and "), append(joinArgs, whereArgs...), joins
 }
 
 func (s *SQLiteStore) listTendersSQL(ctx context.Context, f ListFilter) ([]models.Tender, int, error) {
-	whereClause, args := buildTenderSQLFilter(f)
-	countQuery := "select count(*) from tenders where " + whereClause
+	whereClause, args, joins := buildTenderSQLFilter(f)
+	fromClause := " from tenders t "
+	if len(joins) > 0 {
+		fromClause += strings.Join(joins, " ") + " "
+	}
+	countQuery := "select count(*)" + fromClause + "where " + whereClause
 	var total int
 	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, err
@@ -427,7 +664,7 @@ func (s *SQLiteStore) listTendersSQL(ctx context.Context, f ListFilter) ([]model
 		return []models.Tender{}, total, nil
 	}
 	queryArgs := append(append([]any{}, args...), f.PageSize, offset)
-	rows, err := s.db.QueryContext(ctx, "select payload from tenders where "+whereClause+" order by "+tenderOrderClause(f.Sort)+" limit ? offset ?", queryArgs...)
+	rows, err := s.db.QueryContext(ctx, "select t.payload"+fromClause+"where "+whereClause+" order by "+tenderOrderClause(f)+" limit ? offset ?", queryArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -703,6 +940,48 @@ func (s *SQLiteStore) ListWorkflows(ctx context.Context, tenantID string) ([]mod
 	}
 	return out, nil
 }
+
+func (s *SQLiteStore) GetWorkflowsByTenderIDs(ctx context.Context, tenantID string, tenderIDs []string) (map[string]models.Workflow, error) {
+	out := map[string]models.Workflow{}
+	if strings.TrimSpace(tenantID) == "" {
+		return out, nil
+	}
+	ids := make([]string, 0, len(tenderIDs))
+	seen := map[string]bool{}
+	for _, tenderID := range tenderIDs {
+		tenderID = strings.TrimSpace(tenderID)
+		if tenderID == "" || seen[tenderID] {
+			continue
+		}
+		seen[tenderID] = true
+		ids = append(ids, tenderID)
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	args := []any{tenantID}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		select id, tenant_id, tender_id, status, priority, assigned_user, notes, updated_at
+		from workflow_records
+		where tenant_id = ? and tender_id in (`+placeholders(len(ids))+`)
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		workflow, err := scanWorkflow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out[workflow.TenderID] = workflow
+	}
+	return out, rows.Err()
+}
+
 func (s *SQLiteStore) UpsertWorkflow(ctx context.Context, v models.Workflow) error {
 	if v.ID == "" {
 		existing, err := s.GetWorkflow(ctx, v.TenantID, v.TenderID)
@@ -748,6 +1027,57 @@ func (s *SQLiteStore) ListBookmarks(ctx context.Context, tenantID, userID string
 		return nil, err
 	}
 	return out, nil
+}
+
+func (s *SQLiteStore) GetBookmarksByTenderIDs(ctx context.Context, tenantID, userID string, tenderIDs []string) (map[string]models.Bookmark, error) {
+	out := map[string]models.Bookmark{}
+	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(userID) == "" {
+		return out, nil
+	}
+	ids := make([]string, 0, len(tenderIDs))
+	seen := map[string]bool{}
+	for _, tenderID := range tenderIDs {
+		tenderID = strings.TrimSpace(tenderID)
+		if tenderID == "" || seen[tenderID] {
+			continue
+		}
+		seen[tenderID] = true
+		ids = append(ids, tenderID)
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	args := []any{tenantID, userID}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		select id, tenant_id, user_id, tender_id, note, created_at, updated_at
+		from bookmark_records
+		where tenant_id = ? and user_id = ? and tender_id in (`+placeholders(len(ids))+`)
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		bookmark, err := scanBookmark(rows)
+		if err != nil {
+			return nil, err
+		}
+		out[bookmark.TenderID] = bookmark
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLiteStore) CountBookmarks(ctx context.Context, tenantID, userID string) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `
+		select count(*)
+		from bookmark_records
+		where tenant_id = ? and user_id = ?
+	`, tenantID, userID).Scan(&count)
+	return count, err
 }
 
 func (s *SQLiteStore) UpsertBookmark(ctx context.Context, v models.Bookmark) error {
@@ -822,6 +1152,17 @@ func (s *SQLiteStore) ListSavedSearches(ctx context.Context, tenantID, userID st
 	}
 	return out, nil
 }
+
+func (s *SQLiteStore) CountSavedSearches(ctx context.Context, tenantID, userID string) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `
+		select count(*)
+		from saved_search_records
+		where tenant_id = ? and user_id = ?
+	`, tenantID, userID).Scan(&count)
+	return count, err
+}
+
 func (s *SQLiteStore) UpsertSavedSearch(ctx context.Context, v models.SavedSearch) error {
 	now := time.Now().UTC()
 	if v.ID == "" {
@@ -860,6 +1201,32 @@ func (s *SQLiteStore) ListSyncRuns(ctx context.Context) ([]models.SyncRun, error
 	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
 	return out, nil
 }
+
+func (s *SQLiteStore) LatestSyncRun(ctx context.Context) (models.SyncRun, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		select payload
+		from sync_runs
+		order by coalesce(json_extract(payload, '$.StartedAt'), '') desc, id desc
+		limit 1
+	`)
+	if err != nil {
+		return models.SyncRun{}, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return models.SyncRun{}, ErrNotFound
+	}
+	var raw string
+	if err := rows.Scan(&raw); err != nil {
+		return models.SyncRun{}, err
+	}
+	var run models.SyncRun
+	if err := json.Unmarshal([]byte(raw), &run); err != nil {
+		return models.SyncRun{}, err
+	}
+	return run, rows.Err()
+}
+
 func (s *SQLiteStore) AddSyncRun(ctx context.Context, v models.SyncRun) error {
 	if v.ID == "" {
 		v.ID = newid()
@@ -947,15 +1314,109 @@ func (s *SQLiteStore) ListJobs(ctx context.Context) ([]models.ExtractionJob, err
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	return out, nil
 }
-func (s *SQLiteStore) QueueJob(ctx context.Context, v models.ExtractionJob) error {
-	items, err := s.ListJobs(ctx)
+
+func (s *SQLiteStore) ListValidJobs(ctx context.Context) ([]models.ExtractionJob, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		select j.payload
+		from jobs j
+		where coalesce(json_extract(j.payload, '$.TenderID'), '') <> ''
+		  and exists (
+			select 1
+			from tenders t
+			where t.id = coalesce(json_extract(j.payload, '$.TenderID'), '')
+		  )
+		order by coalesce(json_extract(j.payload, '$.CreatedAt'), '') desc, j.id desc
+	`)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	for _, j := range items {
-		if j.TenderID == v.TenderID && j.DocumentURL == v.DocumentURL && j.State != models.ExtractionCompleted {
-			return nil
+	defer rows.Close()
+	out := []models.ExtractionJob{}
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
 		}
+		var job models.ExtractionJob
+		if err := json.Unmarshal([]byte(raw), &job); err != nil {
+			return nil, err
+		}
+		out = append(out, job)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLiteStore) PruneInvalidJobs(ctx context.Context) (int, error) {
+	result, err := s.db.ExecContext(ctx, `
+		delete from jobs
+		where coalesce(json_extract(payload, '$.TenderID'), '') = ''
+		   or not exists (
+			select 1
+			from tenders t
+			where t.id = coalesce(json_extract(jobs.payload, '$.TenderID'), '')
+		   )
+	`)
+	if err != nil {
+		return 0, err
+	}
+	removed, err := result.RowsAffected()
+	return int(removed), err
+}
+
+func (s *SQLiteStore) JobStateCounts(ctx context.Context) (JobStateCounts, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		select coalesce(json_extract(j.payload, '$.State'), '') as state, count(*)
+		from jobs j
+		where coalesce(json_extract(j.payload, '$.TenderID'), '') <> ''
+		  and exists (
+			select 1
+			from tenders t
+			where t.id = coalesce(json_extract(j.payload, '$.TenderID'), '')
+		  )
+		group by state
+	`)
+	if err != nil {
+		return JobStateCounts{}, err
+	}
+	defer rows.Close()
+	counts := JobStateCounts{}
+	for rows.Next() {
+		var state string
+		var count int
+		if err := rows.Scan(&state, &count); err != nil {
+			return JobStateCounts{}, err
+		}
+		switch models.ExtractionState(state) {
+		case models.ExtractionQueued:
+			counts.Queued = count
+		case models.ExtractionProcessing:
+			counts.Processing = count
+		case models.ExtractionRetry:
+			counts.Retry = count
+		case models.ExtractionFailed:
+			counts.Failed = count
+		case models.ExtractionCompleted:
+			counts.Completed = count
+		}
+	}
+	return counts, rows.Err()
+}
+
+func (s *SQLiteStore) QueueJob(ctx context.Context, v models.ExtractionJob) error {
+	var existingID string
+	err := s.db.QueryRowContext(ctx, `
+		select id
+		from jobs
+		where coalesce(json_extract(payload, '$.TenderID'), '') = ?
+		  and coalesce(json_extract(payload, '$.DocumentURL'), '') = ?
+		  and coalesce(json_extract(payload, '$.State'), '') <> ?
+		limit 1
+	`, v.TenderID, v.DocumentURL, string(models.ExtractionCompleted)).Scan(&existingID)
+	if err == nil {
+		return nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
 	}
 	if v.ID == "" {
 		v.ID = newid()
@@ -980,36 +1441,52 @@ func (s *SQLiteStore) DeleteJob(ctx context.Context, id string) error {
 	return sqliteDelete(ctx, s.db, "jobs", id)
 }
 func (s *SQLiteStore) Dashboard(ctx context.Context, tenantID string, lowMemory, analytics bool) (models.Dashboard, error) {
-	items, err := s.listAllTenders(ctx)
+	d := models.Dashboard{LowMemoryMode: lowMemory, AnalyticsEnabled: analytics}
+	if err := s.db.QueryRowContext(ctx, `
+		select
+			count(*),
+			coalesce(sum(case when coalesce(json_extract(payload, '$.EngineeringRelevant'), 0) = 1 then 1 else 0 end), 0),
+			coalesce(sum(case when coalesce(json_extract(payload, '$.DocumentURL'), '') <> '' then 1 else 0 end), 0),
+			coalesce(sum(case when coalesce(json_extract(payload, '$.DocumentStatus'), '') = ? then 1 else 0 end), 0),
+			coalesce(sum(case when coalesce(json_extract(payload, '$.DocumentStatus'), '') in (?, ?) then 1 else 0 end), 0),
+			coalesce(sum(case when lower(coalesce(json_extract(payload, '$.Status'), '')) = 'open' then 1 else 0 end), 0)
+		from tenders
+	`, string(models.ExtractionCompleted), string(models.ExtractionQueued), string(models.ExtractionRetry)).Scan(
+		&d.TotalTenders,
+		&d.EngineeringRelevant,
+		&d.WithDocuments,
+		&d.ExtractedDocuments,
+		&d.QueuedDocuments,
+		&d.OpenTenders,
+	); err != nil {
+		return models.Dashboard{}, err
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		select payload
+		from tenders
+		order by coalesce(json_extract(payload, '$.PublishedDate'), '') desc, id asc
+		limit 8
+	`)
 	if err != nil {
 		return models.Dashboard{}, err
 	}
-	d := models.Dashboard{LowMemoryMode: lowMemory, AnalyticsEnabled: analytics}
-	for _, t := range items {
-		d.TotalTenders++
-		if t.EngineeringRelevant {
-			d.EngineeringRelevant++
+	defer rows.Close()
+	d.RecentTenders = make([]models.Tender, 0, 8)
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return models.Dashboard{}, err
 		}
-		if t.DocumentURL != "" {
-			d.WithDocuments++
+		var tender models.Tender
+		if err := json.Unmarshal([]byte(raw), &tender); err != nil {
+			return models.Dashboard{}, err
 		}
-		if t.DocumentStatus == models.ExtractionCompleted {
-			d.ExtractedDocuments++
-		}
-		if t.DocumentStatus == models.ExtractionQueued || t.DocumentStatus == models.ExtractionRetry {
-			d.QueuedDocuments++
-		}
-		if strings.ToLower(t.Status) == "open" {
-			d.OpenTenders++
-		}
-		d.RecentTenders = append(d.RecentTenders, t)
+		d.RecentTenders = append(d.RecentTenders, tender)
 	}
-	sort.Slice(d.RecentTenders, func(i, j int) bool { return d.RecentTenders[i].PublishedDate > d.RecentTenders[j].PublishedDate })
-	if len(d.RecentTenders) > 8 {
-		d.RecentTenders = d.RecentTenders[:8]
+	if err := rows.Err(); err != nil {
+		return models.Dashboard{}, err
 	}
-	d.SyncHistory, _ = s.ListSyncRuns(ctx)
-	d.SourceHealth, _ = s.ListSourceHealth(ctx)
 	return d, nil
 }
 
@@ -1026,6 +1503,54 @@ func (s *SQLiteStore) ListAuditEntries(ctx context.Context, tenantID string) ([]
 	}
 	sort.Slice(filtered, func(i, j int) bool { return filtered[i].CreatedAt.After(filtered[j].CreatedAt) })
 	return filtered, nil
+}
+
+func (s *SQLiteStore) ListAuditEntriesPage(ctx context.Context, tenantID string, page, pageSize int) ([]models.AuditEntry, int, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	args := []any{}
+	where := "1=1"
+	if strings.TrimSpace(tenantID) != "" {
+		where = "coalesce(json_extract(payload, '$.tenant_id'), '') = ?"
+		args = append(args, tenantID)
+	}
+	var total int
+	if err := s.db.QueryRowContext(ctx, "select count(*) from audit_entries where "+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	offset := (page - 1) * pageSize
+	if offset >= total {
+		return []models.AuditEntry{}, total, nil
+	}
+	queryArgs := append(append([]any{}, args...), pageSize, offset)
+	rows, err := s.db.QueryContext(ctx, `
+		select payload
+		from audit_entries
+		where `+where+`
+		order by coalesce(json_extract(payload, '$.created_at'), '') desc, id desc
+		limit ? offset ?
+	`, queryArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	items := make([]models.AuditEntry, 0, pageSize)
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, 0, err
+		}
+		var item models.AuditEntry
+		if err := json.Unmarshal([]byte(raw), &item); err != nil {
+			return nil, 0, err
+		}
+		items = append(items, item)
+	}
+	return items, total, rows.Err()
 }
 
 func (s *SQLiteStore) AddAuditEntry(ctx context.Context, v models.AuditEntry) error {

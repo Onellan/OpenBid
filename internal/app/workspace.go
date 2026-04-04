@@ -53,6 +53,17 @@ type detailFactSection struct {
 	Facts map[string]string
 }
 
+type tenderFilterViewOptions struct {
+	Sources        []store.NamedValue
+	Provinces      []string
+	Statuses       []string
+	Categories     []string
+	Issuers        []string
+	CIDBGradings   []string
+	WorkflowStatus []string
+	DocumentStatus []string
+}
+
 func queueSummary(jobs []models.ExtractionJob) QueueSummary {
 	summary := QueueSummary{}
 	for _, job := range jobs {
@@ -68,6 +79,15 @@ func queueSummary(jobs []models.ExtractionJob) QueueSummary {
 		}
 	}
 	return summary
+}
+
+func queueSummaryFromCounts(counts store.JobStateCounts) QueueSummary {
+	return QueueSummary{
+		Queued:     counts.Queued + counts.Retry,
+		Processing: counts.Processing,
+		Failed:     counts.Failed,
+		Completed:  counts.Completed,
+	}
 }
 
 func cloneURLValues(values url.Values) url.Values {
@@ -144,32 +164,8 @@ func buildQueueSection(key, title, tone string, items []QueueItem, query url.Val
 }
 
 func (a *App) listRenderableJobs(ctx context.Context) []models.ExtractionJob {
-	jobs, _ := a.Store.ListJobs(ctx)
-	if len(jobs) == 0 {
-		return jobs
-	}
-	pruned := false
-	filtered := make([]models.ExtractionJob, 0, len(jobs))
-	for _, job := range jobs {
-		if strings.TrimSpace(job.TenderID) == "" {
-			if job.ID != "" {
-				_ = a.Store.DeleteJob(ctx, job.ID)
-			}
-			pruned = true
-			continue
-		}
-		if _, err := a.Store.GetTender(ctx, job.TenderID); err != nil {
-			if job.ID != "" {
-				_ = a.Store.DeleteJob(ctx, job.ID)
-			}
-			pruned = true
-			continue
-		}
-		filtered = append(filtered, job)
-	}
-	if pruned {
-		return filtered
-	}
+	_, _ = a.Store.PruneInvalidJobs(ctx)
+	jobs, _ := a.Store.ListValidJobs(ctx)
 	return jobs
 }
 
@@ -215,6 +211,56 @@ func factSectionsForTender(item models.Tender) []detailFactSection {
 	return sections
 }
 
+func ensureCurrentStringOption(options []string, current string) []string {
+	current = strings.TrimSpace(current)
+	if current == "" {
+		return options
+	}
+	for _, option := range options {
+		if strings.EqualFold(option, current) {
+			return options
+		}
+	}
+	return append([]string{current}, options...)
+}
+
+func ensureCurrentNamedOption(options []store.NamedValue, current string) []store.NamedValue {
+	current = strings.TrimSpace(current)
+	if current == "" {
+		return options
+	}
+	for _, option := range options {
+		if option.Value == current {
+			return options
+		}
+	}
+	return append([]store.NamedValue{{Value: current, Label: current}}, options...)
+}
+
+func tenderFilterOptionsForView(base store.TenderFilterOptions, filter store.ListFilter) tenderFilterViewOptions {
+	return tenderFilterViewOptions{
+		Sources:        ensureCurrentNamedOption(base.Sources, filter.Source),
+		Provinces:      ensureCurrentStringOption(base.Provinces, filter.Province),
+		Statuses:       ensureCurrentStringOption(base.Statuses, filter.Status),
+		Categories:     ensureCurrentStringOption(base.Categories, filter.Category),
+		Issuers:        ensureCurrentStringOption(base.Issuers, filter.Issuer),
+		CIDBGradings:   ensureCurrentStringOption(base.CIDBGradings, filter.CIDB),
+		WorkflowStatus: ensureCurrentStringOption(base.WorkflowStatus, filter.WorkflowStatus),
+		DocumentStatus: ensureCurrentStringOption(base.DocumentStatus, filter.DocumentStatus),
+	}
+}
+
+func tenderFilterFromRequest(r *http.Request, tenantID, userID string, page, pageSize int) store.ListFilter {
+	return store.NormalizeFilter(store.ListFilter{
+		Query: r.URL.Query().Get("q"), Source: r.URL.Query().Get("source"), Province: r.URL.Query().Get("province"),
+		Category: r.URL.Query().Get("category"), Issuer: r.URL.Query().Get("issuer"), Status: r.URL.Query().Get("status"),
+		CIDB: r.URL.Query().Get("cidb"), WorkflowStatus: r.URL.Query().Get("workflow_status"),
+		DocumentStatus: r.URL.Query().Get("document_status"), BookmarkedOnly: r.URL.Query().Get("bookmarked_only") == "1",
+		HasDocuments: r.URL.Query().Get("has_documents") == "1", Sort: r.URL.Query().Get("sort"), View: r.URL.Query().Get("view"),
+		Page: page, PageSize: pageSize, TenantID: tenantID, UserID: userID,
+	})
+}
+
 func (a *App) bookmarkedTenders(ctx context.Context, tenantID, userID string) ([]BookmarkedTender, error) {
 	bookmarks, err := a.Store.ListBookmarks(ctx, tenantID, userID)
 	if err != nil {
@@ -225,10 +271,18 @@ func (a *App) bookmarkedTenders(ctx context.Context, tenantID, userID string) ([
 	for _, wf := range workflows {
 		workflowByTender[wf.TenderID] = wf
 	}
+	tenderIDs := make([]string, 0, len(bookmarks))
+	for _, bookmark := range bookmarks {
+		tenderIDs = append(tenderIDs, bookmark.TenderID)
+	}
+	tenderByID, err := a.Store.GetTendersByIDs(ctx, tenderIDs)
+	if err != nil {
+		return nil, err
+	}
 	items := make([]BookmarkedTender, 0, len(bookmarks))
 	for _, bookmark := range bookmarks {
-		tender, err := a.Store.GetTender(ctx, bookmark.TenderID)
-		if err != nil {
+		tender, ok := tenderByID[bookmark.TenderID]
+		if !ok {
 			continue
 		}
 		items = append(items, BookmarkedTender{
@@ -248,17 +302,19 @@ func (a *App) Home(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d, _ := a.Store.Dashboard(r.Context(), t.ID, a.Config.LowMemoryMode, false)
-	bookmarks, _ := a.Store.ListBookmarks(r.Context(), t.ID, u.ID)
-	searches, _ := a.Store.ListSavedSearches(r.Context(), t.ID, u.ID)
-	jobs := a.listRenderableJobs(r.Context())
+	bookmarkCount, _ := a.Store.CountBookmarks(r.Context(), t.ID, u.ID)
+	savedCount, _ := a.Store.CountSavedSearches(r.Context(), t.ID, u.ID)
+	jobCounts, _ := a.Store.JobStateCounts(r.Context())
+	sourceHealth, _ := a.Store.ListSourceHealth(r.Context())
 	a.render(w, r, "home.html", map[string]any{
-		"Title":         "Home",
-		"User":          u,
-		"Tenant":        t,
-		"Dashboard":     d,
-		"BookmarkCount": len(bookmarks),
-		"SavedCount":    len(searches),
-		"QueueSummary":  queueSummary(jobs),
+		"Title":             "Home",
+		"User":              u,
+		"Tenant":            t,
+		"Dashboard":         d,
+		"BookmarkCount":     bookmarkCount,
+		"SavedCount":        savedCount,
+		"QueueSummary":      queueSummaryFromCounts(jobCounts),
+		"SourceHealthCount": len(sourceHealth),
 	})
 }
 
@@ -288,31 +344,23 @@ func (a *App) Tenders(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", 303)
 		return
 	}
-	pageSize := atoi(r.URL.Query().Get("page_size"), 20)
+	pageSize := atoi(r.URL.Query().Get("page_size"), 10)
 	if pageSize <= 0 || pageSize > 100 {
-		pageSize = 20
+		pageSize = 10
 	}
-	f := store.NormalizeFilter(store.ListFilter{
-		Query: r.URL.Query().Get("q"), Source: r.URL.Query().Get("source"), Province: r.URL.Query().Get("province"),
-		Category: r.URL.Query().Get("category"), Issuer: r.URL.Query().Get("issuer"), Status: r.URL.Query().Get("status"),
-		CIDB: r.URL.Query().Get("cidb"), WorkflowStatus: r.URL.Query().Get("workflow_status"),
-		DocumentStatus: r.URL.Query().Get("document_status"), BookmarkedOnly: r.URL.Query().Get("bookmarked_only") == "1",
-		HasDocuments: r.URL.Query().Get("has_documents") == "1", Sort: r.URL.Query().Get("sort"), View: r.URL.Query().Get("view"),
-		Page: atoi(r.URL.Query().Get("page"), 1), PageSize: pageSize, TenantID: t.ID, UserID: u.ID,
-	})
+	f := tenderFilterFromRequest(r, t.ID, u.ID, atoi(r.URL.Query().Get("page"), 1), pageSize)
+	filterOptions, _ := a.Store.TenderFilterOptions(r.Context(), t.ID)
 	items, total, _ := a.Store.ListTenders(r.Context(), f)
-	bookmarks, _ := a.Store.ListBookmarks(r.Context(), t.ID, u.ID)
-	bookmarkByTender := map[string]models.Bookmark{}
+	tenderIDs := make([]string, 0, len(items))
+	for _, item := range items {
+		tenderIDs = append(tenderIDs, item.ID)
+	}
+	bookmarkByTender, _ := a.Store.GetBookmarksByTenderIDs(r.Context(), t.ID, u.ID, tenderIDs)
 	bookmarked := map[string]bool{}
-	for _, bookmark := range bookmarks {
-		bookmarkByTender[bookmark.TenderID] = bookmark
-		bookmarked[bookmark.TenderID] = true
+	for tenderID := range bookmarkByTender {
+		bookmarked[tenderID] = true
 	}
-	workflows, _ := a.Store.ListWorkflows(r.Context(), t.ID)
-	workflowByTender := map[string]models.Workflow{}
-	for _, workflow := range workflows {
-		workflowByTender[workflow.TenderID] = workflow
-	}
+	workflowByTender, _ := a.Store.GetWorkflowsByTenderIDs(r.Context(), t.ID, tenderIDs)
 	params := map[string]string{
 		"q": f.Query, "source": f.Source, "province": f.Province, "category": f.Category, "issuer": f.Issuer, "status": f.Status,
 		"cidb": f.CIDB, "workflow_status": f.WorkflowStatus, "document_status": f.DocumentStatus, "sort": f.Sort, "view": f.View,
@@ -320,6 +368,9 @@ func (a *App) Tenders(w http.ResponseWriter, r *http.Request) {
 	}
 	if f.BookmarkedOnly {
 		params["bookmarked_only"] = "1"
+	}
+	if f.HasDocuments {
+		params["has_documents"] = "1"
 	}
 	totalPages := total / f.PageSize
 	if total%f.PageSize != 0 {
@@ -331,8 +382,9 @@ func (a *App) Tenders(w http.ResponseWriter, r *http.Request) {
 	a.render(w, r, "tenders.html", map[string]any{
 		"Title": "Tenders", "User": u, "Tenant": t, "Items": items, "Total": total,
 		"Filter": f, "Bookmarks": bookmarkByTender, "Bookmarked": bookmarked, "Workflows": workflowByTender,
-		"ReturnTo":    r.URL.RequestURI(),
-		"CurrentPage": f.Page, "TotalPages": totalPages, "HasPrevPage": f.Page > 1, "HasNextPage": f.Page < totalPages,
+		"FilterOptions": tenderFilterOptionsForView(filterOptions, f),
+		"ReturnTo":      r.URL.RequestURI(),
+		"CurrentPage":   f.Page, "TotalPages": totalPages, "HasPrevPage": f.Page > 1, "HasNextPage": f.Page < totalPages,
 		"PrevPageURL": pageLink("/tenders", params, f.Page-1), "NextPageURL": pageLink("/tenders", params, f.Page+1),
 	})
 }
@@ -342,12 +394,6 @@ func (a *App) ExportCSV(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		http.Redirect(w, r, "/login", 303)
 		return
-	}
-	items, _, _ := a.Store.ListTenders(r.Context(), store.ListFilter{Query: r.URL.Query().Get("q"), TenantID: t.ID, UserID: u.ID, Page: 1, PageSize: 5000})
-	workflows, _ := a.Store.ListWorkflows(r.Context(), t.ID)
-	workflowByTender := map[string]models.Workflow{}
-	for _, workflow := range workflows {
-		workflowByTender[workflow.TenderID] = workflow
 	}
 	w.Header().Set("Content-Type", "text/csv")
 	w.Header().Set("Content-Disposition", "attachment; filename=tenders.csv")
@@ -365,25 +411,50 @@ func (a *App) ExportCSV(w http.ResponseWriter, r *http.Request) {
 		"closing_details", "briefing_details", "submission_details", "contact_details", "cidb_hints",
 		"documents_json", "contacts_json", "briefings_json", "requirements_json", "page_facts_json", "document_facts_json", "source_metadata_json",
 	})
-	for _, tender := range items {
-		facts := tender.ExtractedFacts
-		if facts == nil {
-			facts = map[string]string{}
+	exportFilter := tenderFilterFromRequest(r, t.ID, u.ID, 1, 250)
+	for page := 1; ; page++ {
+		exportFilter.Page = page
+		items, _, err := a.Store.ListTenders(r.Context(), exportFilter)
+		if err != nil {
+			a.serverError(w, r, "unable to export tenders", err)
+			return
 		}
-		workflow := workflowByTender[tender.ID]
-		_ = cw.Write([]string{
-			tender.ID, tender.Title, tender.Issuer, tender.SourceKey, tender.Province, tender.Category, tender.TenderType, tender.TenderNumber,
-			tender.PublishedDate, tender.ClosingDate, tender.Status, fmt.Sprintf("%.2f", tender.RelevanceScore), tender.CIDBGrading, strconv.Itoa(tender.ValidityDays),
-			string(tender.DocumentStatus), workflow.Status, workflow.Priority, workflow.AssignedUser,
-			tender.DocumentURL, tender.OriginalURL, tender.Excerpt, tender.Scope,
-			strconv.Itoa(len(tender.Documents)), strconv.Itoa(len(tender.Contacts)), strconv.Itoa(len(tender.Briefings)), strconv.Itoa(len(tender.Requirements)),
-			joinedDocumentNames(tender.Documents), joinedNames(tender.Contacts),
-			tender.Submission.Method, tender.Submission.DeliveryLocation, tender.Submission.Address, strconv.FormatBool(tender.Submission.ElectronicAllowed), strconv.FormatBool(tender.Submission.PhysicalAllowed), strconv.FormatBool(tender.Submission.TwoEnvelope),
-			tender.Evaluation.Method, strconv.Itoa(tender.Evaluation.PricePoints), strconv.Itoa(tender.Evaluation.PreferencePoints), fmt.Sprintf("%.2f", tender.Evaluation.MinimumFunctionalityScore),
-			tender.Location.Site, tender.Location.DeliveryLocation, tender.Location.Town, tender.Location.PostalCode, tender.Location.Province,
-			facts["closing_details"], facts["briefing_details"], facts["submission_details"], facts["contact_details"], facts["cidb_hints"],
-			csvJSON(tender.Documents), csvJSON(tender.Contacts), csvJSON(tender.Briefings), csvJSON(tender.Requirements), csvJSON(tender.PageFacts), csvJSON(tender.DocumentFacts), csvJSON(tender.SourceMetadata),
-		})
+		if len(items) == 0 {
+			break
+		}
+		tenderIDs := make([]string, 0, len(items))
+		for _, tender := range items {
+			tenderIDs = append(tenderIDs, tender.ID)
+		}
+		workflowByTender, err := a.Store.GetWorkflowsByTenderIDs(r.Context(), t.ID, tenderIDs)
+		if err != nil {
+			a.serverError(w, r, "unable to load export workflows", err)
+			return
+		}
+		for _, tender := range items {
+			facts := tender.ExtractedFacts
+			if facts == nil {
+				facts = map[string]string{}
+			}
+			workflow := workflowByTender[tender.ID]
+			_ = cw.Write([]string{
+				tender.ID, tender.Title, tender.Issuer, tender.SourceKey, tender.Province, tender.Category, tender.TenderType, tender.TenderNumber,
+				tender.PublishedDate, tender.ClosingDate, tender.Status, fmt.Sprintf("%.2f", tender.RelevanceScore), tender.CIDBGrading, strconv.Itoa(tender.ValidityDays),
+				string(tender.DocumentStatus), workflow.Status, workflow.Priority, workflow.AssignedUser,
+				tender.DocumentURL, tender.OriginalURL, tender.Excerpt, tender.Scope,
+				strconv.Itoa(len(tender.Documents)), strconv.Itoa(len(tender.Contacts)), strconv.Itoa(len(tender.Briefings)), strconv.Itoa(len(tender.Requirements)),
+				joinedDocumentNames(tender.Documents), joinedNames(tender.Contacts),
+				tender.Submission.Method, tender.Submission.DeliveryLocation, tender.Submission.Address, strconv.FormatBool(tender.Submission.ElectronicAllowed), strconv.FormatBool(tender.Submission.PhysicalAllowed), strconv.FormatBool(tender.Submission.TwoEnvelope),
+				tender.Evaluation.Method, strconv.Itoa(tender.Evaluation.PricePoints), strconv.Itoa(tender.Evaluation.PreferencePoints), fmt.Sprintf("%.2f", tender.Evaluation.MinimumFunctionalityScore),
+				tender.Location.Site, tender.Location.DeliveryLocation, tender.Location.Town, tender.Location.PostalCode, tender.Location.Province,
+				facts["closing_details"], facts["briefing_details"], facts["submission_details"], facts["contact_details"], facts["cidb_hints"],
+				csvJSON(tender.Documents), csvJSON(tender.Contacts), csvJSON(tender.Briefings), csvJSON(tender.Requirements), csvJSON(tender.PageFacts), csvJSON(tender.DocumentFacts), csvJSON(tender.SourceMetadata),
+			})
+		}
+		cw.Flush()
+		if err := cw.Error(); err != nil {
+			return
+		}
 	}
 	cw.Flush()
 }
@@ -621,17 +692,16 @@ func (a *App) AuditLogPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	items, err := a.Store.ListAuditEntries(r.Context(), t.ID)
+	pageSize := 20
+	currentPage := atoi(r.URL.Query().Get("page"), 1)
+	items, total, err := a.Store.ListAuditEntriesPage(r.Context(), t.ID, currentPage, pageSize)
 	if err != nil {
 		a.serverError(w, r, "unable to load audit entries", err)
 		return
 	}
-	pageSize := 20
-	currentPage := atoi(r.URL.Query().Get("page"), 1)
 	if currentPage < 1 {
 		currentPage = 1
 	}
-	total := len(items)
 	totalPages := total / pageSize
 	if total%pageSize != 0 {
 		totalPages++
@@ -642,21 +712,12 @@ func (a *App) AuditLogPage(w http.ResponseWriter, r *http.Request) {
 	if currentPage > totalPages {
 		currentPage = totalPages
 	}
-	start := (currentPage - 1) * pageSize
-	if start > total {
-		start = total
-	}
-	end := start + pageSize
-	if end > total {
-		end = total
-	}
-	pageItems := items[start:end]
 	query := r.URL.Query()
 	a.render(w, r, "audit_log.html", map[string]any{
 		"Title":       "Audit log",
 		"User":        u,
 		"Tenant":      t,
-		"Items":       pageItems,
+		"Items":       items,
 		"EntryCount":  total,
 		"CurrentPage": currentPage,
 		"TotalPages":  totalPages,
@@ -674,9 +735,14 @@ func (a *App) QueuePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jobs := a.listRenderableJobs(r.Context())
+	tenderIDs := make([]string, 0, len(jobs))
+	for _, job := range jobs {
+		tenderIDs = append(tenderIDs, job.TenderID)
+	}
+	tenderByID, _ := a.Store.GetTendersByIDs(r.Context(), tenderIDs)
 	items := make([]QueueItem, 0, len(jobs))
 	for _, job := range jobs {
-		tender, _ := a.Store.GetTender(r.Context(), job.TenderID)
+		tender := tenderByID[job.TenderID]
 		items = append(items, QueueItem{Job: job, Tender: tender})
 	}
 	grouped := map[models.ExtractionState][]QueueItem{
