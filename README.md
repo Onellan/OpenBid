@@ -77,7 +77,9 @@ Production deployments should prefer `.env.production.example`, pinned GHCR imag
 
 ## Raspberry Pi deployment
 
-For a step-by-step Docker setup guide on Raspberry Pi, including Cloudflare-in-front HTTP origin deployment notes, see [docs/raspberry-pi-docker-setup.md](docs/raspberry-pi-docker-setup.md).
+For a self-contained Raspberry Pi deployment bundle with Dockerfiles, Compose config, nginx config, `.env` example, and a step-by-step installation guide, see [InstallationInstructions/README.md](InstallationInstructions/README.md).
+
+For the older narrative Raspberry Pi guide, including Cloudflare-in-front HTTP origin deployment notes, see [docs/raspberry-pi-docker-setup.md](docs/raspberry-pi-docker-setup.md).
 
 ## Operations
 
