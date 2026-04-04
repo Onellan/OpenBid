@@ -178,6 +178,16 @@ func registerProtected(mux *http.ServeMux, a *App, handler http.HandlerFunc, pat
 	}
 }
 
+func registerRedirect(mux *http.ServeMux, path, target string) {
+	mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+		destination := target
+		if rawQuery := strings.TrimSpace(r.URL.RawQuery); rawQuery != "" {
+			destination += "?" + rawQuery
+		}
+		http.Redirect(w, r, destination, http.StatusPermanentRedirect)
+	})
+}
+
 func routes(a *App) http.Handler {
 	mux := http.NewServeMux()
 	if assetDir, err := locateWebSubdir("assets"); err == nil {
@@ -204,7 +214,9 @@ func routes(a *App) http.Handler {
 	registerProtected(mux, a, a.BookmarksPage, "/bookmarks")
 	registerProtected(mux, a, a.QueuePage, "/queue")
 	registerProtected(mux, a, a.AuditLogPage, "/audit-log")
+	registerProtected(mux, a, a.SecurityAuditLogPage, "/audit-log/security")
 	registerProtected(mux, a, a.HealthPage, "/health")
+	registerProtected(mux, a, a.HealthAlertsJSON, "/health/alerts.json")
 	registerProtected(mux, a, a.QueueRequeue, "/queue/requeue")
 	registerProtected(mux, a, a.SettingsPage, "/settings")
 	registerProtected(mux, a, a.PasswordPage, "/password", "/settings/password")
@@ -222,15 +234,23 @@ func routes(a *App) http.Handler {
 	registerProtected(mux, a, a.AdminDeleteMembership, "/admin/memberships/delete")
 	registerProtected(mux, a, a.AdminTenants, "/admin/tenants")
 	registerProtected(mux, a, a.AdminCreateTenant, "/admin/tenants/create")
-	registerProtected(mux, a, a.SourcesPage, "/sources", "/admin/sources")
+	registerProtected(mux, a, a.SourcesPage, "/sources")
 	registerProtected(mux, a, a.SourceStatusJSON, "/sources/status.json")
-	registerProtected(mux, a, a.AdminCreateSource, "/sources/create", "/admin/sources/create")
-	registerProtected(mux, a, a.AdminUpdateSource, "/sources/update", "/admin/sources/update")
-	registerProtected(mux, a, a.AdminTriggerSourceCheck, "/sources/check", "/admin/sources/check")
-	registerProtected(mux, a, a.AdminTriggerSelectedSourceChecks, "/sources/check-selected", "/admin/sources/check-selected")
-	registerProtected(mux, a, a.AdminTriggerAllSourceChecks, "/sources/check-all", "/admin/sources/check-all")
-	registerProtected(mux, a, a.AdminUpdateSourceSchedule, "/sources/schedule", "/admin/sources/schedule")
-	registerProtected(mux, a, a.AdminDeleteSource, "/sources/delete", "/admin/sources/delete")
+	registerProtected(mux, a, a.AdminCreateSource, "/sources/create")
+	registerProtected(mux, a, a.AdminUpdateSource, "/sources/update")
+	registerProtected(mux, a, a.AdminTriggerSourceCheck, "/sources/check")
+	registerProtected(mux, a, a.AdminTriggerSelectedSourceChecks, "/sources/check-selected")
+	registerProtected(mux, a, a.AdminTriggerAllSourceChecks, "/sources/check-all")
+	registerProtected(mux, a, a.AdminUpdateSourceSchedule, "/sources/schedule")
+	registerProtected(mux, a, a.AdminDeleteSource, "/sources/delete")
+	registerRedirect(mux, "/admin/sources", "/sources")
+	registerRedirect(mux, "/admin/sources/create", "/sources/create")
+	registerRedirect(mux, "/admin/sources/update", "/sources/update")
+	registerRedirect(mux, "/admin/sources/check", "/sources/check")
+	registerRedirect(mux, "/admin/sources/check-selected", "/sources/check-selected")
+	registerRedirect(mux, "/admin/sources/check-all", "/sources/check-all")
+	registerRedirect(mux, "/admin/sources/schedule", "/sources/schedule")
+	registerRedirect(mux, "/admin/sources/delete", "/sources/delete")
 	registerProtected(mux, a, a.SwitchTenant, "/tenant/switch")
 	return a.WithRequestObservability(a.WithSecurityHeaders(a.WithProxyRequirement(a.WithRecovery(mux))))
 }

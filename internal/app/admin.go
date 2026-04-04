@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"openbid/internal/auth"
 	"openbid/internal/models"
 	"openbid/internal/source"
+	"openbid/internal/store"
 )
 
 type SourceAdminItem struct {
@@ -42,30 +44,19 @@ func (a *App) AdminUsers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
+	if isTenantScopedAdmin(m.Role) {
+		memberships, _ := a.Store.ListMembershipsByTenant(r.Context(), t.ID)
+		userIDs := make([]string, 0, len(memberships))
+		for _, membership := range memberships {
+			userIDs = append(userIDs, membership.UserID)
+		}
+		users, _ := a.Store.ListUsersByIDs(r.Context(), userIDs)
+		a.render(w, r, "admin_users.html", map[string]any{"Title": "Users", "User": u, "Tenant": t, "Items": users, "Tenants": []models.Tenant{t}, "Memberships": memberships})
+		return
+	}
 	users, _ := a.Store.ListUsers(r.Context())
 	tenants, _ := a.Store.ListTenants(r.Context())
 	memberships, _ := a.Store.ListAllMemberships(r.Context())
-	if isTenantScopedAdmin(m.Role) {
-		allowedTenantIDs := map[string]bool{t.ID: true}
-		filteredMemberships := make([]models.Membership, 0, len(memberships))
-		visibleUserIDs := map[string]bool{}
-		for _, membership := range memberships {
-			if !allowedTenantIDs[membership.TenantID] {
-				continue
-			}
-			filteredMemberships = append(filteredMemberships, membership)
-			visibleUserIDs[membership.UserID] = true
-		}
-		filteredUsers := make([]models.User, 0, len(users))
-		for _, user := range users {
-			if visibleUserIDs[user.ID] {
-				filteredUsers = append(filteredUsers, user)
-			}
-		}
-		users = filteredUsers
-		tenants = []models.Tenant{t}
-		memberships = filteredMemberships
-	}
 	a.render(w, r, "admin_users.html", map[string]any{"Title": "Users", "User": u, "Tenant": t, "Items": users, "Tenants": tenants, "Memberships": memberships})
 }
 
@@ -114,17 +105,18 @@ func (a *App) AdminCreateUser(w http.ResponseWriter, r *http.Request) {
 		a.notFound(w, r, "tenant not found", err)
 		return
 	}
-	users, err := a.Store.ListUsers(r.Context())
-	if err != nil {
-		a.serverError(w, r, "unable to list users", err)
-		return
-	}
-	if hasUserWithUsername(users, username) {
+	if _, err := a.Store.GetUserByUsername(r.Context(), username); err == nil {
 		http.Error(w, "username already exists", 409)
 		return
+	} else if !errors.Is(err, store.ErrNotFound) {
+		a.serverError(w, r, "unable to check existing username", err)
+		return
 	}
-	if hasUserWithEmail(users, email) {
+	if _, err := a.Store.GetUserByEmail(r.Context(), email); err == nil {
 		http.Error(w, "email already exists", 409)
+		return
+	} else if !errors.Is(err, store.ErrNotFound) {
+		a.serverError(w, r, "unable to check existing email", err)
 		return
 	}
 	if err := auth.StrongEnoughPassword(password); err != nil {
@@ -149,7 +141,7 @@ func (a *App) AdminCreateUser(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, r, "unable to save membership", err)
 		return
 	}
-	a.auditAction(r.Context(), actionContext{User: currentUser, Tenant: currentTenant, Member: m}, "create", "user", user.ID, "User created", map[string]string{"username": username, "role": string(role), "tenant_id": tenantID})
+	a.auditAction(r.Context(), actionContext{User: currentUser, Tenant: currentTenant, Member: m}, "create", "user", user.ID, "User created", securityMetadata(map[string]string{"username": username, "role": string(role), "tenant_id": tenantID}))
 	http.Redirect(w, r, "/admin/users", 303)
 }
 
@@ -211,7 +203,7 @@ func (a *App) AdminCreateTenant(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, r, "unable to save tenant", err)
 		return
 	}
-	a.auditAction(r.Context(), actionContext{User: currentUser, Tenant: currentTenant, Member: m}, "create", "tenant", slug, "Tenant created", map[string]string{"name": name, "slug": slug})
+	a.auditAction(r.Context(), actionContext{User: currentUser, Tenant: currentTenant, Member: m}, "create", "tenant", slug, "Tenant created", securityMetadata(map[string]string{"name": name, "slug": slug}))
 	http.Redirect(w, r, "/admin/tenants", 303)
 }
 
@@ -621,7 +613,7 @@ func (a *App) SwitchTenant(w http.ResponseWriter, r *http.Request) {
 	if user, err := a.Store.GetUser(r.Context(), session.UserID); err == nil {
 		if tenant, err := a.Store.GetTenant(r.Context(), tenantID); err == nil {
 			if member, err := a.Store.GetMembership(r.Context(), session.UserID, tenantID); err == nil {
-				a.auditAction(r.Context(), actionContext{User: user, Tenant: tenant, Member: member}, "switch", "tenant", tenantID, "Workspace switched", nil)
+				a.auditAction(r.Context(), actionContext{User: user, Tenant: tenant, Member: member}, "switch", "tenant", tenantID, "Workspace switched", securityMetadata(nil))
 			}
 		}
 	}
@@ -662,7 +654,7 @@ func (a *App) AdminToggleUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	a.auditAction(r.Context(), actionContext{User: currentUser, Tenant: currentTenant, Member: m}, "update", "user", user.ID, "User activation updated", map[string]string{"active": strconv.FormatBool(user.IsActive)})
+	a.auditAction(r.Context(), actionContext{User: currentUser, Tenant: currentTenant, Member: m}, "update", "user", user.ID, "User activation updated", securityMetadata(map[string]string{"active": strconv.FormatBool(user.IsActive)}))
 	http.Redirect(w, r, "/admin/users", 303)
 }
 
@@ -714,7 +706,7 @@ func (a *App) AdminResetPassword(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, r, "unable to revoke user sessions", err)
 		return
 	}
-	a.auditAction(r.Context(), actionContext{User: currentUser, Tenant: currentTenant, Member: m}, "update", "user_password", user.ID, "User password reset", nil)
+	a.auditAction(r.Context(), actionContext{User: currentUser, Tenant: currentTenant, Member: m}, "update", "user_password", user.ID, "User password reset", securityMetadata(nil))
 	http.Redirect(w, r, "/admin/users", 303)
 }
 
@@ -769,7 +761,7 @@ func (a *App) AdminUpsertMembership(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, r, "unable to save membership", err)
 		return
 	}
-	a.auditAction(r.Context(), actionContext{User: currentUser, Tenant: currentTenant, Member: m}, "update", "membership", userID+":"+tenantID, "Membership updated", map[string]string{"role": string(role)})
+	a.auditAction(r.Context(), actionContext{User: currentUser, Tenant: currentTenant, Member: m}, "update", "membership", userID+":"+tenantID, "Membership updated", securityMetadata(map[string]string{"role": string(role)}))
 	http.Redirect(w, r, "/admin/users", 303)
 }
 
@@ -822,6 +814,6 @@ func (a *App) AdminDeleteMembership(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, r, "unable to delete membership", err)
 		return
 	}
-	a.auditAction(r.Context(), actionContext{User: currentUser, Tenant: currentTenant, Member: m}, "delete", "membership", target.UserID+":"+target.TenantID, "Membership removed", map[string]string{"role": string(target.Role)})
+	a.auditAction(r.Context(), actionContext{User: currentUser, Tenant: currentTenant, Member: m}, "delete", "membership", target.UserID+":"+target.TenantID, "Membership removed", securityMetadata(map[string]string{"role": string(target.Role)}))
 	http.Redirect(w, r, "/admin/users", 303)
 }

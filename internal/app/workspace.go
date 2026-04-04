@@ -53,6 +53,11 @@ type detailFactSection struct {
 	Facts map[string]string
 }
 
+type AuditDisplayEntry struct {
+	Entry       models.AuditEntry
+	DetailLines []string
+}
+
 type tenderFilterViewOptions struct {
 	Sources        []store.NamedValue
 	Provinces      []string
@@ -266,15 +271,11 @@ func (a *App) bookmarkedTenders(ctx context.Context, tenantID, userID string) ([
 	if err != nil {
 		return nil, err
 	}
-	workflows, _ := a.Store.ListWorkflows(ctx, tenantID)
-	workflowByTender := map[string]models.Workflow{}
-	for _, wf := range workflows {
-		workflowByTender[wf.TenderID] = wf
-	}
 	tenderIDs := make([]string, 0, len(bookmarks))
 	for _, bookmark := range bookmarks {
 		tenderIDs = append(tenderIDs, bookmark.TenderID)
 	}
+	workflowByTender, _ := a.Store.GetWorkflowsByTenderIDs(ctx, tenantID, tenderIDs)
 	tenderByID, err := a.Store.GetTendersByIDs(ctx, tenderIDs)
 	if err != nil {
 		return nil, err
@@ -662,13 +663,9 @@ func (a *App) TenderDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	workflow, _ := a.Store.GetWorkflow(r.Context(), t.ID, id)
 	history, _ := a.Store.ListWorkflowEvents(r.Context(), t.ID, id)
-	bookmarks, _ := a.Store.ListBookmarks(r.Context(), t.ID, u.ID)
 	var bookmark models.Bookmark
-	for _, itemBookmark := range bookmarks {
-		if itemBookmark.TenderID == id {
-			bookmark = itemBookmark
-			break
-		}
+	if bookmarks, _ := a.Store.GetBookmarksByTenderIDs(r.Context(), t.ID, u.ID, []string{id}); len(bookmarks) > 0 {
+		bookmark = bookmarks[id]
 	}
 	a.render(w, r, "tender_detail.html", map[string]any{
 		"Title":           "Opportunity detail",
@@ -683,6 +680,14 @@ func (a *App) TenderDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) AuditLogPage(w http.ResponseWriter, r *http.Request) {
+	a.renderAuditLogPage(w, r, false)
+}
+
+func (a *App) SecurityAuditLogPage(w http.ResponseWriter, r *http.Request) {
+	a.renderAuditLogPage(w, r, true)
+}
+
+func (a *App) renderAuditLogPage(w http.ResponseWriter, r *http.Request, securityFocus bool) {
 	u, t, m, ok := a.currentUserTenant(r)
 	if !ok {
 		http.Redirect(w, r, "/login", 303)
@@ -694,7 +699,16 @@ func (a *App) AuditLogPage(w http.ResponseWriter, r *http.Request) {
 	}
 	pageSize := 20
 	currentPage := atoi(r.URL.Query().Get("page"), 1)
-	items, total, err := a.Store.ListAuditEntriesPage(r.Context(), t.ID, currentPage, pageSize)
+	var (
+		items []models.AuditEntry
+		total int
+		err   error
+	)
+	if securityFocus {
+		items, total, err = a.Store.ListSecurityAuditEntriesPage(r.Context(), t.ID, currentPage, pageSize)
+	} else {
+		items, total, err = a.Store.ListAuditEntriesPage(r.Context(), t.ID, currentPage, pageSize)
+	}
 	if err != nil {
 		a.serverError(w, r, "unable to load audit entries", err)
 		return
@@ -713,19 +727,49 @@ func (a *App) AuditLogPage(w http.ResponseWriter, r *http.Request) {
 		currentPage = totalPages
 	}
 	query := r.URL.Query()
+	basePath := "/audit-log"
+	title := "Audit log"
+	copyText := fmt.Sprintf("Track administrative and workflow actions for the %s workspace.", t.Name)
+	focusTitle := "Recent actions"
+	focusCopy := "Latest audited actions for this tenant, collapsed only when you want more room on the page."
+	if securityFocus {
+		basePath = "/audit-log/security"
+		title = "Security audit"
+		copyText = fmt.Sprintf("Focus incident triage on auth-sensitive and tenant administration activity for the %s workspace.", t.Name)
+		focusTitle = "Security-sensitive events"
+		focusCopy = "Lockouts, throttling, MFA changes, password resets, and tenant or user administration actions for this tenant."
+	}
 	a.render(w, r, "audit_log.html", map[string]any{
-		"Title":       "Audit log",
-		"User":        u,
-		"Tenant":      t,
-		"Items":       items,
-		"EntryCount":  total,
-		"CurrentPage": currentPage,
-		"TotalPages":  totalPages,
-		"HasPrevPage": currentPage > 1,
-		"HasNextPage": currentPage < totalPages,
-		"PrevPageURL": queryPageLink("/audit-log", query, "page", currentPage-1),
-		"NextPageURL": queryPageLink("/audit-log", query, "page", currentPage+1),
+		"Title":               title,
+		"User":                u,
+		"Tenant":              t,
+		"Items":               auditDisplayEntries(items),
+		"EntryCount":          total,
+		"CurrentPage":         currentPage,
+		"TotalPages":          totalPages,
+		"HasPrevPage":         currentPage > 1,
+		"HasNextPage":         currentPage < totalPages,
+		"PrevPageURL":         queryPageLink(basePath, query, "page", currentPage-1),
+		"NextPageURL":         queryPageLink(basePath, query, "page", currentPage+1),
+		"PageTitle":           title,
+		"PageCopy":            copyText,
+		"FocusTitle":          focusTitle,
+		"FocusCopy":           focusCopy,
+		"SecurityFocus":       securityFocus,
+		"AuditLogURL":         "/audit-log",
+		"SecurityAuditLogURL": "/audit-log/security",
 	})
+}
+
+func auditDisplayEntries(items []models.AuditEntry) []AuditDisplayEntry {
+	rows := make([]AuditDisplayEntry, 0, len(items))
+	for _, item := range items {
+		rows = append(rows, AuditDisplayEntry{
+			Entry:       item,
+			DetailLines: formatAuditMetadata(item.Metadata),
+		})
+	}
+	return rows
 }
 
 func (a *App) QueuePage(w http.ResponseWriter, r *http.Request) {

@@ -68,10 +68,18 @@ Common variables:
 - `BOOTSTRAP_ADMIN_PASSWORD_FILE`: preferred production path for a mounted bootstrap password file
 - `BOOTSTRAP_SYNC_ON_STARTUP`: whether to sync sources on the first startup. Default: `false`
 - `LOW_MEMORY_MODE`: keep `true` on smaller machines such as Raspberry Pi
+- `BACKUP_DIR`: directory used for runtime backup freshness checks
 - `WORKER_SYNC_MINUTES`: default source check interval
 - `WORKER_LOOP_SECONDS`: worker polling loop interval
 - `LOGIN_RATE_LIMIT_WINDOW_SECONDS`: rolling per-IP login throttling window for direct app access
 - `LOGIN_RATE_LIMIT_MAX_ATTEMPTS`: maximum failed login attempts allowed within that window
+- `ALERT_WEBHOOK_URL`: optional webhook for operational alerts
+- `ALERT_EVAL_SECONDS`: how often the server evaluates operational alerts
+- `ALERT_BACKUP_MAX_AGE_MINUTES`: backup freshness threshold before raising an alert
+- `ALERT_BACKLOG_MAX_JOBS`: queued/retry/processing job count threshold before raising a backlog alert
+- `ALERT_BACKLOG_MAX_AGE_MINUTES`: oldest pending job age threshold before raising a backlog alert
+- `ALERT_LOGIN_THROTTLE_THRESHOLD`: recent login throttle events required before raising an alert
+- `ALERT_EXTRACTOR_FAILURE_THRESHOLD`: failed/retry extraction jobs required before raising an alert
 
 Production deployments should prefer `.env.production.example`, pinned GHCR image tags, mounted secret files under `./secrets`, and the packaged operations runbook in `docs/production-operations.md`.
 
@@ -87,6 +95,8 @@ For the older narrative Raspberry Pi guide, including Cloudflare-in-front HTTP o
 - SQLite backup: `./scripts/sqlite-backup.sh`
 - SQLite restore: `./scripts/sqlite-restore.sh`
 - SQLite validation: `./scripts/sqlite-validate.sh`
+- Container alert check: `./scripts/docker-alert-check.sh`
+- Operational alert feed: `/health/alerts.json`
 
 ## Validation
 

@@ -14,11 +14,18 @@ type loginAttemptState struct {
 	blockedUntil  time.Time
 }
 
+type LoginRateLimiterSnapshot struct {
+	Window              time.Duration
+	ActiveBlockedKeys   int
+	RecentBlockedEvents int
+}
+
 type LoginRateLimiter struct {
 	mu          sync.Mutex
 	window      time.Duration
 	maxAttempts int
 	entries     map[string]loginAttemptState
+	blockedAt   []time.Time
 }
 
 func NewLoginRateLimiter(window time.Duration, maxAttempts int) *LoginRateLimiter {
@@ -46,9 +53,9 @@ func (l *LoginRateLimiter) Allow(key string, now time.Time) (bool, time.Duration
 	return true, 0
 }
 
-func (l *LoginRateLimiter) RegisterFailure(key string, now time.Time) {
+func (l *LoginRateLimiter) RegisterFailure(key string, now time.Time) bool {
 	if l == nil || key == "" {
-		return
+		return false
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -64,8 +71,13 @@ func (l *LoginRateLimiter) RegisterFailure(key string, now time.Time) {
 		state.blockedUntil = now.Add(l.window)
 		state.failures = 0
 		state.windowStarted = now
+		l.blockedAt = append(l.blockedAt, now)
+		log.Printf("event=login_throttled blocked_until=%s", state.blockedUntil.UTC().Format(time.RFC3339))
+		l.entries[key] = state
+		return true
 	}
 	l.entries[key] = state
+	return false
 }
 
 func (l *LoginRateLimiter) RegisterSuccess(key string) {
@@ -75,6 +87,23 @@ func (l *LoginRateLimiter) RegisterSuccess(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	delete(l.entries, key)
+}
+
+func (l *LoginRateLimiter) Snapshot(now time.Time) LoginRateLimiterSnapshot {
+	if l == nil {
+		return LoginRateLimiterSnapshot{}
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.pruneLocked(now)
+	snapshot := LoginRateLimiterSnapshot{Window: l.window}
+	for _, state := range l.entries {
+		if !state.blockedUntil.IsZero() && state.blockedUntil.After(now) {
+			snapshot.ActiveBlockedKeys++
+		}
+	}
+	snapshot.RecentBlockedEvents = len(l.blockedAt)
+	return snapshot
 }
 
 func (l *LoginRateLimiter) pruneLocked(now time.Time) {
@@ -87,6 +116,18 @@ func (l *LoginRateLimiter) pruneLocked(now time.Time) {
 		}
 		delete(l.entries, key)
 	}
+	if len(l.blockedAt) == 0 {
+		return
+	}
+	cutoff := now.Add(-l.window)
+	trimmed := l.blockedAt[:0]
+	for _, blockedAt := range l.blockedAt {
+		if !blockedAt.After(cutoff) {
+			continue
+		}
+		trimmed = append(trimmed, blockedAt)
+	}
+	l.blockedAt = trimmed
 }
 
 func (a *App) WithRecovery(next http.Handler) http.Handler {

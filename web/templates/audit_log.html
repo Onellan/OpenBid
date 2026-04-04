@@ -2,28 +2,43 @@
 {{define "audit_log.html"}}{{template "base" .}}{{end}}{{define "content"}}
 {{template "page_hero" (dict
   "eyebrow" "Operations"
-  "title" "Audit log"
-  "copy" (printf "Track administrative and workflow actions for the %s workspace." .Tenant.Name)
+  "title" .PageTitle
+  "copy" .PageCopy
 )}}
 <details class="section-disclosure audit-log-disclosure" open style="margin-top:18px">
   <summary>
     <div>
-      <h2 class="card-title">Recent actions</h2>
-      <p class="section-disclosure-copy">Latest audited actions for this tenant, collapsed only when you want more room on the page.</p>
+      <h2 class="card-title">{{.FocusTitle}}</h2>
+      <p class="section-disclosure-copy">{{.FocusCopy}}</p>
     </div>
   </summary>
   <div class="section-disclosure-body">
     <div class="actions" style="margin-bottom:14px">
+      <a class="button {{if not .SecurityFocus}}secondary{{end}}" href="{{.AuditLogURL}}">All audit</a>
+      <a class="button {{if .SecurityFocus}}secondary{{end}}" href="{{.SecurityAuditLogURL}}">Security view</a>
       <span class="badge info">{{.EntryCount}} total entries</span>
       <span class="badge info">Page {{.CurrentPage}} of {{.TotalPages}}</span>
     </div>
     <div class="table-wrap">
       <table>
-        <tr><th>When</th><th>Action</th><th>Entity</th><th>Summary</th><th>User</th></tr>
+        <tr><th>When</th><th>Action</th><th>Entity</th><th>Summary</th><th>User</th><th>Details</th></tr>
         {{range .Items}}
-        <tr><td>{{formatTime .CreatedAt}}</td><td>{{.Action}}</td><td>{{.Entity}} / {{.EntityID}}</td><td>{{.Summary}}</td><td>{{.UserID}}</td></tr>
+        <tr>
+          <td>{{formatTime .Entry.CreatedAt}}</td>
+          <td>{{.Entry.Action}}</td>
+          <td>{{.Entry.Entity}} / {{.Entry.EntityID}}</td>
+          <td>{{.Entry.Summary}}</td>
+          <td>{{.Entry.UserID}}</td>
+          <td>
+            {{range .DetailLines}}
+            <div class="footer-note">{{.}}</div>
+            {{else}}
+            <span class="footer-note">No extra details</span>
+            {{end}}
+          </td>
+        </tr>
         {{else}}
-        <tr><td colspan="5">{{template "empty_state" "No audit entries yet."}}</td></tr>
+        <tr><td colspan="6">{{template "empty_state" "No audit entries yet."}}</td></tr>
         {{end}}
       </table>
     </div>

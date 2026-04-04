@@ -343,6 +343,13 @@ LOW_MEMORY_MODE=true
 ANALYTICS_ENABLED=false
 BOOTSTRAP_SYNC_ON_STARTUP=false
 TREASURY_FEED_URL=
+ALERT_WEBHOOK_URL=
+ALERT_EVAL_SECONDS=300
+ALERT_BACKUP_MAX_AGE_MINUTES=1560
+ALERT_BACKLOG_MAX_JOBS=25
+ALERT_BACKLOG_MAX_AGE_MINUTES=60
+ALERT_LOGIN_THROTTLE_THRESHOLD=3
+ALERT_EXTRACTOR_FAILURE_THRESHOLD=5
 WORKER_SYNC_MINUTES=360
 WORKER_LOOP_SECONDS=30
 LOGIN_RATE_LIMIT_WINDOW_SECONDS=600
@@ -356,6 +363,7 @@ What the important settings mean:
 - `SECURE_COOKIES=true`: required when users access the app over HTTPS through Cloudflare or another TLS-terminating proxy
 - `LOW_MEMORY_MODE=true`: recommended for Raspberry Pi
 - `BOOTSTRAP_SYNC_ON_STARTUP=false`: avoids expensive first-start ingestion during bootstrap
+- `ALERT_WEBHOOK_URL`: optional webhook receiver for operational alerts
 - `WORKER_SYNC_MINUTES=360`: source sync cadence
 - `WORKER_LOOP_SECONDS=30`: worker polling loop
 
@@ -612,6 +620,12 @@ Expected result:
 
 - health status should be `healthy`
 
+You can also inspect active in-app operational alerts from the browser as an admin on `/health`, or from an authenticated admin session with:
+
+```bash
+curl http://localhost:8088/health/alerts.json
+```
+
 ## Step 23: How to confirm ports are exposed correctly
 
 Check which port Docker published:
@@ -678,6 +692,36 @@ Recommended backup practice:
 - back up before major configuration changes
 - keep copies off the Pi as well
 - periodically copy `runtime/backups` to another machine or cloud storage
+- if `ALERT_WEBHOOK_URL` is configured, backup command failures can be surfaced to your webhook receiver
+
+## Step 26A: Optional alert webhook and container monitoring
+
+If you want OpenBid to push operational alerts to Slack, Teams, ntfy, or another webhook-compatible receiver, set:
+
+```env
+ALERT_WEBHOOK_URL=https://your-webhook-endpoint.example/alerts
+```
+
+The app will then emit alerts for:
+
+- stale or missing backups
+- repeated login throttling
+- extractor health failures
+- accumulated extraction failures
+- worker backlog growth
+
+For Docker container health, schedule the host-side check script every 5 minutes:
+
+```bash
+cd /opt/openbid
+ALERT_WEBHOOK_URL=https://your-webhook-endpoint.example/alerts ./scripts/docker-alert-check.sh
+```
+
+Example cron entry:
+
+```bash
+*/5 * * * * cd /opt/openbid && ALERT_WEBHOOK_URL=https://your-webhook-endpoint.example/alerts ./scripts/docker-alert-check.sh >> /var/log/openbid-container-alerts.log 2>&1
+```
 
 ## Step 26: How to restore from backup
 

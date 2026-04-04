@@ -117,6 +117,30 @@ func loadConfigFromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	alertEvalSeconds, err := envInt("ALERT_EVAL_SECONDS", 300)
+	if err != nil {
+		return Config{}, err
+	}
+	alertBackupMaxAgeMinutes, err := envInt("ALERT_BACKUP_MAX_AGE_MINUTES", 1560)
+	if err != nil {
+		return Config{}, err
+	}
+	alertBacklogMaxJobs, err := envInt("ALERT_BACKLOG_MAX_JOBS", 25)
+	if err != nil {
+		return Config{}, err
+	}
+	alertBacklogMaxAgeMinutes, err := envInt("ALERT_BACKLOG_MAX_AGE_MINUTES", 60)
+	if err != nil {
+		return Config{}, err
+	}
+	alertLoginThrottleThreshold, err := envInt("ALERT_LOGIN_THROTTLE_THRESHOLD", 3)
+	if err != nil {
+		return Config{}, err
+	}
+	alertExtractorFailureThreshold, err := envInt("ALERT_EXTRACTOR_FAILURE_THRESHOLD", 5)
+	if err != nil {
+		return Config{}, err
+	}
 	secretKey, err := envStringWithFile("SECRET_KEY", "change-me-now")
 	if err != nil {
 		return Config{}, err
@@ -126,23 +150,31 @@ func loadConfigFromEnv() (Config, error) {
 		return Config{}, err
 	}
 	return Config{
-		AppEnv:                      appEnv,
-		AppAddr:                     envString("APP_ADDR", ":8080"),
-		DataPath:                    envString("DATA_PATH", "./data/store.db"),
-		SecretKey:                   secretKey,
-		ExtractorURL:                envString("EXTRACTOR_URL", "http://extractor:9090"),
-		TreasuryFeedURL:             envOptionalString("TREASURY_FEED_URL"),
-		SecureCookies:               secureCookies,
-		LowMemoryMode:               lowMemoryMode,
-		AnalyticsEnabled:            analyticsEnabled,
-		BootstrapSyncOnStartup:      bootstrapSyncOnStartup,
-		SessionHours:                sessionHours,
-		WorkerSyncMinutes:           workerSyncMinutes,
-		WorkerLoopSeconds:           workerLoopSeconds,
-		LoginRateLimitWindowSeconds: loginRateLimitWindowSeconds,
-		LoginRateLimitMaxAttempts:   loginRateLimitMaxAttempts,
-		BootstrapAdminUsername:      envString("BOOTSTRAP_ADMIN_USERNAME", "admin"),
-		BootstrapAdminEmail:         envString("BOOTSTRAP_ADMIN_EMAIL", "admin@localhost"),
-		BootstrapAdminPassword:      bootstrapAdminPassword,
+		AppEnv:                         appEnv,
+		AppAddr:                        envString("APP_ADDR", ":8080"),
+		DataPath:                       envString("DATA_PATH", "./data/store.db"),
+		BackupDir:                      envString("BACKUP_DIR", "./backups"),
+		SecretKey:                      secretKey,
+		ExtractorURL:                   envString("EXTRACTOR_URL", "http://extractor:9090"),
+		TreasuryFeedURL:                envOptionalString("TREASURY_FEED_URL"),
+		AlertWebhookURL:                envOptionalString("ALERT_WEBHOOK_URL"),
+		SecureCookies:                  secureCookies,
+		LowMemoryMode:                  lowMemoryMode,
+		AnalyticsEnabled:               analyticsEnabled,
+		BootstrapSyncOnStartup:         bootstrapSyncOnStartup,
+		SessionHours:                   sessionHours,
+		WorkerSyncMinutes:              workerSyncMinutes,
+		WorkerLoopSeconds:              workerLoopSeconds,
+		LoginRateLimitWindowSeconds:    loginRateLimitWindowSeconds,
+		LoginRateLimitMaxAttempts:      loginRateLimitMaxAttempts,
+		AlertEvalSeconds:               alertEvalSeconds,
+		AlertBackupMaxAgeMinutes:       alertBackupMaxAgeMinutes,
+		AlertBacklogMaxJobs:            alertBacklogMaxJobs,
+		AlertBacklogMaxAgeMinutes:      alertBacklogMaxAgeMinutes,
+		AlertLoginThrottleThreshold:    alertLoginThrottleThreshold,
+		AlertExtractorFailureThreshold: alertExtractorFailureThreshold,
+		BootstrapAdminUsername:         envString("BOOTSTRAP_ADMIN_USERNAME", "admin"),
+		BootstrapAdminEmail:            envString("BOOTSTRAP_ADMIN_EMAIL", "admin@localhost"),
+		BootstrapAdminPassword:         bootstrapAdminPassword,
 	}, nil
 }

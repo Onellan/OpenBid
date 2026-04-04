@@ -192,3 +192,57 @@ func TestSQLiteMigratesLegacyJSONEntitiesIntoRelationalTables(t *testing.T) {
 		t.Fatalf("expected migrated saved search, err=%v searches=%#v", err, searches)
 	}
 }
+
+func TestSQLiteTenantScopedMembershipAndUserLookups(t *testing.T) {
+	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	users := []models.User{
+		{ID: "u1", Username: "alpha", DisplayName: "Alpha", Email: "alpha@example.com", IsActive: true},
+		{ID: "u2", Username: "bravo", DisplayName: "Bravo", Email: "bravo@example.com", IsActive: true},
+		{ID: "u3", Username: "charlie", DisplayName: "Charlie", Email: "charlie@example.com", IsActive: true},
+	}
+	for _, user := range users {
+		if err := s.UpsertUser(ctx, user); err != nil {
+			t.Fatal(err)
+		}
+	}
+	memberships := []models.Membership{
+		{ID: "m1", UserID: "u1", TenantID: "tenant-1", Role: models.RoleAdmin},
+		{ID: "m2", UserID: "u2", TenantID: "tenant-1", Role: models.RoleAnalyst},
+		{ID: "m3", UserID: "u3", TenantID: "tenant-2", Role: models.RoleViewer},
+	}
+	for _, membership := range memberships {
+		if err := s.UpsertMembership(ctx, membership); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tenantMemberships, err := s.ListMembershipsByTenant(ctx, "tenant-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tenantMemberships) != 2 {
+		t.Fatalf("expected 2 tenant memberships, got %#v", tenantMemberships)
+	}
+
+	tenantUsers, err := s.ListUsersByIDs(ctx, []string{"u2", "u1", "u2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tenantUsers) != 2 || tenantUsers[0].Username != "alpha" || tenantUsers[1].Username != "bravo" {
+		t.Fatalf("expected sorted tenant users, got %#v", tenantUsers)
+	}
+
+	userByEmail, err := s.GetUserByEmail(ctx, "BRAVO@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if userByEmail.ID != "u2" {
+		t.Fatalf("expected email lookup to return u2, got %#v", userByEmail)
+	}
+}

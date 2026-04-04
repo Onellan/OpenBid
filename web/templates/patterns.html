@@ -31,7 +31,7 @@
 {{end}}
 
 {{define "status_badge"}}
-<span class="badge {{if eq .tone "success"}}success{{else if eq .tone "warning"}}warning{{else if eq .tone "danger"}}danger{{else if eq .tone "info"}}info{{end}}">{{.label}}</span>
+<span class="badge {{if eq .tone "success"}}success{{else if eq .tone "warning"}}warning{{else if or (eq .tone "danger") (eq .tone "critical")}}danger{{else if eq .tone "info"}}info{{end}}">{{.label}}</span>
 {{end}}
 
 {{define "confirm_destructive_action"}}
@@ -41,9 +41,10 @@
     <input type="hidden" name="{{.name}}" value="{{.value}}">
   {{end}}
   {{if .text_input}}
-    <input name="{{.text_input.name}}" placeholder="{{.text_input.placeholder}}">
+    <label class="sr-only" for="{{.text_input.id}}">{{if .text_input.label}}{{.text_input.label}}{{else}}{{.label}}{{end}}</label>
+    <input id="{{.text_input.id}}" name="{{.text_input.name}}" placeholder="{{.text_input.placeholder}}" {{if .text_input.type}}type="{{.text_input.type}}"{{end}} {{if .text_input.autocomplete}}autocomplete="{{.text_input.autocomplete}}"{{end}}>
   {{end}}
-  <button type="submit">{{.label}}</button>
+  <button type="submit" {{if .button_aria_label}}aria-label="{{.button_aria_label}}"{{end}}>{{.label}}</button>
 </form>
 {{end}}
 

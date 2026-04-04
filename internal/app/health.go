@@ -47,11 +47,13 @@ func (a *App) HealthPage(w http.ResponseWriter, r *http.Request) {
 	queueMetrics := a.healthQueueMetrics(r.Context())
 	sourceSummary := a.healthSourceSummary(r.Context(), now)
 	sourceHealthItems, _ := a.Store.ListSourceHealth(r.Context())
+	operationalAlerts := a.operationalAlerts(r.Context(), now)
 	a.render(w, r, "health.html", map[string]any{
 		"Title":             "Health",
 		"User":              u,
 		"Tenant":            t,
 		"HealthCards":       runtimeCards,
+		"OperationalAlerts": operationalAlerts,
 		"QueueMetrics":      queueMetrics,
 		"SourceSummary":     sourceSummary,
 		"SourceHealthItems": sourceHealthItems,

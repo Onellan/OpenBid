@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"openbid/internal/auth"
 	"openbid/internal/models"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -15,12 +16,24 @@ import (
 )
 
 func newTestApp(t *testing.T) *App {
-	t.Setenv("DATA_PATH", filepath.Join(t.TempDir(), "store.db"))
+	root := t.TempDir()
+	t.Setenv("DATA_PATH", filepath.Join(root, "store.db"))
 	t.Setenv("BOOTSTRAP_SYNC_ON_STARTUP", "false")
+	t.Setenv("EXTRACTOR_URL", "")
+	backupDir := filepath.Join(root, "backups")
+	if err := os.MkdirAll(backupDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(backupDir, "store-bootstrap.db"), []byte("test-backup"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BACKUP_DIR", backupDir)
 	a, err := New()
 	if err != nil {
 		t.Fatal(err)
 	}
+	a.Config.ExtractorURL = ""
+	a.Extractor = nil
 	if closer, ok := a.Store.(interface{ Close() error }); ok {
 		t.Cleanup(func() { _ = closer.Close() })
 	}
@@ -505,6 +518,9 @@ func TestAdminSourcesPageRendersSourceManagementContent(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, "Source checks, schedules, and sync health") || !strings.Contains(body, "Add source") {
 		t.Fatalf("sources page missing expected content: %s", body)
+	}
+	if !strings.Contains(body, "Configured sources with health, scheduling, and manual actions.") || !strings.Contains(body, "Recent source execution history.") {
+		t.Fatalf("expected accessible table captions on sources page, got %s", body)
 	}
 }
 
@@ -1527,6 +1543,24 @@ func TestAdminUsersPageShowsRoleScopeGuide(t *testing.T) {
 	}
 	if !strings.Contains(body, "Role scope guide") || !strings.Contains(body, "Viewer") || !strings.Contains(body, "read-only access") {
 		t.Fatalf("expected role scope guidance on admin users page, got %s", body)
+	}
+	if !strings.Contains(body, "Skip to main content") || !strings.Contains(body, "id=\"role-scope-guide\"") || !strings.Contains(body, "aria-describedby=\"role-scope-guide\"") {
+		t.Fatalf("expected accessibility helpers on admin users page, got %s", body)
+	}
+}
+
+func TestAdminSourcesAliasRemoved(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := adminSession(t, a)
+	req := httptest.NewRequest(http.MethodGet, "/admin/sources", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusPermanentRedirect {
+		t.Fatalf("expected removed admin sources alias to redirect to canonical path, got %d", w.Code)
+	}
+	if location := w.Header().Get("Location"); location != "/sources" {
+		t.Fatalf("expected removed admin sources alias to redirect to /sources, got %q", location)
 	}
 }
 

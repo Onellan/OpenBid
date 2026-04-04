@@ -2,8 +2,37 @@
 {{template "page_hero" (dict
   "eyebrow" "Operations"
   "title" "Platform health"
-  "copy" "Inspect application runtime, database integrity, worker freshness, queue pressure, and extractor reachability from one operations view."
+  "copy" "Inspect active alerts, application runtime, database integrity, worker freshness, queue pressure, and extractor reachability from one operations view."
 )}}
+
+<section class="card" style="margin-top:18px">
+  {{template "card_header" (dict "title" "Operational alerts" "subtitle" "Actionable warning and critical conditions that should page or notify an operator.")}}
+  <div class="list" style="margin-top:14px">
+    {{range .OperationalAlerts}}
+    <div class="card-soft">
+      <div class="toolbar">
+        <div>
+          <strong>{{.Name}}</strong>
+          <div class="footer-note" style="margin-top:6px">{{.Summary}}</div>
+        </div>
+        {{template "status_badge" (dict "tone" .Severity "label" .Severity)}}
+      </div>
+      {{if .Details}}
+      <div class="list" style="margin-top:12px">
+        {{range .Details}}
+        <div class="card-soft">
+          <strong>{{.Label}}</strong>
+          <div class="footer-note" style="margin-top:6px">{{.Value}}</div>
+        </div>
+        {{end}}
+      </div>
+      {{end}}
+    </div>
+    {{else}}
+    {{template "empty_state" "No active operational alerts right now."}}
+    {{end}}
+  </div>
+</section>
 
 <section class="cards" style="margin-top:18px">
   {{range .HealthCards}}

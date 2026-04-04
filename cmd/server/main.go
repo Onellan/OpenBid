@@ -24,6 +24,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	go a.RunAlertMonitor(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

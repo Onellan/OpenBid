@@ -5,6 +5,7 @@ import (
 	"errors"
 	"openbid/internal/models"
 	"strings"
+	"time"
 )
 
 var ErrNotFound = errors.New("not found")
@@ -45,6 +46,15 @@ type JobStateCounts struct {
 	Retry      int
 	Failed     int
 	Completed  int
+}
+
+type JobAlertSnapshot struct {
+	Queued          int
+	Processing      int
+	Retry           int
+	Failed          int
+	Completed       int
+	OldestPendingAt time.Time
 }
 
 type NamedValue struct {
@@ -91,7 +101,9 @@ type Store interface {
 	UpsertTender(context.Context, models.Tender) error
 
 	ListUsers(context.Context) ([]models.User, error)
+	ListUsersByIDs(context.Context, []string) ([]models.User, error)
 	GetUserByUsername(context.Context, string) (models.User, error)
+	GetUserByEmail(context.Context, string) (models.User, error)
 	GetUser(context.Context, string) (models.User, error)
 	UpsertUser(context.Context, models.User) error
 	DeleteSessionsForUser(context.Context, string) error
@@ -101,6 +113,7 @@ type Store interface {
 	UpsertTenant(context.Context, models.Tenant) error
 
 	ListMemberships(context.Context, string) ([]models.Membership, error)
+	ListMembershipsByTenant(context.Context, string) ([]models.Membership, error)
 	ListAllMemberships(context.Context) ([]models.Membership, error)
 	GetMembership(context.Context, string, string) (models.Membership, error)
 	UpsertMembership(context.Context, models.Membership) error
@@ -141,12 +154,14 @@ type Store interface {
 	ListValidJobs(context.Context) ([]models.ExtractionJob, error)
 	PruneInvalidJobs(context.Context) (int, error)
 	JobStateCounts(context.Context) (JobStateCounts, error)
+	JobAlertSnapshot(context.Context) (JobAlertSnapshot, error)
 	QueueJob(context.Context, models.ExtractionJob) error
 	UpdateJob(context.Context, models.ExtractionJob) error
 	DeleteJob(context.Context, string) error
 
 	ListAuditEntries(context.Context, string) ([]models.AuditEntry, error)
 	ListAuditEntriesPage(context.Context, string, int, int) ([]models.AuditEntry, int, error)
+	ListSecurityAuditEntriesPage(context.Context, string, int, int) ([]models.AuditEntry, int, error)
 	AddAuditEntry(context.Context, models.AuditEntry) error
 	ListWorkflowEvents(context.Context, string, string) ([]models.WorkflowEvent, error)
 	AddWorkflowEvent(context.Context, models.WorkflowEvent) error

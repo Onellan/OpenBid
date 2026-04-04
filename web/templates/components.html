@@ -24,8 +24,8 @@
 {{end}}
 
 {{define "flash_messages"}}
-  {{with .Error}}<div class="notice"><span class="badge danger">Error</span> <span style="margin-left:8px">{{.}}</span></div>{{end}}
-  {{with .Message}}<div class="notice"><span class="badge success">Success</span> <span style="margin-left:8px">{{.}}</span></div>{{end}}
+  {{with .Error}}<div class="notice" role="alert"><span class="badge danger">Error</span> <span style="margin-left:8px">{{.}}</span></div>{{end}}
+  {{with .Message}}<div class="notice" role="status"><span class="badge success">Success</span> <span style="margin-left:8px">{{.}}</span></div>{{end}}
 {{end}}
 
 {{define "empty_state"}}

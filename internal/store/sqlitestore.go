@@ -265,6 +265,20 @@ func placeholders(count int) string {
 	return strings.TrimRight(strings.Repeat("?,", count), ",")
 }
 
+func uniqueTrimmed(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := make(map[string]bool, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
 func (s *SQLiteStore) listAllTenders(ctx context.Context) ([]models.Tender, error) {
 	return sqliteListJSON[models.Tender](ctx, s.db, "tenders")
 }
@@ -723,6 +737,39 @@ func (s *SQLiteStore) ListUsers(ctx context.Context) ([]models.User, error) {
 	}
 	return out, nil
 }
+func (s *SQLiteStore) ListUsersByIDs(ctx context.Context, userIDs []string) ([]models.User, error) {
+	ids := uniqueTrimmed(userIDs)
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	args := make([]any, 0, len(ids))
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		select id, username, display_name, email, password_hash, password_salt, mfa_secret, is_active, mfa_enabled,
+		       failed_logins, session_version, locked_until, recovery_codes, created_at, updated_at
+		from user_records
+		where id in (`+placeholders(len(ids))+`)
+		order by username asc
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.User{}
+	for rows.Next() {
+		user, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, user)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
 func (s *SQLiteStore) GetUserByUsername(ctx context.Context, username string) (models.User, error) {
 	username = strings.TrimSpace(strings.ToLower(username))
 	if username == "" {
@@ -735,6 +782,24 @@ func (s *SQLiteStore) GetUserByUsername(ctx context.Context, username string) (m
 		where lower(username) = ?
 		limit 1
 	`, username)
+	user, err := scanUser(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return models.User{}, ErrNotFound
+	}
+	return user, err
+}
+func (s *SQLiteStore) GetUserByEmail(ctx context.Context, email string) (models.User, error) {
+	email = strings.TrimSpace(strings.ToLower(email))
+	if email == "" {
+		return models.User{}, ErrNotFound
+	}
+	row := s.db.QueryRowContext(ctx, `
+		select id, username, display_name, email, password_hash, password_salt, mfa_secret, is_active, mfa_enabled,
+		       failed_logins, session_version, locked_until, recovery_codes, created_at, updated_at
+		from user_records
+		where lower(email) = ?
+		limit 1
+	`, email)
 	user, err := scanUser(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.User{}, ErrNotFound
@@ -816,6 +881,34 @@ func (s *SQLiteStore) ListMemberships(ctx context.Context, userID string) ([]mod
 		where user_id = ?
 		order by tenant_id asc
 	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.Membership{}
+	for rows.Next() {
+		membership, err := scanMembership(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, membership)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+func (s *SQLiteStore) ListMembershipsByTenant(ctx context.Context, tenantID string) ([]models.Membership, error) {
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		select id, user_id, tenant_id, responsibilities, role, created_at, updated_at
+		from membership_records
+		where tenant_id = ?
+		order by user_id asc
+	`, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -1402,6 +1495,57 @@ func (s *SQLiteStore) JobStateCounts(ctx context.Context) (JobStateCounts, error
 	return counts, rows.Err()
 }
 
+func (s *SQLiteStore) JobAlertSnapshot(ctx context.Context) (JobAlertSnapshot, error) {
+	var snapshot JobAlertSnapshot
+	var oldestPending sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		select
+			coalesce(sum(case when coalesce(json_extract(j.payload, '$.State'), '') = ? then 1 else 0 end), 0),
+			coalesce(sum(case when coalesce(json_extract(j.payload, '$.State'), '') = ? then 1 else 0 end), 0),
+			coalesce(sum(case when coalesce(json_extract(j.payload, '$.State'), '') = ? then 1 else 0 end), 0),
+			coalesce(sum(case when coalesce(json_extract(j.payload, '$.State'), '') = ? then 1 else 0 end), 0),
+			coalesce(sum(case when coalesce(json_extract(j.payload, '$.State'), '') = ? then 1 else 0 end), 0),
+			min(case
+				when coalesce(json_extract(j.payload, '$.State'), '') in (?, ?, ?)
+				then coalesce(json_extract(j.payload, '$.CreatedAt'), '')
+				else null
+			end)
+		from jobs j
+		where coalesce(json_extract(j.payload, '$.TenderID'), '') <> ''
+		  and exists (
+			select 1
+			from tenders t
+			where t.id = coalesce(json_extract(j.payload, '$.TenderID'), '')
+		  )
+	`,
+		string(models.ExtractionQueued),
+		string(models.ExtractionProcessing),
+		string(models.ExtractionRetry),
+		string(models.ExtractionFailed),
+		string(models.ExtractionCompleted),
+		string(models.ExtractionQueued),
+		string(models.ExtractionRetry),
+		string(models.ExtractionProcessing),
+	).Scan(
+		&snapshot.Queued,
+		&snapshot.Processing,
+		&snapshot.Retry,
+		&snapshot.Failed,
+		&snapshot.Completed,
+		&oldestPending,
+	)
+	if err != nil {
+		return JobAlertSnapshot{}, err
+	}
+	if oldestPending.Valid && strings.TrimSpace(oldestPending.String) != "" {
+		snapshot.OldestPendingAt, err = time.Parse(time.RFC3339Nano, oldestPending.String)
+		if err != nil {
+			return JobAlertSnapshot{}, err
+		}
+	}
+	return snapshot, nil
+}
+
 func (s *SQLiteStore) QueueJob(ctx context.Context, v models.ExtractionJob) error {
 	var existingID string
 	err := s.db.QueryRowContext(ctx, `
@@ -1506,6 +1650,23 @@ func (s *SQLiteStore) ListAuditEntries(ctx context.Context, tenantID string) ([]
 }
 
 func (s *SQLiteStore) ListAuditEntriesPage(ctx context.Context, tenantID string, page, pageSize int) ([]models.AuditEntry, int, error) {
+	return s.listAuditEntriesPageWhere(ctx, tenantID, page, pageSize, "")
+}
+
+func (s *SQLiteStore) ListSecurityAuditEntriesPage(ctx context.Context, tenantID string, page, pageSize int) ([]models.AuditEntry, int, error) {
+	return s.listAuditEntriesPageWhere(ctx, tenantID, page, pageSize, `
+		(
+			coalesce(json_extract(payload, '$.metadata.category'), '') = 'security'
+			or coalesce(json_extract(payload, '$.entity'), '') in ('auth', 'user_security', 'user_password', 'membership')
+			or (
+				coalesce(json_extract(payload, '$.entity'), '') in ('user', 'tenant')
+				and coalesce(json_extract(payload, '$.action'), '') in ('create', 'update', 'delete', 'switch')
+			)
+		)
+	`)
+}
+
+func (s *SQLiteStore) listAuditEntriesPageWhere(ctx context.Context, tenantID string, page, pageSize int, extraWhere string) ([]models.AuditEntry, int, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -1513,11 +1674,15 @@ func (s *SQLiteStore) ListAuditEntriesPage(ctx context.Context, tenantID string,
 		pageSize = 20
 	}
 	args := []any{}
-	where := "1=1"
+	whereParts := []string{"1=1"}
 	if strings.TrimSpace(tenantID) != "" {
-		where = "coalesce(json_extract(payload, '$.tenant_id'), '') = ?"
+		whereParts = append(whereParts, "coalesce(json_extract(payload, '$.tenant_id'), '') = ?")
 		args = append(args, tenantID)
 	}
+	if extraWhere = strings.TrimSpace(extraWhere); extraWhere != "" {
+		whereParts = append(whereParts, extraWhere)
+	}
+	where := strings.Join(whereParts, " and ")
 	var total int
 	if err := s.db.QueryRowContext(ctx, "select count(*) from audit_entries where "+where, args...).Scan(&total); err != nil {
 		return nil, 0, err

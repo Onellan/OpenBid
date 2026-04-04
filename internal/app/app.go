@@ -23,12 +23,14 @@ import (
 )
 
 type Config struct {
-	AppEnv                                                                 string
-	AppAddr, DataPath, SecretKey, ExtractorURL, TreasuryFeedURL            string
-	SecureCookies, LowMemoryMode, AnalyticsEnabled, BootstrapSyncOnStartup bool
-	SessionHours, WorkerSyncMinutes, WorkerLoopSeconds                     int
-	LoginRateLimitWindowSeconds, LoginRateLimitMaxAttempts                 int
-	BootstrapAdminUsername, BootstrapAdminEmail, BootstrapAdminPassword    string
+	AppEnv                                                                                     string
+	AppAddr, DataPath, SecretKey, ExtractorURL, TreasuryFeedURL, BackupDir, AlertWebhookURL    string
+	SecureCookies, LowMemoryMode, AnalyticsEnabled, BootstrapSyncOnStartup                     bool
+	SessionHours, WorkerSyncMinutes, WorkerLoopSeconds                                         int
+	LoginRateLimitWindowSeconds, LoginRateLimitMaxAttempts                                     int
+	AlertEvalSeconds, AlertBackupMaxAgeMinutes, AlertBacklogMaxJobs, AlertBacklogMaxAgeMinutes int
+	AlertLoginThrottleThreshold, AlertExtractorFailureThreshold                                int
+	BootstrapAdminUsername, BootstrapAdminEmail, BootstrapAdminPassword                        string
 }
 type App struct {
 	Config           Config
@@ -39,6 +41,7 @@ type App struct {
 	Extractor        *extract.Client
 	StartedAt        time.Time
 	LoginRateLimiter *LoginRateLimiter
+	AlertNotifier    *AlertNotifier
 }
 
 type authContextKey struct{}
@@ -97,6 +100,24 @@ func validateConfig(cfg Config) error {
 	if cfg.LoginRateLimitMaxAttempts <= 0 {
 		return errors.New("LOGIN_RATE_LIMIT_MAX_ATTEMPTS must be greater than zero")
 	}
+	if cfg.AlertEvalSeconds < 0 {
+		return errors.New("ALERT_EVAL_SECONDS must not be negative")
+	}
+	if cfg.AlertBackupMaxAgeMinutes <= 0 {
+		return errors.New("ALERT_BACKUP_MAX_AGE_MINUTES must be greater than zero")
+	}
+	if cfg.AlertBacklogMaxJobs <= 0 {
+		return errors.New("ALERT_BACKLOG_MAX_JOBS must be greater than zero")
+	}
+	if cfg.AlertBacklogMaxAgeMinutes <= 0 {
+		return errors.New("ALERT_BACKLOG_MAX_AGE_MINUTES must be greater than zero")
+	}
+	if cfg.AlertLoginThrottleThreshold <= 0 {
+		return errors.New("ALERT_LOGIN_THROTTLE_THRESHOLD must be greater than zero")
+	}
+	if cfg.AlertExtractorFailureThreshold <= 0 {
+		return errors.New("ALERT_EXTRACTOR_FAILURE_THRESHOLD must be greater than zero")
+	}
 	if cfg.BootstrapAdminPassword != "" {
 		if err := auth.StrongEnoughPassword(cfg.BootstrapAdminPassword); err != nil {
 			return fmt.Errorf("BOOTSTRAP_ADMIN_PASSWORD is not strong enough: %w", err)
@@ -138,18 +159,7 @@ func New() (*App, error) {
 	a := &App{
 		Config: cfg, Store: st, Templates: tpl, Sources: source.NewRegistry(), Extractor: extract.New(cfg.ExtractorURL), StartedAt: time.Now().UTC(),
 		LoginRateLimiter: NewLoginRateLimiter(time.Duration(cfg.LoginRateLimitWindowSeconds)*time.Second, cfg.LoginRateLimitMaxAttempts),
-	}
-	if deduper, ok := any(st).(interface {
-		DeduplicateTenders(context.Context) (int, error)
-	}); ok {
-		removed, err := deduper.DeduplicateTenders(context.Background())
-		if err != nil {
-			_ = st.Close()
-			return nil, fmt.Errorf("deduplicate tenders: %w", err)
-		}
-		if removed > 0 {
-			log.Printf("deduplicated %d stored tender records", removed)
-		}
+		AlertNotifier:    NewAlertNotifier(cfg.AlertWebhookURL),
 	}
 	if err := a.seed(context.Background()); err != nil {
 		_ = st.Close()
@@ -181,7 +191,10 @@ func (a *App) seed(ctx context.Context) error {
 			return err
 		}
 		if err := a.persistUser(ctx, models.User{Username: a.Config.BootstrapAdminUsername, DisplayName: "Platform Admin", Email: a.Config.BootstrapAdminEmail, PasswordSalt: salt, PasswordHash: hash, IsActive: true}); err != nil {
-			return err
+			users, _ = a.Store.ListUsers(ctx)
+			if len(users) == 0 {
+				return err
+			}
 		}
 		users, _ = a.Store.ListUsers(ctx)
 		if len(users) == 0 {
@@ -815,8 +828,12 @@ func (a *App) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !u.IsActive {
+		blockedNow := false
 		if a.LoginRateLimiter != nil {
-			a.LoginRateLimiter.RegisterFailure(loginKey, time.Now())
+			blockedNow = a.LoginRateLimiter.RegisterFailure(loginKey, time.Now())
+		}
+		if blockedNow {
+			a.auditSecurityForUserTenants(r.Context(), u, "throttle", "auth", u.ID, "Login throttled", map[string]string{"username": u.Username, "remote_ip": loginKey})
 		}
 		a.render(w, r, "login.html", map[string]any{"Title": "Login", "Error": "Invalid credentials"})
 		return
@@ -831,13 +848,22 @@ func (a *App) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !auth.VerifyPassword(r.FormValue("password"), u.PasswordSalt, u.PasswordHash) {
+		blockedNow := false
 		if a.LoginRateLimiter != nil {
-			a.LoginRateLimiter.RegisterFailure(loginKey, time.Now())
+			blockedNow = a.LoginRateLimiter.RegisterFailure(loginKey, time.Now())
+		}
+		if blockedNow {
+			a.auditSecurityForUserTenants(r.Context(), u, "throttle", "auth", u.ID, "Login throttled", map[string]string{"username": u.Username, "remote_ip": loginKey})
 		}
 		u.FailedLogins++
 		if u.FailedLogins >= 5 {
 			u.LockedUntil = time.Now().Add(15 * time.Minute)
 			u.FailedLogins = 0
+			a.auditSecurityForUserTenants(r.Context(), u, "lockout", "auth", u.ID, "Account locked after repeated failed logins", map[string]string{
+				"username":     u.Username,
+				"remote_ip":    loginKey,
+				"locked_until": u.LockedUntil.UTC().Format(time.RFC3339),
+			})
 		}
 		if err := a.persistUser(r.Context(), u); err != nil {
 			log.Printf("failed to persist login attempt for user=%s: %v", u.Username, err)
@@ -850,8 +876,12 @@ func (a *App) Login(w http.ResponseWriter, r *http.Request) {
 		if !auth.ValidateTOTP(u.MFASecret, mfaInput, time.Now()) {
 			remainingCodes, usedRecoveryCode := auth.ConsumeRecoveryCode(u.RecoveryCodes, mfaInput)
 			if !usedRecoveryCode {
+				blockedNow := false
 				if a.LoginRateLimiter != nil {
-					a.LoginRateLimiter.RegisterFailure(loginKey, time.Now())
+					blockedNow = a.LoginRateLimiter.RegisterFailure(loginKey, time.Now())
+				}
+				if blockedNow {
+					a.auditSecurityForUserTenants(r.Context(), u, "throttle", "auth", u.ID, "Login throttled", map[string]string{"username": u.Username, "remote_ip": loginKey, "phase": "mfa"})
 				}
 				a.render(w, r, "login.html", map[string]any{"Title": "Login", "Error": "Invalid MFA or recovery code"})
 				return

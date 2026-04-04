@@ -136,6 +136,20 @@ func TestLoginLocksAccountAfterRepeatedFailures(t *testing.T) {
 	if !strings.Contains(body, "Account temporarily locked") {
 		t.Fatalf("expected account lockout message, got %s", body)
 	}
+	entries, _, err := a.Store.ListSecurityAuditEntriesPage(t.Context(), tenants[0].ID, 1, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundLockout := false
+	for _, entry := range entries {
+		if entry.Action == "lockout" && entry.Entity == "auth" && entry.EntityID == user.ID {
+			foundLockout = true
+			break
+		}
+	}
+	if !foundLockout {
+		t.Fatalf("expected lockout event to be audited, got %#v", entries)
+	}
 }
 
 func TestQueueRequeueRejectsViewerDirectPost(t *testing.T) {

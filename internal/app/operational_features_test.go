@@ -142,15 +142,57 @@ func TestAuditLogPageIsTenantScopedPaginatedAndExpandedByDefault(t *testing.T) {
 	}
 }
 
+func TestSecurityAuditLogPageFiltersToSecuritySensitiveEvents(t *testing.T) {
+	a := newTestApp(t)
+	user, tenant, cookie, _ := adminSession(t, a)
+	ctx := context.Background()
+	if err := a.Store.AddAuditEntry(ctx, models.AuditEntry{
+		TenantID: tenant.ID,
+		UserID:   user.ID,
+		Action:   "update",
+		Entity:   "workflow",
+		EntityID: "workflow-1",
+		Summary:  "Workflow updated",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store.AddAuditEntry(ctx, models.AuditEntry{
+		TenantID: tenant.ID,
+		UserID:   user.ID,
+		Action:   "lockout",
+		Entity:   "auth",
+		EntityID: user.ID,
+		Summary:  "Account locked after repeated failed logins",
+		Metadata: map[string]string{"category": "security", "remote_ip": "203.0.113.10"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/audit-log/security", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Security-sensitive events") || !strings.Contains(body, "Account locked after repeated failed logins") {
+		t.Fatalf("expected security audit content, got %s", body)
+	}
+	if strings.Contains(body, "Workflow updated") {
+		t.Fatalf("expected workflow audit noise to be filtered out, got %s", body)
+	}
+}
+
 func TestHealthPageShowsOperationalCardsForAdmins(t *testing.T) {
 	a := newTestApp(t)
 	_, _, cookie, _ := adminSession(t, a)
 	_ = a.Store.UpsertSourceHealth(t.Context(), models.SourceHealth{
-		SourceKey:      "treasury",
-		LastStatus:     "success",
-		LastMessage:    "2 items fetched",
-		LastItemCount:  2,
-		HealthStatus:   "healthy",
+		SourceKey:     "treasury",
+		LastStatus:    "success",
+		LastMessage:   "2 items fetched",
+		LastItemCount: 2,
+		HealthStatus:  "healthy",
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
