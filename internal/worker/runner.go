@@ -39,8 +39,8 @@ func (r Runner) logKV(event string, fields ...any) {
 		}
 		parts = append(parts, key+"="+value)
 	}
-	log.Printf(strings.Join(parts, " "))
-}
+		log.Print(strings.Join(parts, " "))
+	}
 
 func toString(value any) string {
 	switch v := value.(type) {
