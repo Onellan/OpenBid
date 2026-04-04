@@ -124,8 +124,8 @@ def mine(text:str)->dict:
     if title: facts["document_title"]=title[:240]
 
     m=capture(text, [
-        r"closing(?: date(?: and time| on tender)?| time)?\s*[:\-]?\s*([0-9]{1,2}[\/-][0-9]{1,2}[\/-][0-9]{2,4}|[0-9]{1,2}\s+[A-Za-z]+\s+[0-9]{4})(?:\s*(?:at)?\s*([0-9]{1,2}(?::|H)\d{2}(?:\s*[ap]m)?))?",
         r"CLOSING DATE:\s*([0-9]{1,2}\s+[A-Za-z]+\s+[0-9]{4})\s*CLOSING TIME:\s*([0-9]{1,2}:\d{2})",
+        r"closing(?: date(?: and time| on tender)?| time)?\s*[:\-]?\s*([0-9]{1,2}[\/-][0-9]{1,2}[\/-][0-9]{2,4}|[0-9]{1,2}\s+[A-Za-z]+\s+[0-9]{4})(?:\s*(?:at)?\s*([0-9]{1,2}(?::|H)\d{2}(?:\s*[ap]m)?))?",
     ])
     if m:
         facts["closing_date"]=normalize_date(m.group(1))
