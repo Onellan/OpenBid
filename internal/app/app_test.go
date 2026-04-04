@@ -1235,6 +1235,140 @@ func TestQueuePageGroupsStatesAndHidesCompletedRetry(t *testing.T) {
 	}
 }
 
+func TestQueuePageHidesRetryForViewerRole(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := sessionForRole(t, a, models.RoleViewer)
+	_ = a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:             "viewer-queue-tender",
+		Title:          "Viewer Queue Tender",
+		Issuer:         "Metro",
+		SourceKey:      "treasury",
+		Status:         "open",
+		DocumentURL:    "https://example.org/viewer.pdf",
+		DocumentStatus: models.ExtractionFailed,
+	})
+	_ = a.Store.QueueJob(t.Context(), models.ExtractionJob{
+		ID:          "viewer-queue-job",
+		TenderID:    "viewer-queue-tender",
+		DocumentURL: "https://example.org/viewer.pdf",
+		State:       models.ExtractionFailed,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/queue", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	if strings.Contains(body, "action=\"/queue/requeue\"") {
+		t.Fatalf("expected retry action hidden for viewer, got %s", body)
+	}
+	if !strings.Contains(body, "Read only") {
+		t.Fatalf("expected read-only marker for viewer queue item, got %s", body)
+	}
+}
+
+func TestQueuePageShowsRetryForAdminRole(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := adminSession(t, a)
+	_ = a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:             "admin-queue-tender",
+		Title:          "Admin Queue Tender",
+		Issuer:         "Metro",
+		SourceKey:      "treasury",
+		Status:         "open",
+		DocumentURL:    "https://example.org/admin.pdf",
+		DocumentStatus: models.ExtractionFailed,
+	})
+	_ = a.Store.QueueJob(t.Context(), models.ExtractionJob{
+		ID:          "admin-queue-job",
+		TenderID:    "admin-queue-tender",
+		DocumentURL: "https://example.org/admin.pdf",
+		State:       models.ExtractionFailed,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/queue", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	if !strings.Contains(body, "action=\"/queue/requeue\"") {
+		t.Fatalf("expected retry action for admin, got %s", body)
+	}
+}
+
+func TestQueueRequeueWorksForAdmin(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, csrf := adminSession(t, a)
+	_ = a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:             "requeue-admin-tender",
+		Title:          "Requeue Admin Tender",
+		Issuer:         "Metro",
+		SourceKey:      "treasury",
+		Status:         "open",
+		DocumentURL:    "https://example.org/requeue.pdf",
+		DocumentStatus: models.ExtractionFailed,
+	})
+	form := url.Values{
+		"csrf_token": {csrf},
+		"tender_id":  {"requeue-admin-tender"},
+		"return_to":  {"/queue"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/queue/requeue", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after requeue, got %d", w.Code)
+	}
+	if location := w.Header().Get("Location"); location != "/queue?message=Job+requeued" {
+		t.Fatalf("unexpected redirect location: %q", location)
+	}
+	tender, err := a.Store.GetTender(t.Context(), "requeue-admin-tender")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tender.DocumentStatus != models.ExtractionQueued {
+		t.Fatalf("expected tender document status queued, got %s", tender.DocumentStatus)
+	}
+	jobs, err := a.Store.ListJobs(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, job := range jobs {
+		if job.TenderID == "requeue-admin-tender" && job.State == models.ExtractionQueued {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected queued extraction job after retry, got %#v", jobs)
+	}
+}
+
+func TestAdminUsersPageShowsRoleScopeGuide(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := adminSession(t, a)
+	req := httptest.NewRequest(http.MethodGet, "/admin/users", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	if !strings.Contains(body, "Role scope guide") || !strings.Contains(body, "Viewer") || !strings.Contains(body, "read-only access") {
+		t.Fatalf("expected role scope guidance on admin users page, got %s", body)
+	}
+}
+
 func TestSourcesPageReordersSetupAndCollapsesHistory(t *testing.T) {
 	a := newTestApp(t)
 	_, _, cookie, _ := adminSession(t, a)

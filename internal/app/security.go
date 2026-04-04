@@ -117,10 +117,6 @@ func (a *App) MFADisable(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	if a.userRequiresPrivilegedMFA(r.Context(), user.ID) {
-		a.render(w, r, "mfa.html", map[string]any{"Title": "MFA", "Error": "MFA is required for your role", "RecoveryCodeCount": len(user.RecoveryCodes)})
-		return
-	}
 	if !auth.VerifyPassword(r.FormValue("password"), user.PasswordSalt, user.PasswordHash) {
 		a.render(w, r, "mfa.html", map[string]any{"Title": "MFA", "Error": "Password confirmation failed"})
 		return

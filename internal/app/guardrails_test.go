@@ -23,6 +23,17 @@ func TestSameOriginRequestRejectsSchemeMismatch(t *testing.T) {
 	}
 }
 
+func TestSameOriginRequestAcceptsCloudflareHTTPSOrigin(t *testing.T) {
+	a := newTestApp(t)
+	req := httptest.NewRequest(http.MethodPost, "/mfa/setup", nil)
+	req.Header.Set("Host", "openbid.example")
+	req.Header.Set("CF-Visitor", `{"scheme":"https"}`)
+	req.Header.Set("Origin", "https://openbid.example")
+	if !a.sameOriginRequest(req) {
+		t.Fatal("expected same-origin check to accept Cloudflare HTTPS origin")
+	}
+}
+
 func TestLoginRateLimiterBlocksAfterConfiguredFailures(t *testing.T) {
 	limiter := NewLoginRateLimiter(10*time.Minute, 2)
 	now := time.Date(2026, 4, 3, 10, 0, 0, 0, time.UTC)
@@ -153,18 +164,15 @@ func TestCurrentUserTenantRejectsStaleSessionVersion(t *testing.T) {
 	}
 }
 
-func TestRequireAuthRedirectsPrivilegedUserWithoutMFAToSetup(t *testing.T) {
+func TestRequireAuthAllowsPrivilegedUserWithoutMFA(t *testing.T) {
 	a := newTestApp(t)
 	_, _, cookie, _ := sessionForRole(t, a, models.RolePortfolioManager)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(cookie)
 	w := httptest.NewRecorder()
 	a.Server.Handler.ServeHTTP(w, req)
-	if w.Code != http.StatusSeeOther {
-		t.Fatalf("expected redirect, got %d", w.Code)
-	}
-	if location := w.Header().Get("Location"); !strings.HasPrefix(location, "/mfa/setup") {
-		t.Fatalf("expected MFA setup redirect, got %q", location)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected privileged access without MFA, got %d", w.Code)
 	}
 }
 
@@ -180,17 +188,23 @@ func TestRequireAuthAllowsNonPrivilegedUserWithoutMFA(t *testing.T) {
 	}
 }
 
-func TestPrivilegedUserCannotDisableMFA(t *testing.T) {
+func TestPrivilegedUserCanDisableMFA(t *testing.T) {
 	a := newTestApp(t)
 	user, _, cookie, csrf := sessionForRole(t, a, models.RolePortfolioManager)
 	user.MFAEnabled = true
 	user.MFASecret = auth.NewTOTPSecret()
+	salt, hash, err := auth.HashPassword("TenderHub!2026")
+	if err != nil {
+		t.Fatal(err)
+	}
+	user.PasswordSalt = salt
+	user.PasswordHash = hash
 	if err := a.persistUser(t.Context(), user); err != nil {
 		t.Fatal(err)
 	}
 	form := url.Values{
 		"csrf_token": {csrf},
-		"password":   {""},
+		"password":   {"TenderHub!2026"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/mfa/disable", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -200,8 +214,12 @@ func TestPrivilegedUserCannotDisableMFA(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected handled response, got %d", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), "MFA is required for your role") {
-		t.Fatalf("expected privileged MFA enforcement message, got %q", w.Body.String())
+	updated, err := a.Store.GetUser(t.Context(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.MFAEnabled || updated.MFASecret != "" {
+		t.Fatalf("expected MFA to be disabled, got %#v", updated)
 	}
 }
 

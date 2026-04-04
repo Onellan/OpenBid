@@ -566,6 +566,9 @@ func (a *App) renderStatus(w http.ResponseWriter, r *http.Request, status int, n
 		if _, exists := data["CanViewPlatformHealth"]; !exists {
 			data["CanViewPlatformHealth"] = canViewPlatformHealth(m.Role)
 		}
+		if _, exists := data["CanEditWorkspace"]; !exists {
+			data["CanEditWorkspace"] = canEditWorkspace(m.Role)
+		}
 	}
 	if _, exists := data["Error"]; !exists {
 		data["Error"] = r.URL.Query().Get("error")
@@ -614,13 +617,9 @@ func (a *App) serverError(w http.ResponseWriter, r *http.Request, message string
 
 func (a *App) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		u, _, m, ok := a.currentUserTenant(r)
+		_, _, m, ok := a.currentUserTenant(r)
 		if !ok {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
-			return
-		}
-		if !u.MFAEnabled && a.userRequiresPrivilegedMFA(r.Context(), u.ID) && !allowsMFABootstrapPath(r.URL.Path) {
-			http.Redirect(w, r, "/mfa/setup?message=MFA+is+required+for+your+role", http.StatusSeeOther)
 			return
 		}
 		if m.Role == "" {
@@ -710,6 +709,20 @@ func forwardedRequestHost(r *http.Request) string {
 }
 
 func forwardedRequestScheme(r *http.Request) string {
+	if raw := strings.TrimSpace(r.Header.Get("Forwarded")); raw != "" {
+		for _, part := range strings.Split(raw, ";") {
+			part = strings.TrimSpace(part)
+			lowerPart := strings.ToLower(part)
+			if !strings.HasPrefix(lowerPart, "proto=") {
+				continue
+			}
+			value := strings.Trim(strings.TrimSpace(part[len("proto="):]), "\"")
+			value = strings.ToLower(strings.TrimSpace(value))
+			if value == "http" || value == "https" {
+				return value
+			}
+		}
+	}
 	for _, header := range []string{"X-Forwarded-Proto"} {
 		raw := strings.TrimSpace(r.Header.Get(header))
 		if raw == "" {
@@ -719,6 +732,18 @@ func forwardedRequestScheme(r *http.Request) string {
 			raw = strings.TrimSpace(raw[:index])
 		}
 		return strings.ToLower(raw)
+	}
+	if raw := strings.TrimSpace(r.Header.Get("CF-Visitor")); raw != "" {
+		lower := strings.ToLower(raw)
+		switch {
+		case strings.Contains(lower, `"scheme":"https"`):
+			return "https"
+		case strings.Contains(lower, `"scheme":"http"`):
+			return "http"
+		}
+	}
+	if raw := strings.TrimSpace(r.Header.Get("X-Forwarded-Ssl")); strings.EqualFold(raw, "on") {
+		return "https"
 	}
 	if r.TLS != nil {
 		return "https"
@@ -819,10 +844,6 @@ func (a *App) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := a.issueSession(r.Context(), w, u, memberships[0].TenantID); err != nil {
 		a.serverError(w, r, "unable to start session", err)
-		return
-	}
-	if !u.MFAEnabled && hasPrivilegedMembership(memberships) {
-		http.Redirect(w, r, "/mfa/setup?message=MFA+is+required+for+your+role", http.StatusSeeOther)
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)

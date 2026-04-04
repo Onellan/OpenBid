@@ -8,6 +8,18 @@
 <div class="split" style="margin-top:18px">
   <section class="card">
     {{template "card_header" (dict "title" "Create user" "subtitle" "Set up new team members and assign their initial tenant role.")}}
+    <div class="card-soft" style="margin-top:14px">
+      <strong>Role scope guide</strong>
+      <div class="list" style="margin-top:10px">
+        <div><strong>Admin</strong> can manage users, tenants, platform sources, audit history, and health across the whole deployment.</div>
+        <div><strong>Portfolio manager</strong> can manage users, tenants, sources, and platform operations across tenants, but is intended for operational oversight rather than full system ownership.</div>
+        <div><strong>Tenant admin</strong> can manage users and memberships only inside their current tenant workspace.</div>
+        <div><strong>Analyst</strong> can work tenders, bookmarks, workflows, and queue actions inside their tenant.</div>
+        <div><strong>Reviewer</strong> can review and update tender workflow inside their tenant, including operational queue actions.</div>
+        <div><strong>Operator</strong> can manage day-to-day pipeline and tender processing inside their tenant, including queue retries.</div>
+        <div><strong>Viewer</strong> has read-only access and cannot change workflow, queue, source, user, or tenant data.</div>
+      </div>
+    </div>
     <div style="margin-top:14px">{{template "create_user_form" .}}</div>
   </section>
 

@@ -22,7 +22,7 @@
       <span class="badge {{.Tone}}">{{len .Items}} items</span>
     </summary>
     <div class="section-disclosure-body">
-      <div class="table-wrap">{{template "queue_section_table_typed" (dict "PageItems" .PageItems "CSRFToken" $.CSRFToken)}}</div>
+      <div class="table-wrap">{{template "queue_section_table_typed" (dict "PageItems" .PageItems "CSRFToken" $.CSRFToken "CanEditWorkspace" $.CanEditWorkspace)}}</div>
       {{if gt .TotalPages 1}}
       <div class="actions queue-section-pagination" style="margin-top:14px">
         {{if .HasPrevPage}}<a class="button secondary" href="{{.PrevPageURL}}">Previous</a>{{else}}<span class="badge info">First page</span>{{end}}
