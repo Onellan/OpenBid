@@ -16,7 +16,7 @@ OpenBid is a lightweight, self-hosted, multi-tenant tender aggregation platform 
 ## Development bootstrap credentials
 
 - Username: `admin`
-- Password: `TenderHub!2026`
+- Password: `OpenBid!2026`
 
 These are seeded only for local development when `APP_ENV=development` and `BOOTSTRAP_ADMIN_PASSWORD` is left empty. For production, set a strong `SECRET_KEY`, enable `SECURE_COOKIES=true`, and provide `BOOTSTRAP_ADMIN_PASSWORD` before first startup.
 

@@ -1,7 +1,7 @@
 package auth
 
 import (
-	"tenderhub-za/internal/models"
+	"openbid/internal/models"
 	"testing"
 	"time"
 )

@@ -3,11 +3,11 @@ package auth
 import "testing"
 
 func TestPasswordHashAndVerify(t *testing.T) {
-	salt, hash, err := HashPassword("TenderHub!2026")
+	salt, hash, err := HashPassword("OpenBid!2026")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !VerifyPassword("TenderHub!2026", salt, hash) {
+	if !VerifyPassword("OpenBid!2026", salt, hash) {
 		t.Fatal("verify failed")
 	}
 	if VerifyPassword("bad", salt, hash) {

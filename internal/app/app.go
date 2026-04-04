@@ -10,15 +10,15 @@ import (
 	"net/http"
 	"net/url"
 
+	"openbid/internal/auth"
+	"openbid/internal/extract"
+	"openbid/internal/models"
+	"openbid/internal/source"
+	"openbid/internal/store"
+	"openbid/internal/worker"
 	"sort"
 	"strconv"
 	"strings"
-	"tenderhub-za/internal/auth"
-	"tenderhub-za/internal/extract"
-	"tenderhub-za/internal/models"
-	"tenderhub-za/internal/source"
-	"tenderhub-za/internal/store"
-	"tenderhub-za/internal/worker"
 	"time"
 )
 
@@ -153,7 +153,7 @@ func (a *App) seed(ctx context.Context) error {
 			if a.Config.AppEnv == "production" {
 				return errors.New("BOOTSTRAP_ADMIN_PASSWORD must be set before starting with an empty production database")
 			}
-			password = "TenderHub!2026"
+			password = "OpenBid!2026"
 		}
 		salt, hash, err := auth.HashPassword(password)
 		if err != nil {
@@ -872,7 +872,7 @@ func (a *App) RunWorkerContext(ctx context.Context) error {
 		Extractor:     a.Extractor,
 		SyncEvery:     time.Duration(a.Config.WorkerSyncMinutes) * time.Minute,
 		LoopEvery:     time.Duration(a.Config.WorkerLoopSeconds) * time.Second,
-		HeartbeatPath: "/tmp/tenderhub-worker-heartbeat",
+		HeartbeatPath: "/tmp/openbid-worker-heartbeat",
 	}.Run(ctx)
 }
 func init() { log.SetFlags(log.LstdFlags | log.Lshortfile) }

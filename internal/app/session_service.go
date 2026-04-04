@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"tenderhub-za/internal/auth"
-	"tenderhub-za/internal/models"
+	"openbid/internal/auth"
+	"openbid/internal/models"
 )
 
 func newSessionID() string {

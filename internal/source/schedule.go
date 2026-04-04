@@ -1,8 +1,8 @@
 package source
 
 import (
+	"openbid/internal/models"
 	"strings"
-	"tenderhub-za/internal/models"
 	"time"
 )
 

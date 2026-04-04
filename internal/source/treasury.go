@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"openbid/internal/models"
 	"strings"
-	"tenderhub-za/internal/models"
 	"time"
 )
 

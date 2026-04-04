@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"tenderhub-za/internal/models"
+	"openbid/internal/models"
 )
 
 type actionContext struct {

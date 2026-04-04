@@ -1,9 +1,9 @@
 package app
 
 import (
+	"openbid/internal/store"
 	"os"
 	"path/filepath"
-	"tenderhub-za/internal/store"
 	"testing"
 )
 

@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"openbid/internal/models"
+	"openbid/internal/store"
 	"strconv"
 	"strings"
-	"tenderhub-za/internal/models"
-	"tenderhub-za/internal/store"
 	"testing"
 )
 

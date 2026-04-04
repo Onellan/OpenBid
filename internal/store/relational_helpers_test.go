@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"tenderhub-za/internal/models"
+	"openbid/internal/models"
 
 	_ "modernc.org/sqlite"
 )

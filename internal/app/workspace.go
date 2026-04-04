@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	"tenderhub-za/internal/models"
-	"tenderhub-za/internal/store"
+	"openbid/internal/models"
+	"openbid/internal/store"
 )
 
 type QueueItem struct {

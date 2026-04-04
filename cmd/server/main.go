@@ -5,9 +5,9 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"openbid/internal/app"
 	"os/signal"
 	"syscall"
-	"tenderhub-za/internal/app"
 	"time"
 )
 

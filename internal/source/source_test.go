@@ -3,7 +3,7 @@ package source
 import (
 	"testing"
 
-	"tenderhub-za/internal/models"
+	"openbid/internal/models"
 )
 
 func TestNormalizeKey(t *testing.T) {

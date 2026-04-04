@@ -15,7 +15,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"tenderhub-za/internal/models"
+	"openbid/internal/models"
 )
 
 const currentSchemaVersion = 4

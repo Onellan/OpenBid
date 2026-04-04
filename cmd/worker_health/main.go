@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	path := "/tmp/tenderhub-worker-heartbeat"
+	path := "/tmp/openbid-worker-heartbeat"
 	if len(os.Args) > 1 && strings.TrimSpace(os.Args[1]) != "" {
 		path = strings.TrimSpace(os.Args[1])
 	}

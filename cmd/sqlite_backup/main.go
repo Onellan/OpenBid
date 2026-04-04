@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"tenderhub-za/internal/store"
+	"openbid/internal/store"
 )
 
 func main() {

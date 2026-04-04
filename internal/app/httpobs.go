@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"tenderhub-za/internal/auth"
+	"openbid/internal/auth"
 )
 
 type requestContextKey string

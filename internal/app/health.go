@@ -8,9 +8,9 @@ import (
 	"sort"
 	"time"
 
-	"tenderhub-za/internal/models"
-	"tenderhub-za/internal/source"
-	"tenderhub-za/internal/store"
+	"openbid/internal/models"
+	"openbid/internal/source"
+	"openbid/internal/store"
 )
 
 type HealthDetail struct {

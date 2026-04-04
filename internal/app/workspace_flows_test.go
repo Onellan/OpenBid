@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"openbid/internal/models"
 	"strings"
-	"tenderhub-za/internal/models"
 	"testing"
 )
 

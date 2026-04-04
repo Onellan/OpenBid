@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"tenderhub-za/internal/models"
+	"openbid/internal/models"
 )
 
 func canAdminUsers(role models.Role) bool {

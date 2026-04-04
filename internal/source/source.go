@@ -3,10 +3,10 @@ package source
 import (
 	"context"
 	"fmt"
+	"openbid/internal/models"
+	"openbid/internal/netguard"
 	"sort"
 	"strings"
-	"tenderhub-za/internal/models"
-	"tenderhub-za/internal/netguard"
 )
 
 const (

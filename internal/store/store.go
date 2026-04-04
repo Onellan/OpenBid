@@ -3,8 +3,8 @@ package store
 import (
 	"context"
 	"errors"
+	"openbid/internal/models"
 	"strings"
-	"tenderhub-za/internal/models"
 )
 
 var ErrNotFound = errors.New("not found")

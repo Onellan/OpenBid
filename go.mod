@@ -1,4 +1,4 @@
-module tenderhub-za
+module openbid
 
 go 1.23
 

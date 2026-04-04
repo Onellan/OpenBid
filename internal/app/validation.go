@@ -5,9 +5,9 @@ import (
 	"net/url"
 	"strings"
 
-	"tenderhub-za/internal/models"
-	"tenderhub-za/internal/netguard"
-	"tenderhub-za/internal/source"
+	"openbid/internal/models"
+	"openbid/internal/netguard"
+	"openbid/internal/source"
 )
 
 func normalizeUsername(raw string) string {

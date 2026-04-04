@@ -7,7 +7,7 @@ if [ ! -f "$DB_PATH" ]; then
 fi
 
 if command -v docker >/dev/null 2>&1 && [ -f docker-compose.yml ]; then
-  docker compose run --rm --no-deps app tenderhub-sqlite-check
+  docker compose run --rm --no-deps app openbid-sqlite-check
 else
   DATA_PATH="$DB_PATH" go run ./cmd/sqlite_check
 fi

@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"tenderhub-za/internal/auth"
-	"tenderhub-za/internal/models"
-	"tenderhub-za/internal/store"
+	"openbid/internal/auth"
+	"openbid/internal/models"
+	"openbid/internal/store"
 )
 
 func TestLogoutClearsServerSideSession(t *testing.T) {

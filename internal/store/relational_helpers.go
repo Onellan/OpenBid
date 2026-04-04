@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"tenderhub-za/internal/models"
+	"openbid/internal/models"
 )
 
 func sqliteTimeString(value time.Time) string {

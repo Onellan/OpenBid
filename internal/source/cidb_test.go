@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"tenderhub-za/internal/models"
+	"openbid/internal/models"
 )
 
 func TestCIDBAdapterFetchMapsListingAndDocuments(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"tenderhub-za/internal/netguard"
+	"openbid/internal/netguard"
 	"time"
 )
 

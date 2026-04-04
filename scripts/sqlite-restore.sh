@@ -12,7 +12,7 @@ cp "$BACKUP_PATH" "$DB_PATH"
 rm -f "$DB_PATH-wal" "$DB_PATH-shm"
 
 if [ -f docker-compose.yml ] && command -v docker >/dev/null 2>&1; then
-  docker compose run --rm --no-deps app tenderhub-sqlite-check
+  docker compose run --rm --no-deps app openbid-sqlite-check
   docker compose up -d
 fi
 

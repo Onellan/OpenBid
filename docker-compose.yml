@@ -1,3 +1,5 @@
+name: openbid
+
 services:
   app:
     init: true
@@ -42,7 +44,7 @@ services:
   worker:
     init: true
     build: { context: ., dockerfile: Dockerfile.app }
-    command: [ "tenderhub-worker" ]
+    command: [ "openbid-worker" ]
     environment:
       APP_ENV: "${APP_ENV:-development}"
       DATA_PATH: "/app/data/store.db"
@@ -73,7 +75,7 @@ services:
       extractor:
         condition: service_healthy
     healthcheck:
-      test: [ "CMD", "tenderhub-worker-health", "/tmp/tenderhub-worker-heartbeat", "180" ]
+      test: [ "CMD", "openbid-worker-health", "/tmp/openbid-worker-heartbeat", "180" ]
       interval: 30s
       timeout: 5s
       retries: 5

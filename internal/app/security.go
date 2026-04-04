@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"tenderhub-za/internal/auth"
+	"openbid/internal/auth"
 )
 
 func (a *App) PasswordPage(w http.ResponseWriter, r *http.Request) {

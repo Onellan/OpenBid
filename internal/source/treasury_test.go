@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"tenderhub-za/internal/models"
+	"openbid/internal/models"
 )
 
 func TestFeedAdapterEmbeddedSamples(t *testing.T) {

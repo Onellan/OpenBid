@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"log"
+	"openbid/internal/store"
 	"os"
-	"tenderhub-za/internal/store"
 )
 
 func main() {

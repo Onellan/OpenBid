@@ -37,7 +37,7 @@ def validate_public_url(raw:str)->str:
 
 def fetch(url:str)->bytes:
     safe_url=validate_public_url(url)
-    req=urllib.request.Request(safe_url, headers={"User-Agent":"TenderHubZA/1.0"})
+    req=urllib.request.Request(safe_url, headers={"User-Agent":"OpenBid/1.0"})
     with urllib.request.urlopen(req, timeout=60) as resp:
         validate_public_url(resp.geturl())
         content_length=resp.headers.get("Content-Length","").strip()

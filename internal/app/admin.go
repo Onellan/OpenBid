@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"tenderhub-za/internal/auth"
-	"tenderhub-za/internal/models"
-	"tenderhub-za/internal/source"
+	"openbid/internal/auth"
+	"openbid/internal/models"
+	"openbid/internal/source"
 )
 
 type SourceAdminItem struct {

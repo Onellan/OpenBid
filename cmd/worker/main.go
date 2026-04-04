@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"log"
+	"openbid/internal/app"
 	"os/signal"
 	"syscall"
-	"tenderhub-za/internal/app"
 )
 
 func main() {
