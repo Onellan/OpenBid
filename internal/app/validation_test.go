@@ -1,6 +1,10 @@
 package app
 
-import "testing"
+import (
+	"testing"
+
+	"openbid/internal/models"
+)
 
 func TestValidationHelpersNormalizeAndValidateInput(t *testing.T) {
 	if got := normalizeUsername("  Alice.Admin  "); got != "Alice.Admin" {
@@ -18,8 +22,11 @@ func TestValidationHelpersNormalizeAndValidateInput(t *testing.T) {
 	if validEmailAddress("not-an-email") {
 		t.Fatal("expected invalid email address to fail")
 	}
-	if !isValidRole("viewer") || isValidRole("root") {
-		t.Fatal("unexpected role validation result")
+	if !isValidTenantRole(models.TenantRoleViewer) || isValidTenantRole(models.TenantRole("root")) {
+		t.Fatal("unexpected tenant role validation result")
+	}
+	if !isValidPlatformRole(models.PlatformRoleAdmin) || isValidPlatformRole(models.PlatformRole("root")) {
+		t.Fatal("unexpected platform role validation result")
 	}
 }
 

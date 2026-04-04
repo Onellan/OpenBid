@@ -2,16 +2,19 @@ package models
 
 import "time"
 
-type Role string
+type PlatformRole string
+type TenantRole string
 
 const (
-	RoleAdmin            Role = "admin"
-	RolePortfolioManager Role = "portfolio_manager"
-	RoleTenantAdmin      Role = "tenant_admin"
-	RoleAnalyst          Role = "analyst"
-	RoleReviewer         Role = "reviewer"
-	RoleOperator         Role = "operator"
-	RoleViewer           Role = "viewer"
+	PlatformRoleNone       PlatformRole = ""
+	PlatformRoleSuperAdmin PlatformRole = "platform_super_admin"
+	PlatformRoleAdmin      PlatformRole = "platform_admin"
+
+	TenantRoleOwner     TenantRole = "tenant_owner"
+	TenantRoleAdmin     TenantRole = "tenant_admin"
+	TenantRoleSuperUser TenantRole = "super_user"
+	TenantRoleUser      TenantRole = "user"
+	TenantRoleViewer    TenantRole = "viewer"
 )
 
 type ExtractionState string
@@ -84,6 +87,7 @@ type Tender struct {
 }
 type User struct {
 	ID, Username, DisplayName, Email, PasswordHash, PasswordSalt, MFASecret string
+	PlatformRole                                                            PlatformRole
 	IsActive, MFAEnabled                                                    bool
 	FailedLogins                                                            int
 	SessionVersion                                                          int
@@ -97,7 +101,7 @@ type Tenant struct {
 }
 type Membership struct {
 	ID, UserID, TenantID, Responsibilities string
-	Role                                   Role
+	Role                                   TenantRole
 	CreatedAt, UpdatedAt                   time.Time
 }
 type Workflow struct {
@@ -140,6 +144,10 @@ type SourceScheduleSettings struct {
 	DefaultIntervalMinutes int
 	Paused                 bool
 	CreatedAt, UpdatedAt   time.Time
+}
+type TenantSourceAssignment struct {
+	ID, TenantID, SourceKey string
+	CreatedAt, UpdatedAt    time.Time
 }
 type Session struct {
 	ID, UserID, TenantID, CSRF    string

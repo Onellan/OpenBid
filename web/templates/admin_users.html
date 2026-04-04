@@ -2,22 +2,22 @@
 {{template "page_hero" (dict
   "eyebrow" "Administration"
   "title" "User administration"
-  "copy" "Manage accounts, activation status, passwords, and tenant memberships from a page dedicated to user operations."
+  "copy" "Manage platform access, tenant memberships, and account controls from one workspace-aware administration screen."
 )}}
 
 <div class="split" style="margin-top:18px">
   <section class="card">
-    {{template "card_header" (dict "title" "Create user" "subtitle" "Set up new team members and assign their initial tenant role.")}}
+    {{template "card_header" (dict "title" "Create user" "subtitle" "Set up a user with separate platform and tenant roles.")}}
     <section id="role-scope-guide" class="card-soft" style="margin-top:14px" aria-labelledby="role-scope-guide-title">
       <h3 id="role-scope-guide-title" class="card-title" style="font-size:18px">Role scope guide</h3>
       <ul class="access-list" style="margin-top:10px">
-        <li><strong>Admin</strong> can manage users, tenants, platform sources, audit history, and health across the whole deployment.</li>
-        <li><strong>Portfolio manager</strong> can manage users, tenants, sources, and platform operations across tenants, but is intended for operational oversight rather than full system ownership.</li>
-        <li><strong>Tenant admin</strong> can manage users and memberships only inside their current tenant workspace.</li>
-        <li><strong>Analyst</strong> can work tenders, bookmarks, workflows, and queue actions inside their tenant.</li>
-        <li><strong>Reviewer</strong> can review and update tender workflow inside their tenant, including operational queue actions.</li>
-        <li><strong>Operator</strong> can manage day-to-day pipeline and tender processing inside their tenant, including queue retries.</li>
-        <li><strong>Viewer</strong> has read-only access and cannot change workflow, queue, source, user, or tenant data.</li>
+        <li><strong>Platform Super Admin</strong> has full control across OpenBid, including platform users, tenant management, sources, health, and audit operations.</li>
+        <li><strong>Platform Admin</strong> can run platform operations across tenants, but cannot take super-admin-only actions.</li>
+        <li><strong>Tenant Owner</strong> is the highest authority inside a tenant and can manage tenant settings, admins, and users.</li>
+        <li><strong>Tenant Admin</strong> manages tenant users and settings, but cannot grant ownership.</li>
+        <li><strong>Super User</strong> can handle advanced day-to-day operational work inside the tenant without administrative ownership powers.</li>
+        <li><strong>User</strong> handles normal operational workflows inside the tenant.</li>
+        <li><strong>Viewer</strong> has read-only access inside the tenant.</li>
       </ul>
     </section>
     <div style="margin-top:14px">{{template "create_user_form" .}}</div>
@@ -25,7 +25,7 @@
 
   {{template "entity_table_card" (dict
     "title" "Users"
-    "subtitle" "Manage account activation and password resets."
+    "subtitle" "Manage activation, passwords, and platform roles."
     "inner" "user_table_typed"
     "context" .
   )}}
@@ -39,7 +39,7 @@
     "context" .
   )}}
   <div class="card-soft" style="margin-top:16px">
-    {{template "card_header" (dict "title" "Upsert membership" "subtitle" "Create or update a tenant role assignment.")}}
+    {{template "card_header" (dict "title" "Upsert membership" "subtitle" "Create or update a tenant-scoped role assignment.")}}
     <div style="margin-top:14px">{{template "membership_upsert_form" .}}</div>
   </div>
 </section>

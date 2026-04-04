@@ -116,6 +116,8 @@ func templateFuncs() template.FuncMap {
 				return "info"
 			}
 		},
+		"platformRoleLabel": platformRoleLabel,
+		"tenantRoleLabel":   tenantRoleLabel,
 	}
 }
 
@@ -228,6 +230,7 @@ func routes(a *App) http.Handler {
 	registerProtected(mux, a, a.DeleteSavedSearch, "/saved-searches/delete")
 	registerProtected(mux, a, a.AdminUsers, "/admin/users")
 	registerProtected(mux, a, a.AdminCreateUser, "/admin/users/create")
+	registerProtected(mux, a, a.AdminUpdatePlatformRole, "/admin/users/platform-role")
 	registerProtected(mux, a, a.AdminToggleUser, "/admin/users/toggle")
 	registerProtected(mux, a, a.AdminResetPassword, "/admin/users/reset-password")
 	registerProtected(mux, a, a.AdminUpsertMembership, "/admin/memberships/upsert")

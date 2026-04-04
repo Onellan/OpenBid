@@ -30,13 +30,12 @@ func validEmailAddress(raw string) bool {
 	return err == nil && parsed.Address != ""
 }
 
-func isValidRole(role models.Role) bool {
-	switch role {
-	case models.RoleAdmin, models.RolePortfolioManager, models.RoleTenantAdmin, models.RoleAnalyst, models.RoleReviewer, models.RoleOperator, models.RoleViewer:
-		return true
-	default:
-		return false
-	}
+func isValidTenantRole(role models.TenantRole) bool {
+	return validTenantRole(role)
+}
+
+func isValidPlatformRole(role models.PlatformRole) bool {
+	return validPlatformRole(role)
 }
 
 func hasUserWithUsername(users []models.User, username string) bool {

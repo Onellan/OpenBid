@@ -149,6 +149,11 @@ func loadConfigFromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	bootstrapTenantName := envString("BOOTSTRAP_TENANT_NAME", "KolaboSolutions")
+	bootstrapTenantSlug := envOptionalString("BOOTSTRAP_TENANT_SLUG")
+	if strings.TrimSpace(bootstrapTenantSlug) == "" {
+		bootstrapTenantSlug = normalizeTenantSlug("", bootstrapTenantName)
+	}
 	return Config{
 		AppEnv:                         appEnv,
 		AppAddr:                        envString("APP_ADDR", ":8080"),
@@ -176,5 +181,7 @@ func loadConfigFromEnv() (Config, error) {
 		BootstrapAdminUsername:         envString("BOOTSTRAP_ADMIN_USERNAME", "admin"),
 		BootstrapAdminEmail:            envString("BOOTSTRAP_ADMIN_EMAIL", "admin@localhost"),
 		BootstrapAdminPassword:         bootstrapAdminPassword,
+		BootstrapTenantName:            bootstrapTenantName,
+		BootstrapTenantSlug:            bootstrapTenantSlug,
 	}, nil
 }

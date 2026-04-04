@@ -31,6 +31,7 @@ type Config struct {
 	AlertEvalSeconds, AlertBackupMaxAgeMinutes, AlertBacklogMaxJobs, AlertBacklogMaxAgeMinutes int
 	AlertLoginThrottleThreshold, AlertExtractorFailureThreshold                                int
 	BootstrapAdminUsername, BootstrapAdminEmail, BootstrapAdminPassword                        string
+	BootstrapTenantName, BootstrapTenantSlug                                                   string
 }
 type App struct {
 	Config           Config
@@ -84,6 +85,12 @@ func validateConfig(cfg Config) error {
 	}
 	if strings.TrimSpace(cfg.DataPath) == "" {
 		return errors.New("DATA_PATH must not be empty")
+	}
+	if strings.TrimSpace(cfg.BootstrapTenantName) == "" {
+		return errors.New("BOOTSTRAP_TENANT_NAME must not be empty")
+	}
+	if normalizeTenantSlug(cfg.BootstrapTenantSlug, cfg.BootstrapTenantName) == "" {
+		return errors.New("BOOTSTRAP_TENANT_SLUG must contain at least one letter or number")
 	}
 	if cfg.SessionHours <= 0 {
 		return errors.New("SESSION_HOURS must be greater than zero")
@@ -190,7 +197,7 @@ func (a *App) seed(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if err := a.persistUser(ctx, models.User{Username: a.Config.BootstrapAdminUsername, DisplayName: "Platform Admin", Email: a.Config.BootstrapAdminEmail, PasswordSalt: salt, PasswordHash: hash, IsActive: true}); err != nil {
+		if err := a.persistUser(ctx, models.User{Username: a.Config.BootstrapAdminUsername, DisplayName: "Platform Admin", Email: a.Config.BootstrapAdminEmail, PlatformRole: models.PlatformRoleSuperAdmin, PasswordSalt: salt, PasswordHash: hash, IsActive: true}); err != nil {
 			users, _ = a.Store.ListUsers(ctx)
 			if len(users) == 0 {
 				return err
@@ -200,18 +207,21 @@ func (a *App) seed(ctx context.Context) error {
 		if len(users) == 0 {
 			return errors.New("failed to seed user")
 		}
-		if err := a.Store.UpsertTenant(ctx, models.Tenant{Name: "Default Engineering Team", Slug: "default-engineering-team"}); err != nil {
-			return err
-		}
-		tenants, _ := a.Store.ListTenants(ctx)
-		if len(tenants) == 0 {
-			return errors.New("failed to seed tenant")
-		}
-		if err := a.Store.UpsertMembership(ctx, models.Membership{UserID: users[0].ID, TenantID: tenants[0].ID, Role: models.RoleAdmin, Responsibilities: "Platform administration and portfolio oversight"}); err != nil {
-			return err
-		}
+	}
+	defaultTenant, err := a.ensureBootstrapTenant(ctx)
+	if err != nil {
+		return err
+	}
+	if err := a.ensureBootstrapAdminMembership(ctx, defaultTenant.ID); err != nil {
+		return err
+	}
+	if err := a.migrateLegacyAuthorization(ctx); err != nil {
+		return err
 	}
 	if err := a.ensureSourceConfigs(ctx); err != nil {
+		return err
+	}
+	if err := a.ensureTenantSourceAssignments(ctx, defaultTenant.ID); err != nil {
 		return err
 	}
 	if err := a.ensureSourceScheduleSettings(ctx, seededUsers); err != nil {
@@ -224,6 +234,143 @@ func (a *App) seed(ctx context.Context) error {
 	a.Sources = registry
 	if seededUsers && a.Config.BootstrapSyncOnStartup {
 		return a.syncSources(ctx, registry)
+	}
+	return nil
+}
+
+func (a *App) ensureBootstrapTenant(ctx context.Context) (models.Tenant, error) {
+	desiredName := strings.TrimSpace(a.Config.BootstrapTenantName)
+	desiredSlug := normalizeTenantSlug(a.Config.BootstrapTenantSlug, desiredName)
+	if desiredName == "" || desiredSlug == "" {
+		return models.Tenant{}, errors.New("bootstrap tenant name and slug must not be empty")
+	}
+	tenants, err := a.Store.ListTenants(ctx)
+	if err != nil {
+		return models.Tenant{}, err
+	}
+	for _, tenant := range tenants {
+		if normalizeTenantSlug(tenant.Slug, tenant.Name) == desiredSlug {
+			if strings.TrimSpace(tenant.Name) != desiredName {
+				tenant.Name = desiredName
+				tenant.Slug = desiredSlug
+				if err := a.Store.UpsertTenant(ctx, tenant); err != nil {
+					return models.Tenant{}, err
+				}
+			}
+			return tenant, nil
+		}
+	}
+	tenant := models.Tenant{Name: desiredName, Slug: desiredSlug}
+	if err := a.Store.UpsertTenant(ctx, tenant); err != nil {
+		return models.Tenant{}, err
+	}
+	tenants, err = a.Store.ListTenants(ctx)
+	if err != nil {
+		return models.Tenant{}, err
+	}
+	for _, item := range tenants {
+		if normalizeTenantSlug(item.Slug, item.Name) == desiredSlug {
+			return item, nil
+		}
+	}
+	return models.Tenant{}, errors.New("failed to seed tenant")
+}
+
+func (a *App) ensureBootstrapAdminMembership(ctx context.Context, tenantID string) error {
+	if strings.TrimSpace(tenantID) == "" {
+		return errors.New("bootstrap tenant id must not be empty")
+	}
+	adminUser, err := a.Store.GetUserByUsername(ctx, a.Config.BootstrapAdminUsername)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if normalizePlatformRole(adminUser.PlatformRole) != models.PlatformRoleSuperAdmin {
+		adminUser.PlatformRole = models.PlatformRoleSuperAdmin
+		if err := a.persistUser(ctx, adminUser); err != nil {
+			return err
+		}
+	}
+	membership, err := a.Store.GetMembership(ctx, adminUser.ID, tenantID)
+	if err == nil {
+		membership.Role = models.TenantRoleOwner
+		if strings.TrimSpace(membership.Responsibilities) == "" {
+			membership.Responsibilities = "Platform administration and portfolio oversight"
+		}
+		return a.Store.UpsertMembership(ctx, membership)
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	return a.Store.UpsertMembership(ctx, models.Membership{
+		UserID:           adminUser.ID,
+		TenantID:         tenantID,
+		Role:             models.TenantRoleOwner,
+		Responsibilities: "Platform administration and portfolio oversight",
+	})
+}
+
+func (a *App) migrateLegacyAuthorization(ctx context.Context) error {
+	users, err := a.Store.ListUsers(ctx)
+	if err != nil {
+		return err
+	}
+	for _, user := range users {
+		memberships, err := a.Store.ListMemberships(ctx, user.ID)
+		if err != nil {
+			return err
+		}
+		desiredPlatformRole := migrateLegacyPlatformRole(user, memberships)
+		if normalizePlatformRole(user.PlatformRole) != desiredPlatformRole {
+			user.PlatformRole = desiredPlatformRole
+			if err := a.persistUser(ctx, user); err != nil {
+				return err
+			}
+		}
+		for _, membership := range memberships {
+			desiredTenantRole := migrateLegacyTenantRole(membership.Role)
+			if membership.Role == desiredTenantRole {
+				continue
+			}
+			membership.Role = desiredTenantRole
+			if err := a.Store.UpsertMembership(ctx, membership); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (a *App) ensureTenantSourceAssignments(ctx context.Context, tenantID string) error {
+	if strings.TrimSpace(tenantID) == "" {
+		return errors.New("tenant source assignment requires a tenant id")
+	}
+	configs, err := a.Store.ListSourceConfigs(ctx)
+	if err != nil {
+		return err
+	}
+	assignments, err := a.Store.ListSourceAssignments(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	existing := make(map[string]bool, len(assignments))
+	for _, assignment := range assignments {
+		existing[strings.TrimSpace(assignment.SourceKey)] = true
+	}
+	for _, cfg := range configs {
+		key := strings.TrimSpace(cfg.Key)
+		if key == "" || existing[key] {
+			continue
+		}
+		if err := a.Store.UpsertSourceAssignment(ctx, models.TenantSourceAssignment{
+			TenantID:  tenantID,
+			SourceKey: key,
+		}); err != nil {
+			return err
+		}
+		existing[key] = true
 	}
 	return nil
 }
@@ -553,7 +700,7 @@ func (a *App) persistUser(ctx context.Context, user models.User) error {
 
 type TenantChoice struct {
 	Tenant models.Tenant
-	Role   models.Role
+	Role   models.TenantRole
 }
 
 func (a *App) mustCSRF(r *http.Request) string { s, _ := a.currentSession(r); return s.CSRF }
@@ -594,22 +741,28 @@ func (a *App) renderStatus(w http.ResponseWriter, r *http.Request, status int, n
 			data["Member"] = m
 		}
 		if _, exists := data["CanAdminUsers"]; !exists {
-			data["CanAdminUsers"] = canAdminUsers(m.Role)
+			data["CanAdminUsers"] = canAdminUsers(u, m)
 		}
 		if _, exists := data["CanManageTenants"]; !exists {
-			data["CanManageTenants"] = canManageTenants(m.Role)
+			data["CanManageTenants"] = canManageTenants(u, m)
 		}
 		if _, exists := data["CanManageAudit"]; !exists {
-			data["CanManageAudit"] = canManageAudit(m.Role)
+			data["CanManageAudit"] = canManageAudit(u, m)
 		}
 		if _, exists := data["CanManageSources"]; !exists {
-			data["CanManageSources"] = canManageSources(m.Role)
+			data["CanManageSources"] = canManageSources(u, m)
 		}
 		if _, exists := data["CanViewPlatformHealth"]; !exists {
-			data["CanViewPlatformHealth"] = canViewPlatformHealth(m.Role)
+			data["CanViewPlatformHealth"] = canViewPlatformHealth(u, m)
 		}
 		if _, exists := data["CanEditWorkspace"]; !exists {
-			data["CanEditWorkspace"] = canEditWorkspace(m.Role)
+			data["CanEditWorkspace"] = canEditWorkspace(u, m)
+		}
+		if _, exists := data["PlatformRoleLabel"]; !exists {
+			data["PlatformRoleLabel"] = platformRoleLabel(u.PlatformRole)
+		}
+		if _, exists := data["TenantRoleLabel"]; !exists {
+			data["TenantRoleLabel"] = tenantRoleLabel(m.Role)
 		}
 	}
 	if _, exists := data["Error"]; !exists {

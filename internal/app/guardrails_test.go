@@ -166,7 +166,7 @@ func TestCurrentUserTenantRejectsStaleSessionVersion(t *testing.T) {
 
 func TestRequireAuthAllowsPrivilegedUserWithoutMFA(t *testing.T) {
 	a := newTestApp(t)
-	_, _, cookie, _ := sessionForRole(t, a, models.RolePortfolioManager)
+	_, _, cookie, _ := sessionForPlatformRole(t, a, models.PlatformRoleAdmin)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(cookie)
 	w := httptest.NewRecorder()
@@ -178,7 +178,7 @@ func TestRequireAuthAllowsPrivilegedUserWithoutMFA(t *testing.T) {
 
 func TestRequireAuthAllowsNonPrivilegedUserWithoutMFA(t *testing.T) {
 	a := newTestApp(t)
-	_, _, cookie, _ := sessionForRole(t, a, models.RoleViewer)
+	_, _, cookie, _ := sessionForRole(t, a, models.TenantRoleViewer)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(cookie)
 	w := httptest.NewRecorder()
@@ -190,7 +190,7 @@ func TestRequireAuthAllowsNonPrivilegedUserWithoutMFA(t *testing.T) {
 
 func TestPrivilegedUserCanDisableMFA(t *testing.T) {
 	a := newTestApp(t)
-	user, _, cookie, csrf := sessionForRole(t, a, models.RolePortfolioManager)
+	user, _, cookie, csrf := sessionForPlatformRole(t, a, models.PlatformRoleAdmin)
 	user.MFAEnabled = true
 	user.MFASecret = auth.NewTOTPSecret()
 	salt, hash, err := auth.HashPassword("OpenBid!2026")

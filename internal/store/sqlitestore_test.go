@@ -24,7 +24,7 @@ func TestSQLiteStoreBasicFlow(t *testing.T) {
 	if err := s.UpsertUser(ctx, models.User{ID: "u1", Username: "alice", IsActive: true}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpsertMembership(ctx, models.Membership{UserID: "u1", TenantID: "t1", Role: models.RoleAdmin}); err != nil {
+	if err := s.UpsertMembership(ctx, models.Membership{UserID: "u1", TenantID: "t1", Role: models.TenantRoleOwner}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.UpsertTender(ctx, models.Tender{ID: "x1", Title: "Civil works", Issuer: "Metro", SourceKey: "treasury", Status: "open", DocumentURL: "https://example.org/a.pdf"}); err != nil {
@@ -79,7 +79,7 @@ func TestSQLiteRuntimeStatsReportsSchemaAndCounts(t *testing.T) {
 	if err := s.UpsertUser(ctx, models.User{ID: "user-1", Username: "admin", IsActive: true}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpsertMembership(ctx, models.Membership{UserID: "user-1", TenantID: "tenant-1", Role: models.RoleAdmin}); err != nil {
+	if err := s.UpsertMembership(ctx, models.Membership{UserID: "user-1", TenantID: "tenant-1", Role: models.TenantRoleOwner}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.UpsertTender(ctx, models.Tender{ID: "tender-1", Title: "Civil works", Issuer: "Metro", SourceKey: "treasury", Status: "open"}); err != nil {

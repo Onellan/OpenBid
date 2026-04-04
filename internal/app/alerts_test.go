@@ -59,7 +59,7 @@ func TestHealthAlertsJSONShowsBackupAlertForAdmins(t *testing.T) {
 
 func TestHealthAlertsJSONIsForbiddenForViewer(t *testing.T) {
 	a := newTestApp(t)
-	_, _, cookie, _ := sessionForRole(t, a, models.RoleViewer)
+	_, _, cookie, _ := sessionForRole(t, a, models.TenantRoleViewer)
 
 	req := httptest.NewRequest(http.MethodGet, "/health/alerts.json", nil)
 	req.AddCookie(cookie)

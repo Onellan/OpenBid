@@ -84,11 +84,14 @@ APP_IMAGE_TAG=v1.0.0
 EXTRACTOR_IMAGE_TAG=v1.0.0
 SECRET_KEY_FILE=/run/secrets/openbid_secret_key
 BOOTSTRAP_ADMIN_PASSWORD_FILE=/run/secrets/openbid_bootstrap_admin_password
+BOOTSTRAP_TENANT_NAME=KolaboSolutions
+BOOTSTRAP_TENANT_SLUG=kolabosolutions
 ```
 
 Notes:
 
 - `SECRET_KEY_FILE` and `BOOTSTRAP_ADMIN_PASSWORD_FILE` are the preferred production inputs.
+- `KolaboSolutions` is the default bootstrap tenant unless you override `BOOTSTRAP_TENANT_NAME`.
 - If you do use inline values, `SECRET_KEY` must still be strong and non-default.
 - `BOOTSTRAP_SYNC_ON_STARTUP=false` is a safer default on smaller Pis because first boot stays lighter.
 - Leave `LOW_MEMORY_MODE=true` unless you have profiled a larger Pi and want to experiment.

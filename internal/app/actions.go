@@ -142,23 +142,95 @@ func formatAuditMetadata(metadata map[string]string) []string {
 	return lines
 }
 
-func (a *App) canManageUser(ctx context.Context, actorRole models.Role, currentTenantID, targetUserID string) bool {
-	if canManagePlatform(actorRole) {
-		return true
-	}
-	if !isTenantScopedAdmin(actorRole) || strings.TrimSpace(currentTenantID) == "" || strings.TrimSpace(targetUserID) == "" {
+func (a *App) canManageUser(ctx context.Context, actorUser models.User, actorMembership models.Membership, currentTenantID, targetUserID string) bool {
+	if strings.TrimSpace(targetUserID) == "" {
 		return false
 	}
-	memberships, err := a.Store.ListMemberships(ctx, targetUserID)
+	targetUser, err := a.Store.GetUser(ctx, targetUserID)
 	if err != nil {
 		return false
 	}
-	for _, membership := range memberships {
-		if membership.TenantID == currentTenantID {
+	if canManagePlatform(actorUser) {
+		return normalizePlatformRole(targetUser.PlatformRole) != models.PlatformRoleSuperAdmin || normalizePlatformRole(actorUser.PlatformRole) == models.PlatformRoleSuperAdmin
+	}
+	if strings.TrimSpace(currentTenantID) == "" {
+		return false
+	}
+	if normalizePlatformRole(targetUser.PlatformRole) != models.PlatformRoleNone {
+		return false
+	}
+	targetMembership, err := a.Store.GetMembership(ctx, targetUserID, currentTenantID)
+	if err != nil {
+		return false
+	}
+	switch normalizeTenantRole(actorMembership.Role) {
+	case models.TenantRoleOwner:
+		return normalizeTenantRole(targetMembership.Role) != models.TenantRoleOwner
+	case models.TenantRoleAdmin:
+		switch normalizeTenantRole(targetMembership.Role) {
+		case models.TenantRoleSuperUser, models.TenantRoleUser, models.TenantRoleViewer:
 			return true
+		default:
+			return false
+		}
+	default:
+		return false
+	}
+}
+
+func (a *App) canManageMembershipAssignment(ctx context.Context, actorUser models.User, actorMembership models.Membership, currentTenantID, targetTenantID string, targetUser models.User, targetRole models.TenantRole) bool {
+	if strings.TrimSpace(targetTenantID) == "" || strings.TrimSpace(targetUser.ID) == "" {
+		return false
+	}
+	targetRole = normalizeTenantRole(targetRole)
+	if !canAssignTenantRole(actorUser, actorMembership, targetRole) {
+		return false
+	}
+	if canManagePlatform(actorUser) {
+		return normalizePlatformRole(targetUser.PlatformRole) != models.PlatformRoleSuperAdmin || normalizePlatformRole(actorUser.PlatformRole) == models.PlatformRoleSuperAdmin
+	}
+	if targetTenantID != currentTenantID || normalizePlatformRole(targetUser.PlatformRole) != models.PlatformRoleNone {
+		return false
+	}
+	targetMembership, err := a.Store.GetMembership(ctx, targetUser.ID, targetTenantID)
+	if err != nil {
+		switch normalizeTenantRole(actorMembership.Role) {
+		case models.TenantRoleOwner, models.TenantRoleAdmin:
+			return true
+		default:
+			return false
 		}
 	}
-	return false
+	switch normalizeTenantRole(actorMembership.Role) {
+	case models.TenantRoleOwner:
+		return normalizeTenantRole(targetMembership.Role) != models.TenantRoleOwner
+	case models.TenantRoleAdmin:
+		switch normalizeTenantRole(targetMembership.Role) {
+		case models.TenantRoleSuperUser, models.TenantRoleUser, models.TenantRoleViewer:
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
+	}
+}
+
+func (a *App) isLastTenantOwner(ctx context.Context, tenantID, membershipID string) bool {
+	memberships, err := a.Store.ListMembershipsByTenant(ctx, tenantID)
+	if err != nil {
+		return false
+	}
+	owners := 0
+	for _, membership := range memberships {
+		if membership.ID == membershipID {
+			continue
+		}
+		if normalizeTenantRole(membership.Role) == models.TenantRoleOwner {
+			owners++
+		}
+	}
+	return owners == 0
 }
 
 func (a *App) addWorkflowSnapshot(ctx context.Context, ac actionContext, wf models.Workflow) {

@@ -112,7 +112,7 @@ func TestLoginLocksAccountAfterRepeatedFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.Store.UpsertMembership(t.Context(), models.Membership{UserID: user.ID, TenantID: tenants[0].ID, Role: models.RoleAnalyst}); err != nil {
+	if err := a.Store.UpsertMembership(t.Context(), models.Membership{UserID: user.ID, TenantID: tenants[0].ID, Role: models.TenantRoleUser}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -154,7 +154,7 @@ func TestLoginLocksAccountAfterRepeatedFailures(t *testing.T) {
 
 func TestQueueRequeueRejectsViewerDirectPost(t *testing.T) {
 	a := newTestApp(t)
-	_, _, cookie, csrf := sessionForRole(t, a, models.RoleViewer)
+	_, _, cookie, csrf := sessionForRole(t, a, models.TenantRoleViewer)
 	if err := a.Store.UpsertTender(t.Context(), models.Tender{
 		ID:             "viewer-direct-requeue",
 		Title:          "Viewer Requeue",

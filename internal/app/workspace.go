@@ -483,16 +483,15 @@ func (a *App) UpdateWorkflow(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	_, t, m, ok := a.currentUserTenant(r)
+	u, t, m, ok := a.currentUserTenant(r)
 	if !ok {
 		http.Redirect(w, r, "/login", 303)
 		return
 	}
-	if !canEditWorkspace(m.Role) {
+	if !canEditWorkspace(u, m) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	u, _, _, _ := a.currentUserTenant(r)
 	workflow := models.Workflow{TenantID: t.ID, TenderID: r.FormValue("tender_id"), Status: r.FormValue("status"), Priority: r.FormValue("priority"), AssignedUser: r.FormValue("assigned_user"), Notes: r.FormValue("notes")}
 	if err := a.Store.UpsertWorkflow(r.Context(), workflow); err != nil {
 		a.serverError(w, r, "unable to update workflow", err)
@@ -509,12 +508,12 @@ func (a *App) QueueExtraction(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	_, t, m, ok := a.currentUserTenant(r)
+	u, t, m, ok := a.currentUserTenant(r)
 	if !ok {
 		http.Redirect(w, r, "/login", 303)
 		return
 	}
-	if !canEditWorkspace(m.Role) {
+	if !canQueueWork(u, m) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
@@ -609,7 +608,7 @@ func (a *App) BulkTenders(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", 303)
 		return
 	}
-	if !canEditWorkspace(m.Role) {
+	if !canEditWorkspace(u, m) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
@@ -693,7 +692,7 @@ func (a *App) renderAuditLogPage(w http.ResponseWriter, r *http.Request, securit
 		http.Redirect(w, r, "/login", 303)
 		return
 	}
-	if !canManageAudit(m.Role) {
+	if !canManageAudit(u, m) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
@@ -773,7 +772,7 @@ func auditDisplayEntries(items []models.AuditEntry) []AuditDisplayEntry {
 }
 
 func (a *App) QueuePage(w http.ResponseWriter, r *http.Request) {
-	u, t, _, ok := a.currentUserTenant(r)
+	u, t, m, ok := a.currentUserTenant(r)
 	if !ok {
 		http.Redirect(w, r, "/login", 303)
 		return
@@ -811,6 +810,7 @@ func (a *App) QueuePage(w http.ResponseWriter, r *http.Request) {
 		"Title":         "Queue",
 		"User":          u,
 		"Tenant":        t,
+		"CanEditQueue":  canQueueWork(u, m),
 		"QueueItems":    items,
 		"QueueSummary":  queueSummary(jobs),
 		"QueueSections": sections,
@@ -822,12 +822,12 @@ func (a *App) QueueRequeue(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	_, _, m, ok := a.currentUserTenant(r)
+	u, _, m, ok := a.currentUserTenant(r)
 	if !ok {
 		http.Redirect(w, r, "/login", 303)
 		return
 	}
-	if !canEditWorkspace(m.Role) {
+	if !canQueueWork(u, m) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
@@ -857,12 +857,12 @@ func (a *App) ResetWorkflow(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
-	_, t, m, ok := a.currentUserTenant(r)
+	u, t, m, ok := a.currentUserTenant(r)
 	if !ok {
 		http.Redirect(w, r, "/login", 303)
 		return
 	}
-	if !canEditWorkspace(m.Role) {
+	if !canEditWorkspace(u, m) {
 		http.Error(w, "forbidden", 403)
 		return
 	}

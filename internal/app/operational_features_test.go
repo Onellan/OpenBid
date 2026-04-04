@@ -210,7 +210,7 @@ func TestHealthPageShowsOperationalCardsForAdmins(t *testing.T) {
 
 func TestHealthPageIsForbiddenForViewer(t *testing.T) {
 	a := newTestApp(t)
-	_, _, cookie, _ := sessionForRole(t, a, models.RoleViewer)
+	_, _, cookie, _ := sessionForRole(t, a, models.TenantRoleViewer)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	req.AddCookie(cookie)
@@ -223,7 +223,7 @@ func TestHealthPageIsForbiddenForViewer(t *testing.T) {
 
 func TestHealthPageIsForbiddenForTenantAdmin(t *testing.T) {
 	a := newTestApp(t)
-	_, _, cookie, _ := sessionForRole(t, a, models.RoleTenantAdmin)
+	_, _, cookie, _ := sessionForRole(t, a, models.TenantRoleAdmin)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	req.AddCookie(cookie)

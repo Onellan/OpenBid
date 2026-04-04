@@ -52,12 +52,12 @@ func NewAlertNotifier(webhookURL string) *AlertNotifier {
 }
 
 func (a *App) HealthAlertsJSON(w http.ResponseWriter, r *http.Request) {
-	_, _, m, ok := a.currentUserTenant(r)
+	u, _, m, ok := a.currentUserTenant(r)
 	if !ok {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
-	if !canViewPlatformHealth(m.Role) {
+	if !canViewPlatformHealth(u, m) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}

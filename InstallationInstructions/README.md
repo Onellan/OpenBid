@@ -341,6 +341,8 @@ OPENBID_HTTP_PORT=8088
 SECURE_COOKIES=true
 LOW_MEMORY_MODE=true
 ANALYTICS_ENABLED=false
+BOOTSTRAP_TENANT_NAME=KolaboSolutions
+BOOTSTRAP_TENANT_SLUG=kolabosolutions
 BOOTSTRAP_SYNC_ON_STARTUP=false
 TREASURY_FEED_URL=
 ALERT_WEBHOOK_URL=
@@ -362,6 +364,7 @@ What the important settings mean:
 - `OPENBID_HTTP_PORT=8088`: exposes OpenBid on Pi port `8088`
 - `SECURE_COOKIES=true`: required when users access the app over HTTPS through Cloudflare or another TLS-terminating proxy
 - `LOW_MEMORY_MODE=true`: recommended for Raspberry Pi
+- `BOOTSTRAP_TENANT_NAME=KolaboSolutions`: seeds the default workspace and links built-in sources to it
 - `BOOTSTRAP_SYNC_ON_STARTUP=false`: avoids expensive first-start ingestion during bootstrap
 - `ALERT_WEBHOOK_URL`: optional webhook receiver for operational alerts
 - `WORKER_SYNC_MINUTES=360`: source sync cadence

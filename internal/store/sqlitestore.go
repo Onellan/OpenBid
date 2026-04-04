@@ -18,7 +18,7 @@ import (
 	"openbid/internal/models"
 )
 
-const currentSchemaVersion = 4
+const currentSchemaVersion = 6
 
 type SQLiteStore struct {
 	db   *sql.DB
@@ -71,7 +71,7 @@ func (s *SQLiteStore) ValidateRuntime(ctx context.Context) error {
 	if userVersion != currentSchemaVersion {
 		return fmt.Errorf("unexpected schema version: got %d want %d", userVersion, currentSchemaVersion)
 	}
-	for _, table := range []string{"tenders", "tenants", "sync_runs", "source_configs", "source_schedule_settings", "jobs", "source_health", "audit_entries", "workflow_events", "user_records", "membership_records", "workflow_records", "bookmark_records", "saved_search_records", "sessions"} {
+	for _, table := range []string{"tenders", "tenants", "sync_runs", "source_configs", "source_schedule_settings", "jobs", "source_health", "audit_entries", "workflow_events", "user_records", "membership_records", "workflow_records", "bookmark_records", "saved_search_records", "sessions", "tenant_source_assignments"} {
 		var count int
 		if err := s.db.QueryRowContext(ctx, "select count(*) from sqlite_master where type='table' and name=?", table).Scan(&count); err != nil {
 			return err
@@ -193,6 +193,7 @@ func (s *SQLiteStore) RuntimeStats(ctx context.Context) (RuntimeStats, error) {
 		{"sync_runs", &stats.SyncRunCount},
 		{"source_configs", &stats.SourceConfigCount},
 		{"source_health", &stats.SourceHealthCount},
+		{"tenant_source_assignments", &stats.TenantSourceCount},
 		{"jobs", &stats.JobCount},
 		{"audit_entries", &stats.AuditCount},
 		{"workflow_events", &stats.WorkflowEventCount},
@@ -715,7 +716,7 @@ func (s *SQLiteStore) UpsertTender(ctx context.Context, v models.Tender) error {
 }
 func (s *SQLiteStore) ListUsers(ctx context.Context) ([]models.User, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		select id, username, display_name, email, password_hash, password_salt, mfa_secret, is_active, mfa_enabled,
+		select id, username, display_name, email, platform_role, password_hash, password_salt, mfa_secret, is_active, mfa_enabled,
 		       failed_logins, session_version, locked_until, recovery_codes, created_at, updated_at
 		from user_records
 		order by username asc
@@ -747,7 +748,7 @@ func (s *SQLiteStore) ListUsersByIDs(ctx context.Context, userIDs []string) ([]m
 		args = append(args, id)
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		select id, username, display_name, email, password_hash, password_salt, mfa_secret, is_active, mfa_enabled,
+		select id, username, display_name, email, platform_role, password_hash, password_salt, mfa_secret, is_active, mfa_enabled,
 		       failed_logins, session_version, locked_until, recovery_codes, created_at, updated_at
 		from user_records
 		where id in (`+placeholders(len(ids))+`)
@@ -776,7 +777,7 @@ func (s *SQLiteStore) GetUserByUsername(ctx context.Context, username string) (m
 		return models.User{}, ErrNotFound
 	}
 	row := s.db.QueryRowContext(ctx, `
-		select id, username, display_name, email, password_hash, password_salt, mfa_secret, is_active, mfa_enabled,
+		select id, username, display_name, email, platform_role, password_hash, password_salt, mfa_secret, is_active, mfa_enabled,
 		       failed_logins, session_version, locked_until, recovery_codes, created_at, updated_at
 		from user_records
 		where lower(username) = ?
@@ -794,7 +795,7 @@ func (s *SQLiteStore) GetUserByEmail(ctx context.Context, email string) (models.
 		return models.User{}, ErrNotFound
 	}
 	row := s.db.QueryRowContext(ctx, `
-		select id, username, display_name, email, password_hash, password_salt, mfa_secret, is_active, mfa_enabled,
+		select id, username, display_name, email, platform_role, password_hash, password_salt, mfa_secret, is_active, mfa_enabled,
 		       failed_logins, session_version, locked_until, recovery_codes, created_at, updated_at
 		from user_records
 		where lower(email) = ?
@@ -808,7 +809,7 @@ func (s *SQLiteStore) GetUserByEmail(ctx context.Context, email string) (models.
 }
 func (s *SQLiteStore) GetUser(ctx context.Context, id string) (models.User, error) {
 	row := s.db.QueryRowContext(ctx, `
-		select id, username, display_name, email, password_hash, password_salt, mfa_secret, is_active, mfa_enabled,
+		select id, username, display_name, email, platform_role, password_hash, password_salt, mfa_secret, is_active, mfa_enabled,
 		       failed_logins, session_version, locked_until, recovery_codes, created_at, updated_at
 		from user_records
 		where id = ?
@@ -831,13 +832,14 @@ func (s *SQLiteStore) UpsertUser(ctx context.Context, v models.User) error {
 	v.UpdatedAt = now
 	_, err := s.db.ExecContext(ctx, `
 		insert into user_records(
-			id, username, display_name, email, password_hash, password_salt, mfa_secret, is_active, mfa_enabled,
+			id, username, display_name, email, platform_role, password_hash, password_salt, mfa_secret, is_active, mfa_enabled,
 			failed_logins, session_version, locked_until, recovery_codes, created_at, updated_at
-		) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		on conflict(id) do update set
 			username=excluded.username,
 			display_name=excluded.display_name,
 			email=excluded.email,
+			platform_role=excluded.platform_role,
 			password_hash=excluded.password_hash,
 			password_salt=excluded.password_salt,
 			mfa_secret=excluded.mfa_secret,
@@ -849,7 +851,7 @@ func (s *SQLiteStore) UpsertUser(ctx context.Context, v models.User) error {
 			recovery_codes=excluded.recovery_codes,
 			updated_at=excluded.updated_at
 	`,
-		v.ID, v.Username, v.DisplayName, v.Email, v.PasswordHash, v.PasswordSalt, v.MFASecret, boolToInt(v.IsActive), boolToInt(v.MFAEnabled),
+		v.ID, v.Username, v.DisplayName, v.Email, string(v.PlatformRole), v.PasswordHash, v.PasswordSalt, v.MFASecret, boolToInt(v.IsActive), boolToInt(v.MFAEnabled),
 		v.FailedLogins, v.SessionVersion, sqliteTimeString(v.LockedUntil), encodeStringSlice(v.RecoveryCodes), sqliteTimeString(v.CreatedAt), sqliteTimeString(v.UpdatedAt),
 	)
 	return err
@@ -1384,6 +1386,72 @@ func (s *SQLiteStore) UpsertSourceHealth(ctx context.Context, v models.SourceHea
 }
 func (s *SQLiteStore) DeleteSourceHealth(ctx context.Context, sourceKey string) error {
 	return sqliteDelete(ctx, s.db, "source_health", sourceKey)
+}
+func (s *SQLiteStore) ListSourceAssignments(ctx context.Context, tenantID string) ([]models.TenantSourceAssignment, error) {
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		select id, tenant_id, source_key, created_at, updated_at
+		from tenant_source_assignments
+		where tenant_id = ?
+		order by source_key asc
+	`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.TenantSourceAssignment{}
+	for rows.Next() {
+		assignment, err := scanTenantSourceAssignment(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, assignment)
+	}
+	return out, rows.Err()
+}
+func (s *SQLiteStore) UpsertSourceAssignment(ctx context.Context, v models.TenantSourceAssignment) error {
+	now := time.Now().UTC()
+	v.TenantID = strings.TrimSpace(v.TenantID)
+	v.SourceKey = strings.TrimSpace(v.SourceKey)
+	if v.TenantID == "" || v.SourceKey == "" {
+		return fmt.Errorf("tenant source assignment requires tenant_id and source_key")
+	}
+	var existingID string
+	var createdAt string
+	err := s.db.QueryRowContext(ctx, `
+		select id, created_at
+		from tenant_source_assignments
+		where tenant_id = ? and source_key = ?
+		limit 1
+	`, v.TenantID, v.SourceKey).Scan(&existingID, &createdAt)
+	switch {
+	case err == nil:
+		v.ID = existingID
+		v.CreatedAt = parseSQLiteTime(createdAt)
+	case errors.Is(err, sql.ErrNoRows):
+		if v.ID == "" {
+			v.ID = newid()
+		}
+		if v.CreatedAt.IsZero() {
+			v.CreatedAt = now
+		}
+	default:
+		return err
+	}
+	if v.CreatedAt.IsZero() {
+		v.CreatedAt = now
+	}
+	v.UpdatedAt = now
+	_, err = s.db.ExecContext(ctx, `
+		insert into tenant_source_assignments(id, tenant_id, source_key, created_at, updated_at)
+		values(?,?,?,?,?)
+		on conflict(tenant_id, source_key) do update set
+			updated_at=excluded.updated_at
+	`, v.ID, v.TenantID, v.SourceKey, sqliteTimeString(v.CreatedAt), sqliteTimeString(v.UpdatedAt))
+	return err
 }
 func (s *SQLiteStore) GetSourceScheduleSettings(ctx context.Context) (models.SourceScheduleSettings, error) {
 	return sqliteGetJSON[models.SourceScheduleSettings](ctx, s.db, "source_schedule_settings", "global")

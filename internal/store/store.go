@@ -35,6 +35,7 @@ type RuntimeStats struct {
 	SyncRunCount          int
 	SourceConfigCount     int
 	SourceHealthCount     int
+	TenantSourceCount     int
 	JobCount              int
 	AuditCount            int
 	WorkflowEventCount    int
@@ -147,6 +148,8 @@ type Store interface {
 	GetSourceHealth(context.Context, string) (models.SourceHealth, error)
 	UpsertSourceHealth(context.Context, models.SourceHealth) error
 	DeleteSourceHealth(context.Context, string) error
+	ListSourceAssignments(context.Context, string) ([]models.TenantSourceAssignment, error)
+	UpsertSourceAssignment(context.Context, models.TenantSourceAssignment) error
 	GetSourceScheduleSettings(context.Context) (models.SourceScheduleSettings, error)
 	UpsertSourceScheduleSettings(context.Context, models.SourceScheduleSettings) error
 

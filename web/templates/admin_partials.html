@@ -7,8 +7,17 @@
     <label for="create-user-display-name">Display name<input id="create-user-display-name" name="display_name" autocomplete="name" required></label>
     <label for="create-user-email">Email<input id="create-user-email" name="email" type="email" autocomplete="email" required></label>
     <label for="create-user-password">Password<input id="create-user-password" name="password" type="password" autocomplete="new-password" aria-describedby="role-scope-guide" required></label>
-    <label for="create-user-tenant">Tenant<select id="create-user-tenant" name="tenant_id">{{range .Tenants}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></label>
-    <label for="create-user-role">Role<select id="create-user-role" name="role" aria-describedby="role-scope-guide"><option>admin</option><option>portfolio_manager</option><option>tenant_admin</option><option>analyst</option><option>reviewer</option><option>operator</option><option>viewer</option></select></label>
+    <label for="create-user-tenant">Tenant<select id="create-user-tenant" name="tenant_id" aria-describedby="role-scope-guide">{{range .Tenants}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></label>
+    <label for="create-user-platform-role">Platform role
+      <select id="create-user-platform-role" name="platform_role" aria-describedby="role-scope-guide">
+        {{range .PlatformRoleOptions}}<option value="{{.Value}}">{{.Label}}</option>{{end}}
+      </select>
+    </label>
+    <label for="create-user-tenant-role">Tenant role
+      <select id="create-user-tenant-role" name="tenant_role" aria-describedby="role-scope-guide">
+        {{range .TenantRoleOptions}}<option value="{{.Value}}">{{.Label}}</option>{{end}}
+      </select>
+    </label>
     <label for="create-user-responsibilities">Responsibilities<textarea id="create-user-responsibilities" name="responsibilities"></textarea></label>
   </fieldset>
   <div class="actions"><button type="submit">Create user</button></div>
@@ -28,7 +37,11 @@
     <div class="row-4">
       <label for="membership-user-id">User ID<input id="membership-user-id" name="user_id" list="membership-user-options" aria-describedby="role-scope-guide" required></label>
       <label for="membership-tenant-id">Tenant<select id="membership-tenant-id" name="tenant_id">{{range .Tenants}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></label>
-      <label for="membership-role">Role<select id="membership-role" name="role" aria-describedby="role-scope-guide"><option>admin</option><option>portfolio_manager</option><option>tenant_admin</option><option>analyst</option><option>reviewer</option><option>operator</option><option>viewer</option></select></label>
+      <label for="membership-role">Tenant role
+        <select id="membership-role" name="tenant_role" aria-describedby="role-scope-guide">
+          {{range .TenantRoleOptions}}<option value="{{.Value}}">{{.Label}}</option>{{end}}
+        </select>
+      </label>
       <label for="membership-responsibilities">Responsibilities<input id="membership-responsibilities" name="responsibilities"></label>
     </div>
   </fieldset>
@@ -38,12 +51,28 @@
 
 {{define "user_table_typed"}}
 <table>
-  <caption class="sr-only">User administration table with activation and password reset actions.</caption>
-  <tr><th scope="col">Username</th><th scope="col">Email</th><th scope="col">Active</th><th scope="col">Actions</th></tr>
+  <caption class="sr-only">User administration table with platform role, activation, and password reset actions.</caption>
+  <tr><th scope="col">Username</th><th scope="col">Email</th><th scope="col">Platform role</th><th scope="col">Active</th><th scope="col">Actions</th></tr>
   {{range .Items}}
   <tr>
     <td>{{.Username}}</td>
     <td>{{.Email}}</td>
+    <td>
+      <div>{{platformRoleLabel .PlatformRole}}</div>
+      {{if $.CanAssignPlatformRoles}}
+      {{$user := .}}
+      <form method="post" action="/admin/users/platform-role" class="source-inline-form" style="margin-top:10px">
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <input type="hidden" name="user_id" value="{{.ID}}">
+        <div class="source-inline-controls">
+          <select name="platform_role" aria-label="Platform role for {{.Username}}">
+            {{range $.PlatformRoleOptions}}<option value="{{.Value}}" {{if eq (printf "%s" $user.PlatformRole) .Value}}selected{{end}}>{{.Label}}</option>{{end}}
+          </select>
+        </div>
+        <div class="actions compact-actions"><button type="submit">Save role</button></div>
+      </form>
+      {{end}}
+    </td>
     <td>{{.IsActive}}</td>
     <td>
       {{template "confirm_destructive_action" (dict
@@ -68,7 +97,7 @@
     </td>
   </tr>
   {{else}}
-  <tr><td colspan="4">{{template "empty_state" "No users available."}}</td></tr>
+  <tr><td colspan="5">{{template "empty_state" "No users available."}}</td></tr>
   {{end}}
 </table>
 {{end}}
@@ -76,12 +105,12 @@
 {{define "membership_table_typed"}}
 <table>
   <caption class="sr-only">Workspace membership table with tenant role assignments.</caption>
-  <tr><th scope="col">User</th><th scope="col">Tenant</th><th scope="col">Role</th><th scope="col">Responsibilities</th><th scope="col">Actions</th></tr>
+  <tr><th scope="col">User</th><th scope="col">Tenant</th><th scope="col">Tenant role</th><th scope="col">Responsibilities</th><th scope="col">Actions</th></tr>
   {{range .Memberships}}
   <tr>
-    <td class="mono small">{{.UserID}}</td>
-    <td class="mono small">{{.TenantID}}</td>
-    <td>{{.Role}}</td>
+    <td>{{(index $.UsersByID .UserID).Username}}<div class="footer-note mono small">{{.UserID}}</div></td>
+    <td>{{(index $.TenantsByID .TenantID).Name}}<div class="footer-note mono small">{{.TenantID}}</div></td>
+    <td>{{tenantRoleLabel .Role}}</td>
     <td>{{.Responsibilities}}</td>
     <td>
       {{template "confirm_destructive_action" (dict
@@ -123,7 +152,7 @@
     <label for="tenant-switch-id">Available workspaces
     <select id="tenant-switch-id" name="tenant_id">
       {{range .UserTenants}}
-      <option value="{{.Tenant.ID}}" {{if eq $.Tenant.ID .Tenant.ID}}selected{{end}}>{{.Tenant.Name}} · {{.Role}}</option>
+      <option value="{{.Tenant.ID}}" {{if eq $.Tenant.ID .Tenant.ID}}selected{{end}}>{{.Tenant.Name}} · {{tenantRoleLabel .Role}}</option>
       {{end}}
     </select>
   </label>
@@ -260,19 +289,18 @@
 {{define "source_recent_runs_table"}}
 <table>
   <caption class="sr-only">Recent source execution history.</caption>
-  <tr><th scope="col">Source</th><th scope="col">Trigger</th><th scope="col">Status</th><th scope="col">Started</th><th scope="col">Finished</th><th scope="col">Items</th><th scope="col">Message</th></tr>
+  <tr><th scope="col">Started</th><th scope="col">Source</th><th scope="col">Trigger</th><th scope="col">Status</th><th scope="col">Items</th><th scope="col">Message</th></tr>
   {{range .RecentRuns}}
   <tr>
-    <td class="mono small">{{.SourceKey}}</td>
+    <td>{{formatTime .StartedAt}}</td>
+    <td>{{.SourceKey}}</td>
     <td>{{.Trigger}}</td>
     <td>{{template "status_badge" (dict "tone" (condTone .Status) "label" .Status)}}</td>
-    <td>{{formatTime .StartedAt}}</td>
-    <td>{{formatTime .FinishedAt}}</td>
     <td>{{.ItemCount}}</td>
-    <td class="small">{{.Message}}</td>
+    <td>{{.Message}}</td>
   </tr>
   {{else}}
-  <tr><td colspan="7">{{template "empty_state" "No source execution history yet."}}</td></tr>
+  <tr><td colspan="6">{{template "empty_state" "No source runs recorded yet."}}</td></tr>
   {{end}}
 </table>
 {{end}}

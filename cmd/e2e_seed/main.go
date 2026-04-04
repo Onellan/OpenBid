@@ -48,8 +48,8 @@ func main() {
 	e2eUser := ensureE2EAdminUser(ctx, s, password)
 
 	secondaryTenant := ensureTenant(ctx, s, e2eTenantName, e2eTenantSlug)
-	ensureMembership(ctx, s, e2eUser.ID, primaryTenantID, models.RoleAdmin)
-	ensureMembership(ctx, s, e2eUser.ID, secondaryTenant.ID, models.RoleAdmin)
+	ensureMembership(ctx, s, e2eUser.ID, primaryTenantID, models.TenantRoleOwner)
+	ensureMembership(ctx, s, e2eUser.ID, secondaryTenant.ID, models.TenantRoleOwner)
 	ensureFailedQueueFixture(ctx, s, primaryTenantID)
 
 	log.Printf("seeded e2e user=%s tenant=%s tender=%s", e2eUser.Username, secondaryTenant.ID, e2eFailedTender)
@@ -93,7 +93,7 @@ func ensureTenant(ctx context.Context, s store.Store, name, slug string) models.
 	return models.Tenant{}
 }
 
-func ensureMembership(ctx context.Context, s store.Store, userID, tenantID string, role models.Role) {
+func ensureMembership(ctx context.Context, s store.Store, userID, tenantID string, role models.TenantRole) {
 	membership, err := s.GetMembership(ctx, userID, tenantID)
 	if err == nil {
 		membership.Role = role
@@ -128,10 +128,11 @@ func ensureE2EAdminUser(ctx context.Context, s store.Store, password string) mod
 		user.Email = e2eEmail
 	case store.ErrNotFound:
 		user = models.User{
-			Username:    e2eUsername,
-			DisplayName: e2eDisplayName,
-			Email:       e2eEmail,
-			IsActive:    true,
+			Username:     e2eUsername,
+			DisplayName:  e2eDisplayName,
+			Email:        e2eEmail,
+			PlatformRole: models.PlatformRoleSuperAdmin,
+			IsActive:     true,
 		}
 	default:
 		log.Fatal(err)
@@ -140,6 +141,7 @@ func ensureE2EAdminUser(ctx context.Context, s store.Store, password string) mod
 	user.PasswordSalt = salt
 	user.PasswordHash = hash
 	user.IsActive = true
+	user.PlatformRole = models.PlatformRoleSuperAdmin
 	user.MFAEnabled = false
 	user.MFASecret = ""
 	user.RecoveryCodes = nil

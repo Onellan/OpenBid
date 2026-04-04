@@ -66,6 +66,8 @@ Common variables:
 - `SECURE_COOKIES`: must be `true` in production
 - `BOOTSTRAP_ADMIN_PASSWORD`: initial admin password for first boot in production
 - `BOOTSTRAP_ADMIN_PASSWORD_FILE`: preferred production path for a mounted bootstrap password file
+- `BOOTSTRAP_TENANT_NAME`: default bootstrap workspace name. Default: `KolaboSolutions`
+- `BOOTSTRAP_TENANT_SLUG`: optional bootstrap workspace slug override. Default: `kolabosolutions`
 - `BOOTSTRAP_SYNC_ON_STARTUP`: whether to sync sources on the first startup. Default: `false`
 - `LOW_MEMORY_MODE`: keep `true` on smaller machines such as Raspberry Pi
 - `BACKUP_DIR`: directory used for runtime backup freshness checks
@@ -92,6 +94,7 @@ For the older narrative Raspberry Pi guide, including Cloudflare-in-front HTTP o
 ## Operations
 
 - Production runbook: [docs/production-operations.md](docs/production-operations.md)
+- Authorization model: [docs/authorization-model.md](docs/authorization-model.md)
 - SQLite backup: `./scripts/sqlite-backup.sh`
 - SQLite restore: `./scripts/sqlite-restore.sh`
 - SQLite validation: `./scripts/sqlite-validate.sh`

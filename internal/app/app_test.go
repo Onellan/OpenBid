@@ -74,15 +74,13 @@ func adminSession(t *testing.T, a *App) (models.User, models.Tenant, *http.Cooki
 	s := models.Session{ID: "sess-admin-" + strconv.FormatInt(time.Now().UnixNano(), 10), UserID: user.ID, TenantID: tenant.ID, CSRF: "csrf123", SessionVersion: user.SessionVersion, Expires: time.Now().Add(time.Hour)}
 	return user, tenant, persistSessionCookie(t, a, s), s.CSRF
 }
-func sessionForRole(t *testing.T, a *App, role models.Role) (models.User, models.Tenant, *http.Cookie, string) {
+func sessionForRole(t *testing.T, a *App, role models.TenantRole) (models.User, models.Tenant, *http.Cookie, string) {
 	_, tenant, _, _ := adminSession(t, a)
-	if role == models.RoleAdmin {
-		return adminSession(t, a)
-	}
+	nonce := strconv.FormatInt(time.Now().UnixNano(), 10)
 	user := models.User{
-		Username:    "user-" + strconv.FormatInt(time.Now().UnixNano(), 10),
-		DisplayName: "Viewer User",
-		Email:       "viewer@example.com",
+		Username:    "user-" + nonce,
+		DisplayName: "Tenant User",
+		Email:       "user-" + nonce + "@example.com",
 		IsActive:    true,
 	}
 	if err := a.Store.UpsertUser(t.Context(), user); err != nil {
@@ -94,6 +92,28 @@ func sessionForRole(t *testing.T, a *App, role models.Role) (models.User, models
 		t.Fatal(err)
 	}
 	s := models.Session{ID: "sess-role-" + strconv.FormatInt(time.Now().UnixNano(), 10), UserID: user.ID, TenantID: tenant.ID, CSRF: "csrf-role", SessionVersion: user.SessionVersion, Expires: time.Now().Add(time.Hour)}
+	return user, tenant, persistSessionCookie(t, a, s), s.CSRF
+}
+
+func sessionForPlatformRole(t *testing.T, a *App, role models.PlatformRole) (models.User, models.Tenant, *http.Cookie, string) {
+	_, tenant, _, _ := adminSession(t, a)
+	nonce := strconv.FormatInt(time.Now().UnixNano(), 10)
+	user := models.User{
+		Username:     "platform-" + nonce,
+		DisplayName:  "Platform User",
+		Email:        "platform-" + nonce + "@example.com",
+		PlatformRole: role,
+		IsActive:     true,
+	}
+	if err := a.Store.UpsertUser(t.Context(), user); err != nil {
+		t.Fatal(err)
+	}
+	users, _ := a.Store.ListUsers(t.Context())
+	user = users[len(users)-1]
+	if err := a.Store.UpsertMembership(t.Context(), models.Membership{UserID: user.ID, TenantID: tenant.ID, Role: models.TenantRoleOwner, Responsibilities: "Platform access"}); err != nil {
+		t.Fatal(err)
+	}
+	s := models.Session{ID: "sess-platform-" + strconv.FormatInt(time.Now().UnixNano(), 10), UserID: user.ID, TenantID: tenant.ID, CSRF: "csrf-platform", SessionVersion: user.SessionVersion, Expires: time.Now().Add(time.Hour)}
 	return user, tenant, persistSessionCookie(t, a, s), s.CSRF
 }
 func TestRequireAuthRedirects(t *testing.T) {
@@ -327,7 +347,8 @@ func TestAdminCreateUserRejectsDuplicateUsername(t *testing.T) {
 		"email":            {"another-admin@example.com"},
 		"password":         {"Strong!2026Pass"},
 		"tenant_id":        {tenant.ID},
-		"role":             {string(models.RoleAdmin)},
+		"platform_role":    {string(models.PlatformRoleSuperAdmin)},
+		"tenant_role":      {string(models.TenantRoleOwner)},
 		"responsibilities": {"Testing"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/admin/users/create", strings.NewReader(form.Encode()))
@@ -489,7 +510,7 @@ func TestAdminCreateSourceRejectsUnsupportedType(t *testing.T) {
 
 func TestViewerCannotCreateSource(t *testing.T) {
 	a := newTestApp(t)
-	_, _, cookie, csrf := sessionForRole(t, a, models.RoleViewer)
+	_, _, cookie, csrf := sessionForRole(t, a, models.TenantRoleViewer)
 	form := url.Values{
 		"csrf_token": {csrf},
 		"name":       {"Viewer Feed"},
@@ -780,7 +801,7 @@ func TestAdminCreateSourceRejectsPrivateFeedURL(t *testing.T) {
 
 func TestTenantAdminCannotCreateAdminUser(t *testing.T) {
 	a := newTestApp(t)
-	_, tenant, cookie, csrf := sessionForRole(t, a, models.RoleTenantAdmin)
+	_, tenant, cookie, csrf := sessionForRole(t, a, models.TenantRoleAdmin)
 	form := url.Values{
 		"csrf_token":       {csrf},
 		"username":         {"tenant-admin-peer"},
@@ -788,7 +809,8 @@ func TestTenantAdminCannotCreateAdminUser(t *testing.T) {
 		"email":            {"tenant-admin-peer@example.com"},
 		"password":         {"Strong!2026Pass"},
 		"tenant_id":        {tenant.ID},
-		"role":             {string(models.RoleAdmin)},
+		"platform_role":    {string(models.PlatformRoleNone)},
+		"tenant_role":      {string(models.TenantRoleOwner)},
 		"responsibilities": {"Testing"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/admin/users/create", strings.NewReader(form.Encode()))
@@ -803,7 +825,7 @@ func TestTenantAdminCannotCreateAdminUser(t *testing.T) {
 
 func TestTenantAdminCannotManageOtherTenantMemberships(t *testing.T) {
 	a := newTestApp(t)
-	_, currentTenant, cookie, csrf := sessionForRole(t, a, models.RoleTenantAdmin)
+	_, currentTenant, cookie, csrf := sessionForRole(t, a, models.TenantRoleAdmin)
 	if err := a.Store.UpsertTenant(t.Context(), models.Tenant{Name: "Other Workspace", Slug: "other-workspace"}); err != nil {
 		t.Fatal(err)
 	}
@@ -827,7 +849,8 @@ func TestTenantAdminCannotManageOtherTenantMemberships(t *testing.T) {
 		"email":            {"cross-tenant@example.com"},
 		"password":         {"Strong!2026Pass"},
 		"tenant_id":        {otherTenantID},
-		"role":             {string(models.RoleViewer)},
+		"platform_role":    {string(models.PlatformRoleNone)},
+		"tenant_role":      {string(models.TenantRoleViewer)},
 		"responsibilities": {"Testing"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/admin/users/create", strings.NewReader(form.Encode()))
@@ -842,7 +865,7 @@ func TestTenantAdminCannotManageOtherTenantMemberships(t *testing.T) {
 
 func TestTenantAdminUserAdminPageIsScopedToCurrentTenant(t *testing.T) {
 	a := newTestApp(t)
-	_, currentTenant, cookie, _ := sessionForRole(t, a, models.RoleTenantAdmin)
+	_, currentTenant, cookie, _ := sessionForRole(t, a, models.TenantRoleAdmin)
 	if err := a.Store.UpsertTenant(t.Context(), models.Tenant{Name: "Other Workspace", Slug: "other-workspace"}); err != nil {
 		t.Fatal(err)
 	}
@@ -866,7 +889,7 @@ func TestTenantAdminUserAdminPageIsScopedToCurrentTenant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.Store.UpsertMembership(t.Context(), models.Membership{UserID: otherUser.ID, TenantID: otherTenantID, Role: models.RoleViewer}); err != nil {
+	if err := a.Store.UpsertMembership(t.Context(), models.Membership{UserID: otherUser.ID, TenantID: otherTenantID, Role: models.TenantRoleViewer}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1414,7 +1437,7 @@ func TestQueuePageGroupsStatesAndHidesCompletedRetry(t *testing.T) {
 
 func TestQueuePageHidesRetryForViewerRole(t *testing.T) {
 	a := newTestApp(t)
-	_, _, cookie, _ := sessionForRole(t, a, models.RoleViewer)
+	_, _, cookie, _ := sessionForRole(t, a, models.TenantRoleViewer)
 	_ = a.Store.UpsertTender(t.Context(), models.Tender{
 		ID:             "viewer-queue-tender",
 		Title:          "Viewer Queue Tender",
@@ -1631,7 +1654,7 @@ func TestRoleBasedNavigationVisibility(t *testing.T) {
 		t.Fatalf("admin navigation still shows separated settings groups: %s", adminBody)
 	}
 
-	_, _, viewerCookie, _ := sessionForRole(t, a, models.RoleViewer)
+	_, _, viewerCookie, _ := sessionForRole(t, a, models.TenantRoleViewer)
 	req = httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(viewerCookie)
 	w = httptest.NewRecorder()
@@ -1657,7 +1680,7 @@ func TestSettingsPageShowsAdminCardsOnlyForAuthorizedUsers(t *testing.T) {
 		t.Fatalf("expected admin settings page to show admin cards: %s", adminBody)
 	}
 
-	_, _, viewerCookie, _ := sessionForRole(t, a, models.RoleViewer)
+	_, _, viewerCookie, _ := sessionForRole(t, a, models.TenantRoleViewer)
 	req = httptest.NewRequest(http.MethodGet, "/settings", nil)
 	req.AddCookie(viewerCookie)
 	w = httptest.NewRecorder()
@@ -1669,13 +1692,12 @@ func TestSettingsPageShowsAdminCardsOnlyForAuthorizedUsers(t *testing.T) {
 }
 func TestRouteAccessibilityAndPageRendering(t *testing.T) {
 	a := newTestApp(t)
-	_, _, viewerCookie, _ := sessionForRole(t, a, models.RoleViewer)
+	_, _, viewerCookie, _ := sessionForRole(t, a, models.TenantRoleViewer)
 	routes := map[string]string{
 		"/dashboard":      "One home for daily bidding work and operational visibility",
 		"/bookmarks":      "Keep active opportunities separate",
 		"/saved-searches": "Reusable market views",
 		"/queue":          "Queue and extraction monitoring",
-		"/sources":        "Source checks, schedules, and sync health",
 		"/settings":       "Account, workspace, and administration settings",
 	}
 	for path, marker := range routes {
@@ -1691,7 +1713,7 @@ func TestRouteAccessibilityAndPageRendering(t *testing.T) {
 		}
 	}
 
-	for _, path := range []string{"/admin/users", "/admin/tenants"} {
+	for _, path := range []string{"/admin/users", "/admin/tenants", "/sources"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		req.AddCookie(viewerCookie)
 		w := httptest.NewRecorder()

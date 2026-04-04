@@ -157,7 +157,7 @@ func TestSQLiteMigratesLegacyJSONEntitiesIntoRelationalTables(t *testing.T) {
 		}
 	}
 	mustInsertJSON("users", "u1", models.User{ID: "u1", Username: "legacy", DisplayName: "Legacy User", Email: "legacy@example.com", IsActive: true})
-	mustInsertJSON("memberships", "m1", models.Membership{ID: "m1", UserID: "u1", TenantID: "tenant-1", Role: models.RoleAnalyst})
+	mustInsertJSON("memberships", "m1", models.Membership{ID: "m1", UserID: "u1", TenantID: "tenant-1", Role: models.TenantRoleUser})
 	mustInsertJSON("workflows", "w1", models.Workflow{ID: "w1", TenantID: "tenant-1", TenderID: "tender-1", Status: "reviewing"})
 	mustInsertJSON("bookmarks", "b1", models.Bookmark{ID: "b1", TenantID: "tenant-1", UserID: "u1", TenderID: "tender-1", Note: "legacy"})
 	mustInsertJSON("saved_searches", "s1", models.SavedSearch{ID: "s1", TenantID: "tenant-1", UserID: "u1", Name: "Legacy Search", Query: "q=legacy"})
@@ -212,9 +212,9 @@ func TestSQLiteTenantScopedMembershipAndUserLookups(t *testing.T) {
 		}
 	}
 	memberships := []models.Membership{
-		{ID: "m1", UserID: "u1", TenantID: "tenant-1", Role: models.RoleAdmin},
-		{ID: "m2", UserID: "u2", TenantID: "tenant-1", Role: models.RoleAnalyst},
-		{ID: "m3", UserID: "u3", TenantID: "tenant-2", Role: models.RoleViewer},
+		{ID: "m1", UserID: "u1", TenantID: "tenant-1", Role: models.TenantRoleOwner},
+		{ID: "m2", UserID: "u2", TenantID: "tenant-1", Role: models.TenantRoleUser},
+		{ID: "m3", UserID: "u3", TenantID: "tenant-2", Role: models.TenantRoleViewer},
 	}
 	for _, membership := range memberships {
 		if err := s.UpsertMembership(ctx, membership); err != nil {
@@ -244,5 +244,46 @@ func TestSQLiteTenantScopedMembershipAndUserLookups(t *testing.T) {
 	}
 	if userByEmail.ID != "u2" {
 		t.Fatalf("expected email lookup to return u2, got %#v", userByEmail)
+	}
+}
+
+func TestSQLiteTenantSourceAssignmentsAreUniquePerTenant(t *testing.T) {
+	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	if err := s.UpsertSourceAssignment(ctx, models.TenantSourceAssignment{TenantID: "tenant-1", SourceKey: "treasury"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertSourceAssignment(ctx, models.TenantSourceAssignment{TenantID: "tenant-1", SourceKey: "treasury"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertSourceAssignment(ctx, models.TenantSourceAssignment{TenantID: "tenant-1", SourceKey: "eskom"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertSourceAssignment(ctx, models.TenantSourceAssignment{TenantID: "tenant-2", SourceKey: "treasury"}); err != nil {
+		t.Fatal(err)
+	}
+
+	tenantOneAssignments, err := s.ListSourceAssignments(ctx, "tenant-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tenantOneAssignments) != 2 {
+		t.Fatalf("expected tenant-1 to have 2 unique source assignments, got %#v", tenantOneAssignments)
+	}
+	if tenantOneAssignments[0].SourceKey != "eskom" || tenantOneAssignments[1].SourceKey != "treasury" {
+		t.Fatalf("expected assignments ordered by source key, got %#v", tenantOneAssignments)
+	}
+
+	tenantTwoAssignments, err := s.ListSourceAssignments(ctx, "tenant-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tenantTwoAssignments) != 1 || tenantTwoAssignments[0].SourceKey != "treasury" {
+		t.Fatalf("expected tenant-2 isolated assignment, got %#v", tenantTwoAssignments)
 	}
 }

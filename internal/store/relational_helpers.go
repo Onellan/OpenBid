@@ -72,6 +72,31 @@ func sqliteTableExistsTx(ctx context.Context, tx *sql.Tx, table string) (bool, e
 	return count == 1, nil
 }
 
+func sqliteColumnExistsTx(ctx context.Context, tx *sql.Tx, table, column string) (bool, error) {
+	rows, err := tx.QueryContext(ctx, "pragma table_info("+table+")")
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			dataType   string
+			notNull    int
+			defaultV   sql.NullString
+			primaryKey int
+		)
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultV, &primaryKey); err != nil {
+			return false, err
+		}
+		if strings.EqualFold(name, column) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
 func relationalTableCount(ctx context.Context, tx *sql.Tx, table string) (int, error) {
 	var count int
 	if err := tx.QueryRowContext(ctx, "select count(*) from "+table).Scan(&count); err != nil {
@@ -115,6 +140,7 @@ func (s *SQLiteStore) migrateRelationalTables(ctx context.Context, tx *sql.Tx) e
 			username text not null unique,
 			display_name text not null,
 			email text not null unique,
+			platform_role text not null,
 			password_hash text not null,
 			password_salt text not null,
 			mfa_secret text not null,
@@ -178,6 +204,14 @@ func (s *SQLiteStore) migrateRelationalTables(ctx context.Context, tx *sql.Tx) e
 			created_at text not null,
 			updated_at text not null
 		);`,
+		`create table if not exists tenant_source_assignments (
+			id text primary key,
+			tenant_id text not null,
+			source_key text not null,
+			created_at text not null,
+			updated_at text not null,
+			unique(tenant_id, source_key)
+		);`,
 		`create index if not exists idx_user_records_username on user_records(lower(username));`,
 		`create index if not exists idx_user_records_email on user_records(lower(email));`,
 		`create index if not exists idx_membership_records_user on membership_records(user_id, tenant_id);`,
@@ -187,9 +221,20 @@ func (s *SQLiteStore) migrateRelationalTables(ctx context.Context, tx *sql.Tx) e
 		`create index if not exists idx_saved_search_records_tenant_user on saved_search_records(tenant_id, user_id, name);`,
 		`create index if not exists idx_sessions_user on sessions(user_id);`,
 		`create index if not exists idx_sessions_expires on sessions(expires_at);`,
+		`create index if not exists idx_tenant_source_assignments_tenant on tenant_source_assignments(tenant_id, source_key);`,
+		`create index if not exists idx_tenant_source_assignments_source on tenant_source_assignments(source_key, tenant_id);`,
 	}
 	for _, statement := range statements {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
+	hasPlatformRole, err := sqliteColumnExistsTx(ctx, tx, "user_records", "platform_role")
+	if err != nil {
+		return err
+	}
+	if !hasPlatformRole {
+		if _, err := tx.ExecContext(ctx, `alter table user_records add column platform_role text not null default '';`); err != nil {
 			return err
 		}
 	}
@@ -232,11 +277,11 @@ func (s *SQLiteStore) backfillUsers(ctx context.Context, tx *sql.Tx) error {
 		}
 		if _, err := tx.ExecContext(ctx, `
 			insert into user_records(
-				id, username, display_name, email, password_hash, password_salt, mfa_secret, is_active, mfa_enabled,
+				id, username, display_name, email, platform_role, password_hash, password_salt, mfa_secret, is_active, mfa_enabled,
 				failed_logins, session_version, locked_until, recovery_codes, created_at, updated_at
-			) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		`,
-			item.ID, item.Username, item.DisplayName, item.Email, item.PasswordHash, item.PasswordSalt, item.MFASecret,
+			item.ID, item.Username, item.DisplayName, item.Email, string(item.PlatformRole), item.PasswordHash, item.PasswordSalt, item.MFASecret,
 			boolToInt(item.IsActive), boolToInt(item.MFAEnabled), item.FailedLogins, item.SessionVersion,
 			sqliteTimeString(item.LockedUntil), encodeStringSlice(item.RecoveryCodes),
 			sqliteTimeString(item.CreatedAt), sqliteTimeString(item.UpdatedAt),
@@ -373,7 +418,7 @@ func scanUser(scanner interface {
 		updatedAt     string
 	)
 	err := scanner.Scan(
-		&user.ID, &user.Username, &user.DisplayName, &user.Email, &user.PasswordHash, &user.PasswordSalt, &user.MFASecret,
+		&user.ID, &user.Username, &user.DisplayName, &user.Email, &user.PlatformRole, &user.PasswordHash, &user.PasswordSalt, &user.MFASecret,
 		&isActive, &mfaEnabled, &user.FailedLogins, &user.SessionVersion, &lockedUntil, &recoveryCodes, &createdAt, &updatedAt,
 	)
 	if err != nil {
@@ -401,7 +446,7 @@ func scanMembership(scanner interface {
 	if err != nil {
 		return models.Membership{}, err
 	}
-	membership.Role = models.Role(role)
+	membership.Role = models.TenantRole(role)
 	membership.CreatedAt = parseSQLiteTime(createdAt)
 	membership.UpdatedAt = parseSQLiteTime(updatedAt)
 	return membership, nil
@@ -473,6 +518,23 @@ func scanSession(scanner interface {
 	session.CreatedAt = parseSQLiteTime(createdAt)
 	session.UpdatedAt = parseSQLiteTime(updatedAt)
 	return session, nil
+}
+
+func scanTenantSourceAssignment(scanner interface {
+	Scan(dest ...any) error
+}) (models.TenantSourceAssignment, error) {
+	var (
+		assignment models.TenantSourceAssignment
+		createdAt  string
+		updatedAt  string
+	)
+	err := scanner.Scan(&assignment.ID, &assignment.TenantID, &assignment.SourceKey, &createdAt, &updatedAt)
+	if err != nil {
+		return models.TenantSourceAssignment{}, err
+	}
+	assignment.CreatedAt = parseSQLiteTime(createdAt)
+	assignment.UpdatedAt = parseSQLiteTime(updatedAt)
+	return assignment, nil
 }
 
 func (s *SQLiteStore) GetSession(ctx context.Context, id string) (models.Session, error) {
