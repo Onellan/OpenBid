@@ -1,6 +1,6 @@
 {{define "queue.html"}}{{template "base" .}}{{end}}{{define "content"}}
 {{template "page_hero" (dict
-  "eyebrow" "Pipeline"
+  "eyebrow" "Data Pipes"
   "title" "Queue and extraction monitoring"
   "copy" "Keep document processing on its own screen so retries, failures, and completions stay easy to scan."
 )}}
@@ -12,6 +12,30 @@
   {{template "metric_card" (dict "label" "Completed" "value" .QueueSummary.Completed)}}
 </section>
 <div class="stack">
+  <details id="expired-tender-cleanup" class="section-disclosure expired-tender-cleanup-disclosure">
+    <summary>
+      <div>
+        <h2 class="card-title">Remove Expired Tenders</h2>
+        <p class="section-disclosure-copy">Maintenance action for tenders whose closing date or closing time has passed.</p>
+      </div>
+      <span class="badge warning">Manual cleanup</span>
+    </summary>
+    <div class="section-disclosure-body">
+      <div class="card-soft">
+        <p class="footer-note" style="margin:0">Expired means the tender has a closing date/time that is earlier than now. Date-only tenders are treated as open until the end of that date.</p>
+        <p class="footer-note" style="margin:8px 0 0 0">This removes expired tenders from normal lists and dashboards while preserving bookmarks, workflows, notes, and audit history.</p>
+      </div>
+      {{if .CanRunCleanup}}
+      <form method="post" action="/data-pipes/remove-expired-tenders" data-confirm="Remove expired tenders from normal views? Bookmarks, workflows, notes, and audit history will be preserved." style="margin-top:14px">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <button type="submit">Remove Expired Tenders</button>
+      </form>
+      {{else}}
+      <div class="footer-note" style="margin-top:14px">Read-only access. Ask an operator to run cleanup.</div>
+      {{end}}
+    </div>
+  </details>
+
   {{range .QueueSections}}
   <details class="section-disclosure queue-state-disclosure queue-state-{{.Key}}" {{if .Open}}open{{end}}>
     <summary>

@@ -108,6 +108,7 @@ type Store interface {
 	TenderFilterOptions(context.Context, string) (TenderFilterOptions, error)
 	GetTender(context.Context, string) (models.Tender, error)
 	UpsertTender(context.Context, models.Tender) error
+	CleanupExpiredTenders(context.Context, time.Time) (models.ExpiredTenderCleanupResult, error)
 
 	ListUsers(context.Context) ([]models.User, error)
 	ListUsersByIDs(context.Context, []string) ([]models.User, error)

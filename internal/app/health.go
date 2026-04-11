@@ -153,7 +153,7 @@ func (a *App) runtimeHealthCards(ctx context.Context, now time.Time) []HealthCar
 
 func (a *App) workerHealthCard(ctx context.Context, now time.Time) HealthCard {
 	card := HealthCard{
-		Name:    "Worker pipeline",
+		Name:    "Worker data pipes",
 		Tone:    "warning",
 		Summary: "Worker activity is being inferred from jobs, schedules, and source runs.",
 	}

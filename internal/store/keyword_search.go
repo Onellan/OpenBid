@@ -319,6 +319,13 @@ func (s *SQLiteStore) upsertKeywordMatch(ctx context.Context, profile models.Key
 }
 
 func (s *SQLiteStore) refreshKeywordProfileForTender(ctx context.Context, profile models.KeywordProfile, tender models.Tender, refreshedAt time.Time) error {
+	if tenderArchived(tender) {
+		_, err := s.db.ExecContext(ctx, `
+			delete from keyword_match_records
+			where profile_id = ? and tender_id = ?
+		`, profile.ID, tender.ID)
+		return err
+	}
 	keywords, err := s.activeKeywords(ctx, profile)
 	if err != nil {
 		return err
@@ -453,6 +460,9 @@ func (s *SQLiteStore) RefreshKeywordMatches(ctx context.Context, tenantID, userI
 		return models.KeywordSearchSummary{}, err
 	}
 	for _, tender := range tenders {
+		if tenderArchived(tender) {
+			continue
+		}
 		matches := matchedKeywordsForTender(tender, keywords)
 		if len(matches) == 0 {
 			continue

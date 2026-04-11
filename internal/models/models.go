@@ -66,6 +66,7 @@ type TenderLocation struct {
 
 type Tender struct {
 	ID, SourceKey, ExternalID, Title, Issuer, Province, Category, TenderNumber, PublishedDate, ClosingDate, Status, CIDBGrading, Summary, OriginalURL, DocumentURL, Excerpt string
+	ArchiveReason                                                                                                                                                           string
 	EngineeringRelevant                                                                                                                                                     bool
 	RelevanceScore                                                                                                                                                          float64
 	TenderType                                                                                                                                                              string
@@ -83,7 +84,7 @@ type Tender struct {
 	Briefings                                                                                                                                                               []TenderBriefing
 	Documents                                                                                                                                                               []TenderDocument
 	Requirements                                                                                                                                                            []TenderRequirement
-	CreatedAt, UpdatedAt                                                                                                                                                    time.Time
+	CreatedAt, UpdatedAt, ArchivedAt                                                                                                                                        time.Time
 }
 type User struct {
 	ID, Username, DisplayName, Email, PasswordHash, PasswordSalt, MFASecret string
@@ -144,6 +145,11 @@ type KeywordSearchSummary struct {
 	LastRefreshedAt    time.Time
 	RefreshStatus      string
 	RefreshMessage     string
+}
+type ExpiredTenderCleanupResult struct {
+	RemovedCount     int
+	RemovedTenderIDs []string
+	RunAt            time.Time
 }
 type SyncRun struct {
 	ID, SourceKey, Status, Message, Trigger string

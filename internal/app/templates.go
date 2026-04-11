@@ -219,6 +219,7 @@ func routes(a *App) http.Handler {
 	registerProtected(mux, a, a.DeleteKeyword, "/keyword-search/keywords/delete")
 	registerProtected(mux, a, a.RefreshKeywordSearch, "/keyword-search/refresh")
 	registerProtected(mux, a, a.QueuePage, "/queue")
+	registerProtected(mux, a, a.CleanupExpiredTenders, "/data-pipes/remove-expired-tenders")
 	registerProtected(mux, a, a.AuditLogPage, "/audit-log")
 	registerProtected(mux, a, a.SecurityAuditLogPage, "/audit-log/security")
 	registerProtected(mux, a, a.HealthPage, "/health")

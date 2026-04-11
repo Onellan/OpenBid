@@ -295,3 +295,132 @@ func TestQueueRequeueRejectsViewerDirectPost(t *testing.T) {
 		t.Fatalf("expected forbidden direct viewer retry, got %d", w.Code)
 	}
 }
+
+func TestDataPipesMenuAndExpiredTenderCleanupFlow(t *testing.T) {
+	a := newTestApp(t)
+	user, tenant, cookie, csrf := adminSession(t, a)
+	if err := a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:          "cleanup-expired",
+		Title:       "Expired Cleanup Tender",
+		Issuer:      "Metro",
+		SourceKey:   "treasury",
+		Status:      "open",
+		ClosingDate: "2026-01-01",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:          "cleanup-active",
+		Title:       "Active Cleanup Tender",
+		Issuer:      "Metro",
+		SourceKey:   "treasury",
+		Status:      "open",
+		ClosingDate: "2999-01-01",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store.UpsertBookmark(t.Context(), models.Bookmark{TenantID: tenant.ID, UserID: user.ID, TenderID: "cleanup-expired", Note: "preserve"}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/queue", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected queue page 200 got %d", w.Code)
+	}
+	for _, marker := range []string{"Data Pipes", "Remove Expired Tenders", "data-confirm=", "/data-pipes/remove-expired-tenders", "closing date/time"} {
+		if !strings.Contains(body, marker) {
+			t.Fatalf("queue page missing %q: %s", marker, body)
+		}
+	}
+	if strings.Contains(body, "Run Pipeline") {
+		t.Fatalf("old Run Pipeline menu label still rendered: %s", body)
+	}
+
+	form := url.Values{"csrf_token": {csrf}}
+	req = httptest.NewRequest(http.MethodPost, "/data-pipes/remove-expired-tenders", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after cleanup, got %d body=%s", w.Code, w.Body.String())
+	}
+	if location := w.Header().Get("Location"); !strings.Contains(location, "Removed+1+expired+tenders") {
+		t.Fatalf("expected cleanup result message, got %q", location)
+	}
+	if _, err := a.Store.GetTender(t.Context(), "cleanup-expired"); err != store.ErrNotFound {
+		t.Fatalf("expected expired tender hidden after cleanup, got %v", err)
+	}
+	if _, err := a.Store.GetTender(t.Context(), "cleanup-active"); err != nil {
+		t.Fatalf("expected active tender preserved, got %v", err)
+	}
+	bookmarks, err := a.Store.ListBookmarks(t.Context(), tenant.ID, user.ID)
+	if err != nil || len(bookmarks) != 1 || bookmarks[0].TenderID != "cleanup-expired" {
+		t.Fatalf("expected linked bookmark to be preserved, bookmarks=%#v err=%v", bookmarks, err)
+	}
+	entries, err := a.Store.ListAuditEntries(t.Context(), tenant.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundAudit := false
+	for _, entry := range entries {
+		if entry.Action == "cleanup" && entry.Entity == "expired_tenders" && entry.Metadata["removed_count"] == "1" {
+			foundAudit = true
+			break
+		}
+	}
+	if !foundAudit {
+		t.Fatalf("expected cleanup audit entry, got %#v", entries)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/data-pipes/remove-expired-tenders", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after repeated cleanup, got %d", w.Code)
+	}
+	if location := w.Header().Get("Location"); !strings.Contains(location, "No+expired+tenders+to+remove") {
+		t.Fatalf("expected idempotent no-op result message, got %q", location)
+	}
+}
+
+func TestExpiredTenderCleanupRequiresCSRFAndPermission(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := adminSession(t, a)
+	req := httptest.NewRequest(http.MethodPost, "/data-pipes/remove-expired-tenders", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected missing CSRF to be forbidden, got %d", w.Code)
+	}
+
+	_, _, viewerCookie, viewerCSRF := sessionForRole(t, a, models.TenantRoleViewer)
+	form := url.Values{"csrf_token": {viewerCSRF}}
+	req = httptest.NewRequest(http.MethodPost, "/data-pipes/remove-expired-tenders", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(viewerCookie)
+	w = httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected viewer cleanup to be forbidden, got %d", w.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/queue", nil)
+	req.AddCookie(viewerCookie)
+	w = httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	if strings.Contains(body, "action=\"/data-pipes/remove-expired-tenders\"") {
+		t.Fatalf("viewer should not see cleanup action form: %s", body)
+	}
+	if !strings.Contains(body, "Read-only access") {
+		t.Fatalf("viewer should see read-only cleanup state: %s", body)
+	}
+}

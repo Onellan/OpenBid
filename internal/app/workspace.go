@@ -5,11 +5,13 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"openbid/internal/models"
 	"openbid/internal/store"
@@ -813,10 +815,45 @@ func (a *App) QueuePage(w http.ResponseWriter, r *http.Request) {
 		"User":          u,
 		"Tenant":        t,
 		"CanEditQueue":  canQueueWork(u, m),
+		"CanRunCleanup": canQueueWork(u, m),
 		"QueueItems":    items,
 		"QueueSummary":  queueSummary(jobs),
 		"QueueSections": sections,
 	})
+}
+
+func (a *App) CleanupExpiredTenders(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost || !a.ensureCSRF(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	u, t, m, ok := a.currentUserTenant(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if !canQueueWork(u, m) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	result, err := a.Store.CleanupExpiredTenders(r.Context(), time.Now())
+	if err != nil {
+		a.serverError(w, r, "unable to remove expired tenders", err)
+		return
+	}
+	metadata := map[string]string{
+		"removed_count": strconv.Itoa(result.RemovedCount),
+	}
+	if len(result.RemovedTenderIDs) > 0 {
+		metadata["removed_tender_ids"] = strings.Join(result.RemovedTenderIDs, ",")
+	}
+	log.Printf("user=%s tenant=%s removed %d expired tenders: %s", u.ID, t.ID, result.RemovedCount, strings.Join(result.RemovedTenderIDs, ","))
+	a.auditAction(r.Context(), actionContext{User: u, Tenant: t, Member: m}, "cleanup", "expired_tenders", t.ID, "Expired tender cleanup completed", metadata)
+	message := fmt.Sprintf("Removed %d expired tenders", result.RemovedCount)
+	if result.RemovedCount == 0 {
+		message = "No expired tenders to remove"
+	}
+	a.redirectAfterAction(w, r, "/queue#expired-tender-cleanup", "success", message)
 }
 
 func (a *App) QueueRequeue(w http.ResponseWriter, r *http.Request) {

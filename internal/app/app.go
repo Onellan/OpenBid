@@ -758,6 +758,9 @@ func (a *App) renderStatus(w http.ResponseWriter, r *http.Request, status int, n
 		if _, exists := data["CanEditWorkspace"]; !exists {
 			data["CanEditWorkspace"] = canEditWorkspace(u, m)
 		}
+		if _, exists := data["CanManageDataPipes"]; !exists {
+			data["CanManageDataPipes"] = canQueueWork(u, m)
+		}
 		if _, exists := data["PlatformRoleLabel"]; !exists {
 			data["PlatformRoleLabel"] = platformRoleLabel(u.PlatformRole)
 		}
