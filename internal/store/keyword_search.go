@@ -132,11 +132,14 @@ func (s *SQLiteStore) getKeywordProfile(ctx context.Context, tenantID, userID st
 }
 
 func (s *SQLiteStore) GetKeywordProfile(ctx context.Context, tenantID, userID string) (models.KeywordProfile, error) {
-	return s.ensureKeywordProfile(ctx, tenantID, userID)
+	return s.getKeywordProfile(ctx, tenantID, userID)
 }
 
 func (s *SQLiteStore) ListKeywords(ctx context.Context, tenantID, userID string) ([]models.Keyword, error) {
-	profile, err := s.ensureKeywordProfile(ctx, tenantID, userID)
+	profile, err := s.getKeywordProfile(ctx, tenantID, userID)
+	if errors.Is(err, ErrNotFound) {
+		return []models.Keyword{}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -225,7 +228,7 @@ func (s *SQLiteStore) keywordByID(ctx context.Context, tenantID, userID, id stri
 }
 
 func (s *SQLiteStore) DeleteKeyword(ctx context.Context, tenantID, userID, id string) error {
-	profile, err := s.ensureKeywordProfile(ctx, tenantID, userID)
+	profile, err := s.getKeywordProfile(ctx, tenantID, userID)
 	if err != nil {
 		return err
 	}
@@ -470,7 +473,10 @@ func (s *SQLiteStore) RefreshKeywordMatches(ctx context.Context, tenantID, userI
 }
 
 func (s *SQLiteStore) ListKeywordTenderMatches(ctx context.Context, tenantID, userID string, filter KeywordMatchFilter) ([]models.KeywordTenderMatchResult, int, error) {
-	profile, err := s.ensureKeywordProfile(ctx, tenantID, userID)
+	profile, err := s.getKeywordProfile(ctx, tenantID, userID)
+	if errors.Is(err, ErrNotFound) {
+		return []models.KeywordTenderMatchResult{}, 0, nil
+	}
 	if err != nil {
 		return nil, 0, err
 	}
@@ -579,7 +585,10 @@ func matchContainsKeyword(match models.KeywordTenderMatch, keyword string) bool 
 }
 
 func (s *SQLiteStore) KeywordSearchSummary(ctx context.Context, tenantID, userID string) (models.KeywordSearchSummary, error) {
-	profile, err := s.ensureKeywordProfile(ctx, tenantID, userID)
+	profile, err := s.getKeywordProfile(ctx, tenantID, userID)
+	if errors.Is(err, ErrNotFound) {
+		return emptyKeywordSearchSummary(tenantID, userID), nil
+	}
 	if err != nil {
 		return models.KeywordSearchSummary{}, err
 	}
@@ -610,4 +619,18 @@ func (s *SQLiteStore) KeywordSearchSummary(ctx context.Context, tenantID, userID
 		RefreshStatus:      profile.RefreshStatus,
 		RefreshMessage:     profile.RefreshMessage,
 	}, nil
+}
+
+func emptyKeywordSearchSummary(tenantID, userID string) models.KeywordSearchSummary {
+	return models.KeywordSearchSummary{
+		Profile: models.KeywordProfile{
+			TenantID:       strings.TrimSpace(tenantID),
+			UserID:         strings.TrimSpace(userID),
+			Name:           "Default keyword search",
+			RefreshStatus:  "pending",
+			RefreshMessage: "Add keywords or refresh to calculate matches.",
+		},
+		RefreshStatus:  "pending",
+		RefreshMessage: "Add keywords or refresh to calculate matches.",
+	}
 }

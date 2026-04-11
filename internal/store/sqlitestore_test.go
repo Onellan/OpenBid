@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"openbid/internal/models"
@@ -63,6 +64,88 @@ func TestSQLiteMigrationAndRuntimeValidation(t *testing.T) {
 	defer s.Close()
 	if err := s.ValidateRuntime(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSQLiteMigrationAddsKeywordTablesWithoutDroppingExistingRecords(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store.db")
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?_pragma=foreign_keys(ON)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`
+		create table schema_meta (key text primary key, value text not null);
+		insert into schema_meta(key, value) values('schema_version', '6');
+		create table saved_search_records (
+			id text primary key,
+			tenant_id text not null,
+			user_id text not null,
+			name text not null,
+			query text not null,
+			filters text not null,
+			created_at text not null,
+			updated_at text not null
+		);
+		insert into saved_search_records(id, tenant_id, user_id, name, query, filters, created_at, updated_at)
+		values('saved-1', 'tenant-1', 'user-1', 'Legacy saved search', 'q=roads', '{}', '2026-04-01T00:00:00Z', '2026-04-01T00:00:00Z');
+		pragma user_version = 6;
+	`)
+	if closeErr := db.Close(); err == nil && closeErr != nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.ValidateRuntime(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	searches, err := s.ListSavedSearches(context.Background(), "tenant-1", "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(searches) != 1 || searches[0].Name != "Legacy saved search" {
+		t.Fatalf("expected existing saved search to survive migration, got %#v", searches)
+	}
+	stats, err := s.RuntimeStats(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.KeywordProfileCount != 0 || stats.KeywordCount != 0 || stats.KeywordMatchCount != 0 {
+		t.Fatalf("expected migration to add empty keyword tables without seeding data, got %#v", stats)
+	}
+}
+
+func TestSQLiteKeywordReadPathsDoNotCreateProfile(t *testing.T) {
+	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if _, err := s.KeywordSearchSummary(ctx, "tenant-1", "user-1"); err != nil {
+		t.Fatal(err)
+	}
+	if keywords, err := s.ListKeywords(ctx, "tenant-1", "user-1"); err != nil || len(keywords) != 0 {
+		t.Fatalf("expected empty keyword list without profile, keywords=%#v err=%v", keywords, err)
+	}
+	if matches, total, err := s.ListKeywordTenderMatches(ctx, "tenant-1", "user-1", KeywordMatchFilter{Page: 1, PageSize: 20}); err != nil || total != 0 || len(matches) != 0 {
+		t.Fatalf("expected empty matches without profile, total=%d matches=%#v err=%v", total, matches, err)
+	}
+	if _, err := s.GetKeywordProfile(ctx, "tenant-1", "user-1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected read paths not to create keyword profile, got %v", err)
+	}
+	stats, err := s.RuntimeStats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.KeywordProfileCount != 0 || stats.KeywordCount != 0 || stats.KeywordMatchCount != 0 {
+		t.Fatalf("expected no keyword rows after read paths, got %#v", stats)
 	}
 }
 
