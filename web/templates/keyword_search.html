@@ -1,0 +1,198 @@
+{{define "keyword_search.html"}}{{template "base" .}}{{end}}{{define "content"}}
+{{template "page_hero" (dict
+  "eyebrow" "Keyword Search"
+  "title" "Keyword Search"
+  "copy" "Track tenders that mention the words and phrases you care about most."
+)}}
+
+<div style="margin:14px 0">{{template "flash_messages" .}}</div>
+
+<section class="kpi-band keyword-summary-band" style="margin-top:18px">
+  {{template "metric_card" (dict "label" "Matched tenders" "value" .Summary.MatchedTenderCount)}}
+  {{template "metric_card" (dict "label" "Active keywords" "value" .Summary.ActiveKeywordCount)}}
+  {{template "metric_card" (dict "label" "Saved keywords" "value" .Summary.TotalKeywordCount)}}
+  <div class="card metric-card keyword-refresh-card">
+    <div>
+      <div class="metric-label">Last updated</div>
+      <div class="footer-note" style="margin-top:8px">{{formatTime .Summary.LastRefreshedAt}}</div>
+      <div class="footer-note" style="margin-top:6px">{{.Summary.RefreshMessage}}</div>
+    </div>
+    <form method="post" action="/keyword-search/refresh">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <input type="hidden" name="return_to" value="{{.ReturnTo}}">
+      <button type="submit">Refresh matches</button>
+    </form>
+  </div>
+</section>
+
+<div class="stack keyword-search-stack" style="margin-top:18px">
+  <details class="section-disclosure keyword-manager-disclosure" open>
+    <summary>
+      <div>
+        <h2 class="card-title">Keyword manager</h2>
+        <p class="section-disclosure-copy">Add single words or phrases. Matching is case-insensitive and repeated hits are counted once per tender.</p>
+      </div>
+      <span class="badge info">{{.Summary.TotalKeywordCount}} saved</span>
+    </summary>
+    <div class="section-disclosure-body">
+      <form method="post" action="/keyword-search/keywords" class="form-grid keyword-add-form">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="hidden" name="return_to" value="{{.ReturnTo}}">
+        <div class="keyword-add-row">
+          <label>New keyword or phrase<input name="value" placeholder="solar panels"></label>
+          <label class="toggle-inline"><span>Enabled</span><input type="checkbox" name="enabled" value="1" checked></label>
+          <button type="submit">Add keyword</button>
+        </div>
+      </form>
+
+      <div class="table-wrap" style="margin-top:14px">
+        <table>
+          <tr><th>Keyword</th><th>Enabled</th><th>Updated</th><th>Actions</th></tr>
+          {{range .Keywords}}
+          <tr>
+            <td>
+              <input form="keyword-form-{{.ID}}" name="value" value="{{.Value}}" aria-label="Keyword value">
+            </td>
+            <td><label class="toggle-inline"><span class="sr-only">Enabled</span><input form="keyword-form-{{.ID}}" type="checkbox" name="enabled" value="1" {{if .Enabled}}checked{{end}}></label></td>
+            <td class="footer-note">{{formatTime .UpdatedAt}}</td>
+            <td>
+              <div class="actions compact-actions">
+                <form id="keyword-form-{{.ID}}" method="post" action="/keyword-search/keywords">
+                  <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                  <input type="hidden" name="return_to" value="{{$.ReturnTo}}">
+                  <input type="hidden" name="id" value="{{.ID}}">
+                  <button type="submit">Save</button>
+                </form>
+                <form method="post" action="/keyword-search/keywords/delete" data-confirm="Delete keyword '{{.Value}}'?">
+                  <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                  <input type="hidden" name="return_to" value="{{$.ReturnTo}}">
+                  <input type="hidden" name="id" value="{{.ID}}">
+                  <button type="submit">Delete</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          {{else}}
+          <tr><td colspan="4">{{template "empty_state" "No keywords configured yet."}}</td></tr>
+          {{end}}
+        </table>
+      </div>
+    </div>
+  </details>
+
+  <details class="section-disclosure keyword-active-disclosure">
+    <summary>
+      <div>
+        <h2 class="card-title">Active keywords</h2>
+        <p class="section-disclosure-copy">Enabled keywords and phrases currently used for matching.</p>
+      </div>
+      <span class="badge success">{{.Summary.ActiveKeywordCount}} active</span>
+    </summary>
+    <div class="section-disclosure-body">
+      <div class="opportunity-status-row">
+        {{range .Keywords}}{{if .Enabled}}<span class="badge info">{{.Value}}</span>{{end}}{{end}}
+        {{if not .Summary.ActiveKeywordCount}}{{template "empty_state" "Enable at least one keyword to calculate matches."}}{{end}}
+      </div>
+    </div>
+  </details>
+
+  <details class="section-disclosure keyword-filters-disclosure">
+    <summary>
+      <div>
+        <h2 class="card-title">Filters and options</h2>
+        <p class="section-disclosure-copy">Narrow the matched tender list without changing your saved keywords.</p>
+      </div>
+      <span class="badge warning">Collapsed</span>
+    </summary>
+    <div class="section-disclosure-body">
+      <form method="get" action="/keyword-search" class="form-grid">
+        <div class="row-4">
+          <label>Search within matches<input name="q" value="{{.Filter.Query}}"></label>
+          <label>Matched keyword<select name="keyword">
+            <option value="">Any keyword</option>
+            {{range .Keywords}}{{if .Enabled}}<option value="{{.Value}}" {{if eq $.Filter.Keyword .Value}}selected{{end}}>{{.Value}}</option>{{end}}{{end}}
+          </select></label>
+          <label>Source<select name="source">
+            <option value="">Any source</option>
+            {{range .FilterOptions.Sources}}<option value="{{.Value}}" {{if eq $.Filter.Source .Value}}selected{{end}}>{{.Label}}</option>{{end}}
+          </select></label>
+          <label>Province<select name="province">
+            <option value="">Any province</option>
+            {{range .FilterOptions.Provinces}}<option value="{{.}}" {{if eq $.Filter.Province .}}selected{{end}}>{{.}}</option>{{end}}
+          </select></label>
+        </div>
+        <div class="row-4">
+          <label>Status<select name="status">
+            <option value="">Any status</option>
+            {{range .FilterOptions.Statuses}}<option value="{{.}}" {{if eq $.Filter.Status .}}selected{{end}}>{{.}}</option>{{end}}
+          </select></label>
+          <label>Sort<select name="sort">
+            <option value="closing_date" {{if eq .Filter.Sort "closing_date"}}selected{{end}}>Closing date</option>
+            <option value="matches" {{if eq .Filter.Sort "matches"}}selected{{end}}>Most keyword hits</option>
+            <option value="updated" {{if eq .Filter.Sort "updated"}}selected{{end}}>Recently matched</option>
+            <option value="source" {{if eq .Filter.Sort "source"}}selected{{end}}>Source</option>
+          </select></label>
+          <label>Page size<select name="page_size">
+            <option value="10" {{if eq .Filter.PageSize 10}}selected{{end}}>10</option>
+            <option value="20" {{if eq .Filter.PageSize 20}}selected{{end}}>20</option>
+            <option value="50" {{if eq .Filter.PageSize 50}}selected{{end}}>50</option>
+          </select></label>
+          <div class="actions" style="align-self:end"><button type="submit">Apply filters</button><a class="button secondary" href="/keyword-search">Clear</a></div>
+        </div>
+      </form>
+    </div>
+  </details>
+
+  <details class="section-disclosure keyword-status-disclosure">
+    <summary>
+      <div>
+        <h2 class="card-title">Refresh status</h2>
+        <p class="section-disclosure-copy">Manual refresh recalculates all current tenders. Source imports refresh affected tender matches as they are saved.</p>
+      </div>
+      <span class="badge {{condTone .Summary.RefreshStatus}}">{{.Summary.RefreshStatus}}</span>
+    </summary>
+    <div class="section-disclosure-body">
+      <div class="card-soft">
+        <p class="footer-note" style="margin:0">Case-insensitive partial matching is used for single words and multi-word phrases. Repeated hits are deduplicated, and every tender stores its matched keyword list.</p>
+        <p class="footer-note" style="margin:8px 0 0 0">Matched against tender title, summary, extracted excerpt, and page/document fact text.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="section-disclosure keyword-results-disclosure" open>
+    <summary>
+      <div>
+        <h2 class="card-title">Matching tenders</h2>
+        <p class="section-disclosure-copy">Only tenders that match at least one enabled keyword are listed here.</p>
+      </div>
+      <span class="badge info">{{.Total}} results</span>
+    </summary>
+    <div class="section-disclosure-body">
+      <div class="table-wrap">
+        <table>
+          <tr><th>Opportunity</th><th>Matched keywords</th><th>Issuer</th><th>Closing</th><th>Source</th><th>Province</th><th>Status</th><th>Open</th></tr>
+          {{range .Items}}
+          <tr>
+            <td><a href="/tenders/{{.Tender.ID}}"><strong>{{.Tender.Title}}</strong></a><div class="footer-note mono" style="margin-top:6px">{{.Tender.TenderNumber}}</div></td>
+            <td><div class="opportunity-status-row">{{range .Match.MatchedKeywords}}<span class="badge success">{{.}}</span>{{end}}</div></td>
+            <td>{{.Tender.Issuer}}</td>
+            <td>{{.Tender.ClosingDate}}</td>
+            <td>{{.Tender.SourceKey}}</td>
+            <td>{{.Tender.Province}}</td>
+            <td>{{template "status_badge" (dict "tone" "info" "label" .Tender.Status)}}</td>
+            <td><a class="button secondary" href="/tenders/{{.Tender.ID}}">Details</a></td>
+          </tr>
+          {{else}}
+          <tr><td colspan="8">{{if .HasKeywords}}{{template "empty_state" "No tenders match your enabled keywords yet."}}{{else}}{{template "empty_state" "Add keywords to start matching tenders."}}{{end}}</td></tr>
+          {{end}}
+        </table>
+      </div>
+      <div class="actions" style="margin-top:14px">
+        {{if .HasPrevPage}}<a class="button secondary" href="{{.PrevPageURL}}">Previous</a>{{else}}<span class="badge warning">No previous page</span>{{end}}
+        <span class="badge info">Page {{.CurrentPage}} of {{.TotalPages}}</span>
+        {{if .HasNextPage}}<a class="button secondary" href="{{.NextPageURL}}">Next</a>{{else}}<span class="badge success">You are on the last page</span>{{end}}
+      </div>
+    </div>
+  </details>
+</div>
+{{end}}

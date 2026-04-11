@@ -116,6 +116,35 @@ type SavedSearch struct {
 	ID, TenantID, UserID, Name, Query, Filters string
 	CreatedAt, UpdatedAt                       time.Time
 }
+type KeywordProfile struct {
+	ID, TenantID, UserID, Name, RefreshStatus, RefreshMessage string
+	MatchCount                                                int
+	LastRefreshedAt, CreatedAt, UpdatedAt                     time.Time
+}
+type Keyword struct {
+	ID, ProfileID, TenantID, UserID, Value string
+	Enabled                                bool
+	CreatedAt, UpdatedAt                   time.Time
+}
+type KeywordTenderMatch struct {
+	ID, ProfileID, TenantID, UserID, TenderID string
+	MatchedKeywords                           []string
+	MatchCount                                int
+	RefreshedAt, CreatedAt, UpdatedAt         time.Time
+}
+type KeywordTenderMatchResult struct {
+	Match  KeywordTenderMatch
+	Tender Tender
+}
+type KeywordSearchSummary struct {
+	Profile            KeywordProfile
+	TotalKeywordCount  int
+	ActiveKeywordCount int
+	MatchedTenderCount int
+	LastRefreshedAt    time.Time
+	RefreshStatus      string
+	RefreshMessage     string
+}
 type SyncRun struct {
 	ID, SourceKey, Status, Message, Trigger string
 	ItemCount                               int

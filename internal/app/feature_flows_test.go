@@ -88,6 +88,125 @@ func TestSavedSearchCreateAndDeleteFlow(t *testing.T) {
 	}
 }
 
+func TestKeywordSearchFlowHomepageAndNavigation(t *testing.T) {
+	a := newTestApp(t)
+	user, tenant, cookie, csrf := adminSession(t, a)
+	if err := a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:          "keyword-match",
+		Title:       "Solar backup installation",
+		Summary:     "Battery and inverter installation",
+		Issuer:      "City Power",
+		SourceKey:   "treasury",
+		Province:    "Gauteng",
+		Status:      "open",
+		ClosingDate: "2026-05-12",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:          "keyword-nomatch",
+		Title:       "Road resurfacing",
+		Summary:     "Asphalt and drainage",
+		Issuer:      "Roads Agency",
+		SourceKey:   "cidb",
+		Province:    "Free State",
+		Status:      "open",
+		ClosingDate: "2026-05-13",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected home 200 got %d", w.Code)
+	}
+	if !strings.Contains(body, "Keyword Search") || !strings.Contains(body, "href=\"/keyword-search\"") || !strings.Contains(body, "0 matched") {
+		t.Fatalf("home/nav missing keyword search empty state: %s", body)
+	}
+
+	form := url.Values{
+		"csrf_token": {csrf},
+		"value":      {"solar backup"},
+		"enabled":    {"1"},
+	}
+	req = httptest.NewRequest(http.MethodPost, "/keyword-search/keywords", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after keyword save, got %d", w.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/keyword-search/refresh", strings.NewReader(url.Values{"csrf_token": {csrf}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after manual refresh, got %d", w.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/keyword-search", nil)
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body = w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected keyword search page 200 got %d", w.Code)
+	}
+	for _, marker := range []string{
+		"Keyword Search",
+		"keyword-manager-disclosure\" open",
+		"keyword-filters-disclosure",
+		"keyword-results-disclosure\" open",
+		"Solar backup installation",
+		"solar backup",
+		"Refresh matches",
+	} {
+		if !strings.Contains(body, marker) {
+			t.Fatalf("keyword search page missing %q: %s", marker, body)
+		}
+	}
+	if strings.Contains(body, "Road resurfacing") {
+		t.Fatalf("keyword search page included non-matching tender: %s", body)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body = w.Body.String()
+	if !strings.Contains(body, "1 matched") || !strings.Contains(body, "1 active keywords") {
+		t.Fatalf("home keyword widget did not update after refresh: %s", body)
+	}
+
+	keywords, err := a.Store.ListKeywords(t.Context(), tenant.ID, user.ID)
+	if err != nil || len(keywords) != 1 {
+		t.Fatalf("expected keyword to persist, err=%v keywords=%#v", err, keywords)
+	}
+	deleteForm := url.Values{"csrf_token": {csrf}, "id": {keywords[0].ID}}
+	req = httptest.NewRequest(http.MethodPost, "/keyword-search/keywords/delete", strings.NewReader(deleteForm.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after keyword delete, got %d", w.Code)
+	}
+	summary, err := a.Store.KeywordSearchSummary(t.Context(), tenant.ID, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.MatchedTenderCount != 0 || summary.TotalKeywordCount != 0 {
+		t.Fatalf("expected delete to clear matches, got %#v", summary)
+	}
+}
+
 func TestLoginLocksAccountAfterRepeatedFailures(t *testing.T) {
 	a := newTestApp(t)
 	salt, hash, err := auth.HashPassword("Correct!2026")

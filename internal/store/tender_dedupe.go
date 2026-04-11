@@ -258,6 +258,9 @@ func (s *SQLiteStore) DeduplicateTenders(ctx context.Context) (int, error) {
 	if err = tx.Commit(); err != nil {
 		return 0, err
 	}
+	if removed > 0 {
+		_ = s.refreshAllKeywordProfiles(ctx)
+	}
 	return removed, nil
 }
 

@@ -305,6 +305,7 @@ func (a *App) Home(w http.ResponseWriter, r *http.Request) {
 	d, _ := a.Store.Dashboard(r.Context(), t.ID, a.Config.LowMemoryMode, false)
 	bookmarkCount, _ := a.Store.CountBookmarks(r.Context(), t.ID, u.ID)
 	savedCount, _ := a.Store.CountSavedSearches(r.Context(), t.ID, u.ID)
+	keywordSummary, _ := a.Store.KeywordSearchSummary(r.Context(), t.ID, u.ID)
 	jobCounts, _ := a.Store.JobStateCounts(r.Context())
 	sourceHealth, _ := a.Store.ListSourceHealth(r.Context())
 	a.render(w, r, "home.html", map[string]any{
@@ -314,6 +315,7 @@ func (a *App) Home(w http.ResponseWriter, r *http.Request) {
 		"Dashboard":         d,
 		"BookmarkCount":     bookmarkCount,
 		"SavedCount":        savedCount,
+		"KeywordSummary":    keywordSummary,
 		"QueueSummary":      queueSummaryFromCounts(jobCounts),
 		"SourceHealthCount": len(sourceHealth),
 	})

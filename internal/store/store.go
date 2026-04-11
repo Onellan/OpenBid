@@ -32,6 +32,9 @@ type RuntimeStats struct {
 	WorkflowCount         int
 	BookmarkCount         int
 	SavedSearchCount      int
+	KeywordProfileCount   int
+	KeywordCount          int
+	KeywordMatchCount     int
 	SyncRunCount          int
 	SourceConfigCount     int
 	SourceHealthCount     int
@@ -72,6 +75,11 @@ type TenderFilterOptions struct {
 	CIDBGradings   []string
 	WorkflowStatus []string
 	DocumentStatus []string
+}
+
+type KeywordMatchFilter struct {
+	Query, Source, Province, Status, Keyword, Sort string
+	Page, PageSize                                 int
 }
 
 func NormalizeFilter(f ListFilter) ListFilter {
@@ -136,6 +144,14 @@ type Store interface {
 	CountSavedSearches(context.Context, string, string) (int, error)
 	UpsertSavedSearch(context.Context, models.SavedSearch) error
 	DeleteSavedSearch(context.Context, string, string, string) error
+
+	GetKeywordProfile(context.Context, string, string) (models.KeywordProfile, error)
+	ListKeywords(context.Context, string, string) ([]models.Keyword, error)
+	UpsertKeyword(context.Context, models.Keyword) (models.Keyword, error)
+	DeleteKeyword(context.Context, string, string, string) error
+	RefreshKeywordMatches(context.Context, string, string) (models.KeywordSearchSummary, error)
+	ListKeywordTenderMatches(context.Context, string, string, KeywordMatchFilter) ([]models.KeywordTenderMatchResult, int, error)
+	KeywordSearchSummary(context.Context, string, string) (models.KeywordSearchSummary, error)
 
 	ListSyncRuns(context.Context) ([]models.SyncRun, error)
 	LatestSyncRun(context.Context) (models.SyncRun, error)

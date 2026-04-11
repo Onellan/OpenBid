@@ -1696,6 +1696,7 @@ func TestRouteAccessibilityAndPageRendering(t *testing.T) {
 	routes := map[string]string{
 		"/dashboard":      "One home for daily bidding work and operational visibility",
 		"/bookmarks":      "Keep active opportunities separate",
+		"/keyword-search": "Track tenders that mention the words and phrases",
 		"/saved-searches": "Reusable market views",
 		"/queue":          "Queue and extraction monitoring",
 		"/settings":       "Account, workspace, and administration settings",

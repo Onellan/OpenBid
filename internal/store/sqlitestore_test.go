@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"openbid/internal/models"
 	"path/filepath"
@@ -319,6 +320,138 @@ func TestSQLiteTenderRoundTripsStructuredFields(t *testing.T) {
 	}
 	if stored.DocumentFacts["cidb_hints"] != "CIDB 3GB" || stored.PageFacts["closing_details"] == "" {
 		t.Fatalf("expected fact maps to round-trip, got page=%#v doc=%#v", stored.PageFacts, stored.DocumentFacts)
+	}
+}
+
+func TestSQLiteKeywordSearchLifecycleMatchingAndScoping(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store.db")
+	s, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := s.UpsertTender(ctx, models.Tender{ID: "kw-solar", Title: "Solar panel installation", Summary: "Rooftop PV work", SourceKey: "treasury", Status: "open", ClosingDate: "2026-05-01"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertTender(ctx, models.Tender{ID: "kw-water", Title: "Pump station", Summary: "Water treatment upgrades", SourceKey: "cidb", Status: "open", ClosingDate: "2026-05-02"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertTender(ctx, models.Tender{ID: "kw-generator", Title: "Facilities maintenance", SourceKey: "eskom", Status: "open", DocumentFacts: map[string]string{"scope": "backup generator maintenance"}, ClosingDate: "2026-05-03"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertTender(ctx, models.Tender{ID: "kw-none", Title: "Road repairs", Summary: "Asphalt surfacing", SourceKey: "treasury", Status: "open"}); err != nil {
+		t.Fatal(err)
+	}
+
+	solar, err := s.UpsertKeyword(ctx, models.Keyword{TenantID: "tenant-1", UserID: "user-1", Value: "SOLAR", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertKeyword(ctx, models.Keyword{TenantID: "tenant-1", UserID: "user-1", Value: "water treatment", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	generator, err := s.UpsertKeyword(ctx, models.Keyword{TenantID: "tenant-1", UserID: "user-1", Value: "backup generator", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherKeyword, err := s.UpsertKeyword(ctx, models.Keyword{TenantID: "tenant-1", UserID: "user-2", Value: "asphalt", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertKeyword(ctx, models.Keyword{ID: otherKeyword.ID, TenantID: "tenant-1", UserID: "user-1", Value: "stolen edit", Enabled: true}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected cross-user keyword edit to be rejected, got %v", err)
+	}
+
+	items, total, err := s.ListKeywordTenderMatches(ctx, "tenant-1", "user-1", KeywordMatchFilter{Page: 1, PageSize: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 3 || len(items) != 3 {
+		t.Fatalf("expected three matches for user-1, got total=%d items=%#v", total, items)
+	}
+	matchByTender := map[string][]string{}
+	for _, item := range items {
+		matchByTender[item.Tender.ID] = item.Match.MatchedKeywords
+	}
+	if !containsString(matchByTender["kw-solar"], "SOLAR") || !containsString(matchByTender["kw-water"], "water treatment") || !containsString(matchByTender["kw-generator"], "backup generator") {
+		t.Fatalf("expected title, phrase, and fact matches, got %#v", matchByTender)
+	}
+
+	otherItems, otherTotal, err := s.ListKeywordTenderMatches(ctx, "tenant-1", "user-2", KeywordMatchFilter{Page: 1, PageSize: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if otherTotal != 1 || len(otherItems) != 1 || otherItems[0].Tender.ID != "kw-none" {
+		t.Fatalf("expected user scoping to isolate matches, got total=%d items=%#v", otherTotal, otherItems)
+	}
+
+	solar.Value = "asphalt"
+	if _, err := s.UpsertKeyword(ctx, solar); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteKeyword(ctx, "tenant-1", "user-1", generator.ID); err != nil {
+		t.Fatal(err)
+	}
+	items, total, err = s.ListKeywordTenderMatches(ctx, "tenant-1", "user-1", KeywordMatchFilter{Page: 1, PageSize: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	matchByTender = map[string][]string{}
+	for _, item := range items {
+		matchByTender[item.Tender.ID] = item.Match.MatchedKeywords
+	}
+	if total != 2 || matchByTender["kw-solar"] != nil || matchByTender["kw-generator"] != nil || !containsString(matchByTender["kw-none"], "asphalt") {
+		t.Fatalf("expected edits/deletes to recalculate results, total=%d matches=%#v", total, matchByTender)
+	}
+
+	summary, err := s.RefreshKeywordMatches(ctx, "tenant-1", "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.MatchedTenderCount != 2 || summary.ActiveKeywordCount != 2 || summary.LastRefreshedAt.IsZero() {
+		t.Fatalf("unexpected manual refresh summary: %#v", summary)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	keywords, err := reopened.ListKeywords(ctx, "tenant-1", "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keywords) != 2 {
+		t.Fatalf("expected keyword persistence after reopen, got %#v", keywords)
+	}
+}
+
+func TestSQLiteKeywordMatchesRefreshWhenTenderChanges(t *testing.T) {
+	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if _, err := s.UpsertKeyword(ctx, models.Keyword{TenantID: "tenant-1", UserID: "user-1", Value: "substation", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertTender(ctx, models.Tender{ID: "source-update", Title: "Substation repair", SourceKey: "eskom", Status: "open"}); err != nil {
+		t.Fatal(err)
+	}
+	_, total, err := s.ListKeywordTenderMatches(ctx, "tenant-1", "user-1", KeywordMatchFilter{Page: 1, PageSize: 20})
+	if err != nil || total != 1 {
+		t.Fatalf("expected tender write to create keyword match, total=%d err=%v", total, err)
+	}
+	if err := s.UpsertTender(ctx, models.Tender{ID: "source-update", Title: "Road repair", SourceKey: "eskom", Status: "open"}); err != nil {
+		t.Fatal(err)
+	}
+	_, total, err = s.ListKeywordTenderMatches(ctx, "tenant-1", "user-1", KeywordMatchFilter{Page: 1, PageSize: 20})
+	if err != nil || total != 0 {
+		t.Fatalf("expected tender write to remove stale keyword match, total=%d err=%v", total, err)
 	}
 }
 

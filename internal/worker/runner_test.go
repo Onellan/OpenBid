@@ -359,6 +359,60 @@ func TestProcessSourceChecksManualSingleTrigger(t *testing.T) {
 	}
 }
 
+func TestProcessSourceChecksRefreshesKeywordMatches(t *testing.T) {
+	allowPrivateURLs(t)
+	s, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 4, 3, 9, 0, 0, 0, time.UTC)
+	if _, err := s.UpsertKeyword(ctx, models.Keyword{TenantID: "tenant-1", UserID: "user-1", Value: "solar inverter", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertSourceScheduleSettings(ctx, models.SourceScheduleSettings{ID: "global", DefaultIntervalMinutes: 60}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"releases": []map[string]any{{
+				"ocid":         "ocid-keyword",
+				"title":        "Solar inverter maintenance",
+				"issuer":       "Metro",
+				"status":       "open",
+				"original_url": "https://example.org/t/keyword",
+			}},
+		})
+	}))
+	defer server.Close()
+	cfg := models.SourceConfig{
+		Key:                 "keyword-feed",
+		Name:                "Keyword Feed",
+		Type:                source.TypeJSONFeed,
+		FeedURL:             server.URL,
+		Enabled:             true,
+		ManualChecksEnabled: true,
+		AutoCheckEnabled:    false,
+	}
+	if err := s.UpsertSourceConfig(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertSourceHealth(ctx, models.SourceHealth{SourceKey: cfg.Key, PendingManualCheck: true, LastStatus: "queued"}); err != nil {
+		t.Fatal(err)
+	}
+	r := Runner{Store: s, Extractor: extract.New("http://127.0.0.1:1"), SyncEvery: time.Hour, LoopEvery: time.Second, Now: func() time.Time { return now }}
+	r.processSourceChecks(ctx)
+
+	items, total, err := s.ListKeywordTenderMatches(ctx, "tenant-1", "user-1", store.KeywordMatchFilter{Page: 1, PageSize: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(items) != 1 || !containsKeyword(items[0].Match.MatchedKeywords, "solar inverter") {
+		t.Fatalf("expected source update to refresh keyword matches, total=%d items=%#v", total, items)
+	}
+}
+
 func TestProcessSourceChecksScheduledUsesOverrideAndSkipsDisabledOrManualOnly(t *testing.T) {
 	allowPrivateURLs(t)
 	s, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
@@ -463,4 +517,13 @@ func TestProcessSourceChecksFailureBackoff(t *testing.T) {
 	if got := health.NextScheduledCheckAt.Sub(now); got != 5*time.Minute {
 		t.Fatalf("expected 5m retry backoff, got %v", got)
 	}
+}
+
+func containsKeyword(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }

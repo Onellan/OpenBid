@@ -18,7 +18,7 @@ import (
 	"openbid/internal/models"
 )
 
-const currentSchemaVersion = 6
+const currentSchemaVersion = 7
 
 type SQLiteStore struct {
 	db   *sql.DB
@@ -71,7 +71,7 @@ func (s *SQLiteStore) ValidateRuntime(ctx context.Context) error {
 	if userVersion != currentSchemaVersion {
 		return fmt.Errorf("unexpected schema version: got %d want %d", userVersion, currentSchemaVersion)
 	}
-	for _, table := range []string{"tenders", "tenants", "sync_runs", "source_configs", "source_schedule_settings", "jobs", "source_health", "audit_entries", "workflow_events", "user_records", "membership_records", "workflow_records", "bookmark_records", "saved_search_records", "sessions", "tenant_source_assignments"} {
+	for _, table := range []string{"tenders", "tenants", "sync_runs", "source_configs", "source_schedule_settings", "jobs", "source_health", "audit_entries", "workflow_events", "user_records", "membership_records", "workflow_records", "bookmark_records", "saved_search_records", "keyword_profiles", "keyword_records", "keyword_match_records", "sessions", "tenant_source_assignments"} {
 		var count int
 		if err := s.db.QueryRowContext(ctx, "select count(*) from sqlite_master where type='table' and name=?", table).Scan(&count); err != nil {
 			return err
@@ -190,6 +190,9 @@ func (s *SQLiteStore) RuntimeStats(ctx context.Context) (RuntimeStats, error) {
 		{"workflow_records", &stats.WorkflowCount},
 		{"bookmark_records", &stats.BookmarkCount},
 		{"saved_search_records", &stats.SavedSearchCount},
+		{"keyword_profiles", &stats.KeywordProfileCount},
+		{"keyword_records", &stats.KeywordCount},
+		{"keyword_match_records", &stats.KeywordMatchCount},
 		{"sync_runs", &stats.SyncRunCount},
 		{"source_configs", &stats.SourceConfigCount},
 		{"source_health", &stats.SourceHealthCount},
@@ -712,7 +715,10 @@ func (s *SQLiteStore) UpsertTender(ctx context.Context, v models.Tender) error {
 	if v.ExtractedFacts == nil {
 		v.ExtractedFacts = map[string]string{}
 	}
-	return sqliteUpsertJSON(ctx, s.db, "tenders", v.ID, v)
+	if err := sqliteUpsertJSON(ctx, s.db, "tenders", v.ID, v); err != nil {
+		return err
+	}
+	return s.refreshAllKeywordProfilesForTender(ctx, v)
 }
 func (s *SQLiteStore) ListUsers(ctx context.Context) ([]models.User, error) {
 	rows, err := s.db.QueryContext(ctx, `
