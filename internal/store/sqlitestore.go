@@ -27,12 +27,14 @@ type SQLiteStore struct {
 
 func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
-	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)", filepath.ToSlash(path))
+	
+	// Use a longer busy timeout and disable WAL mode to improve CI compatibility
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(30000)&_pragma=journal_mode(DELETE)&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)", filepath.ToSlash(path))
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
@@ -41,7 +43,7 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	s := &SQLiteStore{db: db, path: path}
 	if err := s.migrate(context.Background()); err != nil {
 		_ = db.Close()
-		return nil, err
+		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 	return s, nil
 }

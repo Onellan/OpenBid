@@ -248,8 +248,8 @@ func (s *SQLiteStore) migrateRelationalTables(ctx context.Context, tx *sql.Tx) e
 			updated_at text not null,
 			unique(tenant_id, source_key)
 		);`,
-		`create index if not exists idx_user_records_username on user_records(lower(username));`,
-		`create index if not exists idx_user_records_email on user_records(lower(email));`,
+		`create index if not exists idx_user_records_username on user_records(username);`,
+		`create index if not exists idx_user_records_email on user_records(email);`,
 		`create index if not exists idx_membership_records_user on membership_records(user_id, tenant_id);`,
 		`create index if not exists idx_membership_records_tenant on membership_records(tenant_id, user_id);`,
 		`create index if not exists idx_workflow_records_tenant on workflow_records(tenant_id, status);`,
