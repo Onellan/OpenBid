@@ -1,12 +1,15 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"openbid/internal/auth"
 	"openbid/internal/models"
+	"openbid/internal/source"
+	"openbid/internal/tenderstate"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -38,6 +41,17 @@ func newTestApp(t *testing.T) *App {
 		t.Cleanup(func() { _ = closer.Close() })
 	}
 	return a
+}
+
+type staticSourceAdapter struct {
+	key   string
+	items []models.Tender
+}
+
+func (a staticSourceAdapter) Key() string { return a.key }
+
+func (a staticSourceAdapter) Fetch(context.Context) ([]models.Tender, string, error) {
+	return a.items, "static test source", nil
 }
 
 func persistSessionCookie(t *testing.T, a *App, session models.Session) *http.Cookie {
@@ -275,6 +289,81 @@ func TestRedirectAfterActionPreservesSafeReturnToQuery(t *testing.T) {
 		t.Fatalf("expected redirect with preserved query, got %q", location)
 	}
 }
+
+func TestRedirectAfterActionPreservesFallbackFragment(t *testing.T) {
+	a := newTestApp(t)
+	req := httptest.NewRequest(http.MethodPost, "/data-pipes/remove-expired-tenders", strings.NewReader(url.Values{
+		"return_to": {"https://evil.example/steal"},
+	}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	a.redirectAfterAction(w, req, "/queue#expired-tender-cleanup", "success", "No expired tenders to remove")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", w.Code)
+	}
+	location := w.Header().Get("Location")
+	if location != "/queue?message=No+expired+tenders+to+remove#expired-tender-cleanup" {
+		t.Fatalf("expected fallback fragment to remain a fragment, got %q", location)
+	}
+}
+
+func TestStartupSourceSyncSkipsExpiredTenderExtraction(t *testing.T) {
+	a := newTestApp(t)
+	if err := a.Store.UpsertSourceConfig(t.Context(), models.SourceConfig{
+		Key:                 "startup-expiry",
+		Name:                "Startup Expiry",
+		Type:                source.TypeJSONFeed,
+		Enabled:             true,
+		ManualChecksEnabled: true,
+		AutoCheckEnabled:    true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	registry := source.NewRegistry(staticSourceAdapter{
+		key: "startup-expiry",
+		items: []models.Tender{
+			{
+				ID:          "startup-expired",
+				SourceKey:   "startup-expiry",
+				Title:       "Startup expired tender",
+				ClosingDate: time.Now().Add(-24 * time.Hour).Format("2006-01-02 15:04"),
+				DocumentURL: "https://example.org/startup-expired.pdf",
+			},
+			{
+				ID:          "startup-active",
+				SourceKey:   "startup-expiry",
+				Title:       "Startup active tender",
+				ClosingDate: time.Now().Add(24 * time.Hour).Format("2006-01-02 15:04"),
+				DocumentURL: "https://example.org/startup-active.pdf",
+			},
+		},
+	})
+	if err := a.syncSources(t.Context(), registry); err != nil {
+		t.Fatal(err)
+	}
+	expired, err := a.Store.GetTender(t.Context(), "startup-expired")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expired.DocumentStatus != models.ExtractionSkipped || expired.ExtractionSkippedReason != tenderstate.ExpiredSkipReason {
+		t.Fatalf("expected startup expired tender skipped, got %#v", expired)
+	}
+	active, err := a.Store.GetTender(t.Context(), "startup-active")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.DocumentStatus != models.ExtractionQueued {
+		t.Fatalf("expected startup active tender queued, got %#v", active)
+	}
+	jobs, err := a.Store.ListJobs(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 || jobs[0].TenderID != "startup-active" || jobs[0].State != models.ExtractionQueued {
+		t.Fatalf("expected only active startup tender queued, got %#v", jobs)
+	}
+}
+
 func TestAdminCreateSourceStoresConfig(t *testing.T) {
 	a := newTestApp(t)
 	_, _, cookie, csrf := adminSession(t, a)
@@ -1409,13 +1498,31 @@ func TestQueuePageGroupsStatesAndHidesCompletedRetry(t *testing.T) {
 		DocumentURL: "https://example.org/completed.pdf",
 		State:       models.ExtractionCompleted,
 	})
+	_ = a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:                      "skipped-tender",
+		Title:                   "Skipped Tender",
+		Issuer:                  "Metro",
+		SourceKey:               "treasury",
+		Status:                  "open",
+		DocumentURL:             "https://example.org/skipped.pdf",
+		DocumentStatus:          models.ExtractionSkipped,
+		ExtractionSkippedReason: tenderstate.ExpiredSkipReason,
+	})
+	_ = a.Store.QueueJob(t.Context(), models.ExtractionJob{
+		ID:          "skipped-job",
+		TenderID:    "skipped-tender",
+		DocumentURL: "https://example.org/skipped.pdf",
+		State:       models.ExtractionSkipped,
+		LastError:   "Skipped because the tender closing date/time has passed.",
+		SkipReason:  tenderstate.ExpiredSkipReason,
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/queue", nil)
 	req.AddCookie(cookie)
 	w := httptest.NewRecorder()
 	a.Server.Handler.ServeHTTP(w, req)
 	body := w.Body.String()
-	if !strings.Contains(body, "queue-state-failed") || !strings.Contains(body, "queue-state-completed") {
+	if !strings.Contains(body, "queue-state-failed") || !strings.Contains(body, "queue-state-completed") || !strings.Contains(body, "queue-state-skipped") {
 		t.Fatalf("expected grouped queue sections, got %s", body)
 	}
 	if !strings.Contains(body, "<details class=\"section-disclosure queue-state-disclosure queue-state-failed\" open>") {
@@ -1426,6 +1533,9 @@ func TestQueuePageGroupsStatesAndHidesCompletedRetry(t *testing.T) {
 	}
 	if strings.Contains(body, "Requeue processing for &#39;Completed Tender&#39;?") || strings.Contains(body, "Requeue processing for 'Completed Tender'?") {
 		t.Fatalf("completed job still exposed retry action: %s", body)
+	}
+	if !strings.Contains(body, "Skipped because the tender closing date/time has passed.") || strings.Contains(body, "Requeue processing for &#39;Skipped Tender&#39;?") || strings.Contains(body, "Requeue processing for 'Skipped Tender'?") {
+		t.Fatalf("expected skipped expiry reason without retry action, got %s", body)
 	}
 	if !strings.Contains(body, "failed_page=2") || !strings.Contains(body, "Page 1 of 2") {
 		t.Fatalf("expected failed section pagination controls, got %s", body)
@@ -1550,6 +1660,51 @@ func TestQueueRequeueWorksForAdmin(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected queued extraction job after retry, got %#v", jobs)
+	}
+}
+
+func TestQueueRequeueSkipsExpiredTenderForAdmin(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, csrf := adminSession(t, a)
+	_ = a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:             "requeue-expired-tender",
+		Title:          "Expired Requeue Tender",
+		Issuer:         "Metro",
+		SourceKey:      "treasury",
+		Status:         "open",
+		ClosingDate:    time.Now().Add(-24 * time.Hour).Format("2006-01-02 15:04"),
+		DocumentURL:    "https://example.org/requeue-expired.pdf",
+		DocumentStatus: models.ExtractionFailed,
+	})
+	form := url.Values{
+		"csrf_token": {csrf},
+		"tender_id":  {"requeue-expired-tender"},
+		"return_to":  {"/queue"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/queue/requeue", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after skipped requeue, got %d", w.Code)
+	}
+	if location := w.Header().Get("Location"); !strings.Contains(location, "expired") {
+		t.Fatalf("expected expiry message redirect, got %q", location)
+	}
+	tender, err := a.Store.GetTender(t.Context(), "requeue-expired-tender")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tender.DocumentStatus != models.ExtractionSkipped || tender.ExtractionSkippedReason != tenderstate.ExpiredSkipReason {
+		t.Fatalf("expected tender document status skipped, got %#v", tender)
+	}
+	jobs, err := a.Store.ListJobs(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("expected no queued extraction job after expired retry, got %#v", jobs)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"openbid/internal/netguard"
 	"openbid/internal/source"
 	"openbid/internal/store"
+	"openbid/internal/tenderstate"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -139,6 +140,34 @@ func (r Runner) updateTenderDocumentState(ctx context.Context, tenderID string, 
 	r.persistTender(ctx, tender)
 }
 
+func (r Runner) markExpiredExtractionSkipped(ctx context.Context, tender models.Tender, job *models.ExtractionJob) {
+	now := r.now()
+	tenderstate.MarkExtractionSkipped(&tender, now)
+	r.persistTender(ctx, tender)
+	if job != nil {
+		tenderstate.MarkJobSkipped(job, now)
+		r.persistJobUpdate(ctx, *job)
+		r.logKV("worker_job_skipped_expired_tender", "job", job.ID, "tender", job.TenderID, "closing", tender.ClosingDate)
+		return
+	}
+	r.logKV("worker_source_tender_skipped_expired", "tender", tender.ID, "source", tender.SourceKey, "closing", tender.ClosingDate)
+}
+
+func (r Runner) persistSourceTender(ctx context.Context, tender models.Tender) {
+	now := r.now()
+	if tenderstate.IsExpired(tender, now) {
+		r.markExpiredExtractionSkipped(ctx, tender, nil)
+		return
+	}
+	if tender.DocumentStatus == "" && (tender.DocumentURL != "" || len(tender.Documents) > 0) {
+		tender.DocumentStatus = models.ExtractionQueued
+	}
+	r.persistTender(ctx, tender)
+	if tender.DocumentURL != "" {
+		r.persistQueuedJob(ctx, models.ExtractionJob{TenderID: tender.ID, DocumentURL: tender.DocumentURL, State: models.ExtractionQueued})
+	}
+}
+
 func (r Runner) syncAll(ctx context.Context) {
 	registry := r.Sources
 	if r.SourceLoad != nil {
@@ -160,13 +189,7 @@ func (r Runner) syncAll(ctx context.Context) {
 		r.persistSourceHealth(ctx, models.SourceHealth{SourceKey: ad.Key(), LastSyncAt: r.now(), LastCheckedAt: r.now(), LastStatus: status, LastMessage: msg, LastItemCount: len(items), HealthStatus: status})
 		for _, t := range items {
 			t = source.NormalizeTenderIdentity(t)
-			if t.DocumentStatus == "" && (t.DocumentURL != "" || len(t.Documents) > 0) {
-				t.DocumentStatus = models.ExtractionQueued
-			}
-			r.persistTender(ctx, t)
-			if t.DocumentURL != "" {
-				r.persistQueuedJob(ctx, models.ExtractionJob{TenderID: t.ID, DocumentURL: t.DocumentURL, State: models.ExtractionQueued})
-			}
+			r.persistSourceTender(ctx, t)
 		}
 	}
 }
@@ -182,12 +205,17 @@ func (r Runner) processJobs(ctx context.Context) {
 			r.deleteJob(ctx, job.ID)
 			continue
 		}
-		if _, err := r.Store.GetTender(ctx, job.TenderID); err != nil {
+		tender, err := r.Store.GetTender(ctx, job.TenderID)
+		if err != nil {
 			r.logKV("worker_job_prune_missing_tender", "job", job.ID, "tender", job.TenderID)
 			r.deleteJob(ctx, job.ID)
 			continue
 		}
 		if !(job.State == models.ExtractionQueued || job.State == models.ExtractionRetry) || r.now().Before(job.NextAttemptAt) {
+			continue
+		}
+		if tenderstate.IsExpired(tender, r.now()) {
+			r.markExpiredExtractionSkipped(ctx, tender, &job)
 			continue
 		}
 		job.State = models.ExtractionProcessing
@@ -359,13 +387,8 @@ func (r Runner) finalizeSourceCheck(ctx context.Context, cfg models.SourceConfig
 		return
 	}
 	for _, t := range items {
-		if t.DocumentStatus == "" && (t.DocumentURL != "" || len(t.Documents) > 0) {
-			t.DocumentStatus = models.ExtractionQueued
-		}
-		r.persistTender(ctx, t)
-		if t.DocumentURL != "" {
-			r.persistQueuedJob(ctx, models.ExtractionJob{TenderID: t.ID, DocumentURL: t.DocumentURL, State: models.ExtractionQueued})
-		}
+		t = source.NormalizeTenderIdentity(t)
+		r.persistSourceTender(ctx, t)
 	}
 }
 

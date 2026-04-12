@@ -1596,6 +1596,8 @@ func (s *SQLiteStore) JobStateCounts(ctx context.Context) (JobStateCounts, error
 			counts.Failed = count
 		case models.ExtractionCompleted:
 			counts.Completed = count
+		case models.ExtractionSkipped:
+			counts.Skipped = count
 		}
 	}
 	return counts, rows.Err()
@@ -1606,6 +1608,7 @@ func (s *SQLiteStore) JobAlertSnapshot(ctx context.Context) (JobAlertSnapshot, e
 	var oldestPending sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 		select
+			coalesce(sum(case when coalesce(json_extract(j.payload, '$.State'), '') = ? then 1 else 0 end), 0),
 			coalesce(sum(case when coalesce(json_extract(j.payload, '$.State'), '') = ? then 1 else 0 end), 0),
 			coalesce(sum(case when coalesce(json_extract(j.payload, '$.State'), '') = ? then 1 else 0 end), 0),
 			coalesce(sum(case when coalesce(json_extract(j.payload, '$.State'), '') = ? then 1 else 0 end), 0),
@@ -1630,6 +1633,7 @@ func (s *SQLiteStore) JobAlertSnapshot(ctx context.Context) (JobAlertSnapshot, e
 		string(models.ExtractionRetry),
 		string(models.ExtractionFailed),
 		string(models.ExtractionCompleted),
+		string(models.ExtractionSkipped),
 		string(models.ExtractionQueued),
 		string(models.ExtractionRetry),
 		string(models.ExtractionProcessing),
@@ -1639,6 +1643,7 @@ func (s *SQLiteStore) JobAlertSnapshot(ctx context.Context) (JobAlertSnapshot, e
 		&snapshot.Retry,
 		&snapshot.Failed,
 		&snapshot.Completed,
+		&snapshot.Skipped,
 		&oldestPending,
 	)
 	if err != nil {
@@ -1661,8 +1666,9 @@ func (s *SQLiteStore) QueueJob(ctx context.Context, v models.ExtractionJob) erro
 		where coalesce(json_extract(payload, '$.TenderID'), '') = ?
 		  and coalesce(json_extract(payload, '$.DocumentURL'), '') = ?
 		  and coalesce(json_extract(payload, '$.State'), '') <> ?
+		  and coalesce(json_extract(payload, '$.State'), '') <> ?
 		limit 1
-	`, v.TenderID, v.DocumentURL, string(models.ExtractionCompleted)).Scan(&existingID)
+	`, v.TenderID, v.DocumentURL, string(models.ExtractionCompleted), string(models.ExtractionSkipped)).Scan(&existingID)
 	if err == nil {
 		return nil
 	}

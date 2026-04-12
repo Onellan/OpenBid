@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"openbid/internal/models"
+	"openbid/internal/tenderstate"
 )
 
 const expiredTenderArchiveReason = "expired_tender_cleanup"
@@ -25,55 +26,15 @@ func tenderArchived(t models.Tender) bool {
 	return !t.ArchivedAt.IsZero()
 }
 
-func parseTenderClosingTime(value string, now time.Time) (time.Time, bool) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return time.Time{}, false
-	}
-	location := now.Location()
-	formats := []struct {
-		layout   string
-		dateOnly bool
-	}{
-		{time.RFC3339Nano, false},
-		{time.RFC3339, false},
-		{"2006-01-02 15:04:05", false},
-		{"2006-01-02 15:04", false},
-		{"2006/01/02 15:04:05", false},
-		{"2006/01/02 15:04", false},
-		{"02/01/2006 15:04:05", false},
-		{"02/01/2006 15:04", false},
-		{"2006-01-02", true},
-		{"2006/01/02", true},
-		{"02/01/2006", true},
-		{"02 Jan 2006", true},
-		{"02 January 2006", true},
-	}
-	for _, format := range formats {
-		parsed, err := time.ParseInLocation(format.layout, value, location)
-		if err != nil {
-			continue
-		}
-		if format.dateOnly {
-			parsed = time.Date(parsed.Year(), parsed.Month(), parsed.Day(), 23, 59, 59, 0, location)
-		}
-		return parsed, true
-	}
-	return time.Time{}, false
-}
-
 func tenderExpiredAt(t models.Tender, now time.Time) bool {
-	closingAt, ok := parseTenderClosingTime(t.ClosingDate, now)
-	if !ok {
-		return false
-	}
-	return !closingAt.After(now)
+	return tenderstate.IsExpired(t, now)
 }
 
 func (s *SQLiteStore) CleanupExpiredTenders(ctx context.Context, now time.Time) (models.ExpiredTenderCleanupResult, error) {
 	if now.IsZero() {
-		now = time.Now()
+		now = time.Now().UTC()
 	}
+	now = now.UTC()
 	archiveAt := now.UTC()
 	tenders, err := s.listAllTenders(ctx)
 	if err != nil {

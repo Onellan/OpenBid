@@ -110,7 +110,7 @@ func templateFuncs() template.FuncMap {
 				return "success"
 			case "failed", "failing", "degraded", "disabled":
 				return "danger"
-			case "processing", "queued", "retry", "running", "paused", "manual-only":
+			case "processing", "queued", "retry", "running", "paused", "manual-only", "skipped":
 				return "warning"
 			default:
 				return "info"

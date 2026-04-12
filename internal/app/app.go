@@ -544,11 +544,16 @@ func (a *App) syncSources(ctx context.Context, registry source.Registry) error {
 		}
 		for _, t := range items {
 			t = source.NormalizeTenderIdentity(t)
-			if t.DocumentStatus == "" && (t.DocumentURL != "" || len(t.Documents) > 0) {
+			expired := skipExpiredExtraction(&t, now)
+			if !expired && t.DocumentStatus == "" && (t.DocumentURL != "" || len(t.Documents) > 0) {
 				t.DocumentStatus = models.ExtractionQueued
 			}
 			if err := a.Store.UpsertTender(ctx, t); err != nil {
 				return fmt.Errorf("persist tender %s from %s: %w", t.ID, ad.Key(), err)
+			}
+			if expired {
+				log.Printf("startup source sync skipped extraction for expired tender=%s source=%s closing=%s", t.ID, ad.Key(), t.ClosingDate)
+				continue
 			}
 			if t.DocumentURL != "" {
 				if err := a.Store.QueueJob(ctx, models.ExtractionJob{TenderID: t.ID, DocumentURL: t.DocumentURL, State: models.ExtractionQueued}); err != nil {

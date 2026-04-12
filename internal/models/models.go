@@ -25,6 +25,7 @@ const (
 	ExtractionRetry      ExtractionState = "retry"
 	ExtractionCompleted  ExtractionState = "completed"
 	ExtractionFailed     ExtractionState = "failed"
+	ExtractionSkipped    ExtractionState = "skipped"
 )
 
 type TenderDocument struct {
@@ -67,6 +68,7 @@ type TenderLocation struct {
 type Tender struct {
 	ID, SourceKey, ExternalID, Title, Issuer, Province, Category, TenderNumber, PublishedDate, ClosingDate, Status, CIDBGrading, Summary, OriginalURL, DocumentURL, Excerpt string
 	ArchiveReason                                                                                                                                                           string
+	ExtractionSkippedReason, ExtractionSkippedSource                                                                                                                        string
 	EngineeringRelevant                                                                                                                                                     bool
 	RelevanceScore                                                                                                                                                          float64
 	TenderType                                                                                                                                                              string
@@ -84,7 +86,7 @@ type Tender struct {
 	Briefings                                                                                                                                                               []TenderBriefing
 	Documents                                                                                                                                                               []TenderDocument
 	Requirements                                                                                                                                                            []TenderRequirement
-	CreatedAt, UpdatedAt, ArchivedAt                                                                                                                                        time.Time
+	CreatedAt, UpdatedAt, ArchivedAt, ExtractionSkippedAt                                                                                                                   time.Time
 }
 type User struct {
 	ID, Username, DisplayName, Email, PasswordHash, PasswordSalt, MFASecret string
@@ -157,10 +159,10 @@ type SyncRun struct {
 	StartedAt, FinishedAt                   time.Time
 }
 type ExtractionJob struct {
-	ID, TenderID, DocumentURL, LastError string
-	State                                ExtractionState
-	Attempts                             int
-	NextAttemptAt, CreatedAt, UpdatedAt  time.Time
+	ID, TenderID, DocumentURL, LastError, SkipReason, SkipSource string
+	State                                                        ExtractionState
+	Attempts                                                     int
+	NextAttemptAt, CreatedAt, UpdatedAt, SkippedAt               time.Time
 }
 type SourceHealth struct {
 	SourceKey, LastStatus, LastMessage, HealthStatus, LastTrigger          string

@@ -50,6 +50,7 @@ type JobStateCounts struct {
 	Retry      int
 	Failed     int
 	Completed  int
+	Skipped    int
 }
 
 type JobAlertSnapshot struct {
@@ -58,6 +59,7 @@ type JobAlertSnapshot struct {
 	Retry           int
 	Failed          int
 	Completed       int
+	Skipped         int
 	OldestPendingAt time.Time
 }
 

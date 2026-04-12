@@ -15,6 +15,7 @@ import (
 
 	"openbid/internal/models"
 	"openbid/internal/store"
+	"openbid/internal/tenderstate"
 )
 
 type QueueItem struct {
@@ -42,6 +43,7 @@ type QueueSummary struct {
 	Processing int
 	Failed     int
 	Completed  int
+	Skipped    int
 }
 
 type BookmarkedTender struct {
@@ -83,6 +85,8 @@ func queueSummary(jobs []models.ExtractionJob) QueueSummary {
 			summary.Failed++
 		case models.ExtractionCompleted:
 			summary.Completed++
+		case models.ExtractionSkipped:
+			summary.Skipped++
 		}
 	}
 	return summary
@@ -94,7 +98,16 @@ func queueSummaryFromCounts(counts store.JobStateCounts) QueueSummary {
 		Processing: counts.Processing,
 		Failed:     counts.Failed,
 		Completed:  counts.Completed,
+		Skipped:    counts.Skipped,
 	}
+}
+
+func skipExpiredExtraction(tender *models.Tender, now time.Time) bool {
+	if !tenderstate.IsExpired(*tender, now) {
+		return false
+	}
+	tenderstate.MarkExtractionSkipped(tender, now)
+	return true
 }
 
 func cloneURLValues(values url.Values) url.Values {
@@ -530,6 +543,15 @@ func (a *App) QueueExtraction(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no document url", 400)
 		return
 	}
+	if skipExpiredExtraction(&tender, time.Now().UTC()) {
+		if err := a.Store.UpsertTender(r.Context(), tender); err != nil {
+			a.serverError(w, r, "unable to update tender status", err)
+			return
+		}
+		a.auditAction(r.Context(), actionContext{User: u, Tenant: t, Member: m}, "skip", "queue_job", tender.ID, "Extraction skipped because tender is expired", map[string]string{"reason": tender.ExtractionSkippedReason})
+		a.redirectAfterAction(w, r, "/tenders", "error", "Extraction not queued because the tender is expired")
+		return
+	}
 	tender.DocumentStatus = models.ExtractionQueued
 	if err := a.Store.UpsertTender(r.Context(), tender); err != nil {
 		a.serverError(w, r, "unable to update tender status", err)
@@ -626,6 +648,13 @@ func (a *App) BulkTenders(w http.ResponseWriter, r *http.Request) {
 		case "queue":
 			tender, err := a.Store.GetTender(r.Context(), id)
 			if err == nil && tender.DocumentURL != "" {
+				if skipExpiredExtraction(&tender, time.Now().UTC()) {
+					if err := a.Store.UpsertTender(r.Context(), tender); err != nil {
+						a.serverError(w, r, "unable to mark expired tender skipped", err)
+						return
+					}
+					continue
+				}
 				tender.DocumentStatus = models.ExtractionQueued
 				if err := a.Store.UpsertTender(r.Context(), tender); err != nil {
 					a.serverError(w, r, "unable to queue tender document", err)
@@ -797,6 +826,7 @@ func (a *App) QueuePage(w http.ResponseWriter, r *http.Request) {
 		models.ExtractionProcessing: {},
 		models.ExtractionRetry:      {},
 		models.ExtractionQueued:     {},
+		models.ExtractionSkipped:    {},
 		models.ExtractionCompleted:  {},
 	}
 	for _, item := range items {
@@ -808,6 +838,7 @@ func (a *App) QueuePage(w http.ResponseWriter, r *http.Request) {
 		buildQueueSection("processing", "Processing", "warning", grouped[models.ExtractionProcessing], query, false),
 		buildQueueSection("retry", "Retry", "warning", grouped[models.ExtractionRetry], query, false),
 		buildQueueSection("queued", "Queued", "info", grouped[models.ExtractionQueued], query, false),
+		buildQueueSection("skipped", "Skipped", "warning", grouped[models.ExtractionSkipped], query, false),
 		buildQueueSection("completed", "Completed", "success", grouped[models.ExtractionCompleted], query, false),
 	}
 	a.render(w, r, "queue.html", map[string]any{
@@ -836,7 +867,7 @@ func (a *App) CleanupExpiredTenders(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	result, err := a.Store.CleanupExpiredTenders(r.Context(), time.Now())
+	result, err := a.Store.CleanupExpiredTenders(r.Context(), time.Now().UTC())
 	if err != nil {
 		a.serverError(w, r, "unable to remove expired tenders", err)
 		return
@@ -877,6 +908,14 @@ func (a *App) QueueRequeue(w http.ResponseWriter, r *http.Request) {
 	}
 	if tender.DocumentURL == "" {
 		http.Error(w, "no document url", 400)
+		return
+	}
+	if skipExpiredExtraction(&tender, time.Now().UTC()) {
+		if err := a.Store.UpsertTender(r.Context(), tender); err != nil {
+			a.serverError(w, r, "unable to update tender status", err)
+			return
+		}
+		a.redirectAfterAction(w, r, "/queue", "error", "Extraction not requeued because the tender is expired")
 		return
 	}
 	tender.DocumentStatus = models.ExtractionQueued

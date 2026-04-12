@@ -9,6 +9,7 @@
   {{template "metric_card" (dict "label" "Queued" "value" .QueueSummary.Queued)}}
   {{template "metric_card" (dict "label" "Processing" "value" .QueueSummary.Processing)}}
   {{template "metric_card" (dict "label" "Failed" "value" .QueueSummary.Failed)}}
+  {{template "metric_card" (dict "label" "Skipped" "value" .QueueSummary.Skipped)}}
   {{template "metric_card" (dict "label" "Completed" "value" .QueueSummary.Completed)}}
 </section>
 <div class="stack">

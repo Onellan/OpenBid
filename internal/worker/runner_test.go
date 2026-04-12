@@ -9,9 +9,11 @@ import (
 	"openbid/internal/models"
 	"openbid/internal/source"
 	"openbid/internal/store"
+	"openbid/internal/tenderstate"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -155,6 +157,68 @@ func TestProcessJobsRejectsUnsafeDocumentURL(t *testing.T) {
 	}
 	if tender.DocumentStatus != models.ExtractionFailed {
 		t.Fatalf("expected tender marked failed, got %#v", tender)
+	}
+}
+
+func TestProcessJobsSkipsExpiredPDFAndHTMLExtraction(t *testing.T) {
+	allowPrivateURLs(t)
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{name: "pdf", path: "/expired.pdf"},
+		{name: "html", path: "/expired.html"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			ctx := context.Background()
+			now := time.Date(2026, 4, 11, 12, 0, 0, 0, time.UTC)
+			var requests int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				atomic.AddInt32(&requests, 1)
+				_ = json.NewEncoder(w).Encode(map[string]any{"excerpt": "should not run"})
+			}))
+			defer server.Close()
+			tenderID := "expired-" + tc.name
+			docURL := server.URL + tc.path
+			if err := s.UpsertTender(ctx, models.Tender{
+				ID:             tenderID,
+				Title:          "Expired " + tc.name,
+				ClosingDate:    "2026-04-10 11:00",
+				DocumentURL:    docURL,
+				DocumentStatus: models.ExtractionQueued,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.QueueJob(ctx, models.ExtractionJob{ID: "job-" + tc.name, TenderID: tenderID, DocumentURL: docURL, State: models.ExtractionQueued, NextAttemptAt: now.Add(-time.Minute)}); err != nil {
+				t.Fatal(err)
+			}
+
+			r := Runner{Store: s, Extractor: extract.New(server.URL), SyncEvery: time.Hour, LoopEvery: time.Millisecond, Now: func() time.Time { return now }}
+			r.processJobs(ctx)
+
+			if got := atomic.LoadInt32(&requests); got != 0 {
+				t.Fatalf("expected expired tender not to call extractor, got %d requests", got)
+			}
+			jobs, err := s.ListJobs(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(jobs) != 1 || jobs[0].State != models.ExtractionSkipped || jobs[0].SkipReason != tenderstate.ExpiredSkipReason || jobs[0].Attempts != 0 {
+				t.Fatalf("expected skipped job without attempts, got %#v", jobs)
+			}
+			tender, err := s.GetTender(ctx, tenderID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tender.DocumentStatus != models.ExtractionSkipped || tender.ExtractionSkippedReason != tenderstate.ExpiredSkipReason {
+				t.Fatalf("expected tender skipped due to expiry, got %#v", tender)
+			}
+		})
 	}
 }
 
@@ -356,6 +420,82 @@ func TestProcessSourceChecksManualSingleTrigger(t *testing.T) {
 	items, total, err := s.ListTenders(ctx, store.ListFilter{Page: 1, PageSize: 20})
 	if err != nil || total != 1 || len(items) != 1 {
 		t.Fatalf("expected imported tender, err=%v total=%d len=%d", err, total, len(items))
+	}
+}
+
+func TestProcessSourceChecksSkipsExpiredTenderExtractionQueue(t *testing.T) {
+	allowPrivateURLs(t)
+	s, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 4, 3, 9, 0, 0, 0, time.UTC)
+	if err := s.UpsertSourceScheduleSettings(ctx, models.SourceScheduleSettings{ID: "global", DefaultIntervalMinutes: 60}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"releases": []map[string]any{
+				{
+					"ocid":         "expired-source",
+					"title":        "Expired source tender",
+					"issuer":       "Metro",
+					"status":       "open",
+					"closing_date": "2026-04-02 11:00",
+					"document_url": "https://example.org/expired.pdf",
+				},
+				{
+					"ocid":         "active-source",
+					"title":        "Active source tender",
+					"issuer":       "Metro",
+					"status":       "open",
+					"closing_date": "2026-04-04 11:00",
+					"document_url": "https://example.org/active.pdf",
+				},
+			},
+		})
+	}))
+	defer server.Close()
+	cfg := models.SourceConfig{
+		Key:                 "expiry-feed",
+		Name:                "Expiry Feed",
+		Type:                source.TypeJSONFeed,
+		FeedURL:             server.URL,
+		Enabled:             true,
+		ManualChecksEnabled: true,
+		AutoCheckEnabled:    false,
+	}
+	if err := s.UpsertSourceConfig(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertSourceHealth(ctx, models.SourceHealth{SourceKey: cfg.Key, PendingManualCheck: true, LastStatus: "queued"}); err != nil {
+		t.Fatal(err)
+	}
+	r := Runner{Store: s, Extractor: extract.New("http://127.0.0.1:1"), SyncEvery: time.Hour, LoopEvery: time.Second, Now: func() time.Time { return now }}
+	r.processSourceChecks(ctx)
+
+	items, total, err := s.ListTenders(ctx, store.ListFilter{Page: 1, PageSize: 20, Sort: "title"})
+	if err != nil || total != 2 || len(items) != 2 {
+		t.Fatalf("expected both source tenders persisted for visibility, err=%v total=%d items=%#v", err, total, items)
+	}
+	byTitle := map[string]models.Tender{}
+	for _, item := range items {
+		byTitle[item.Title] = item
+	}
+	if byTitle["Expired source tender"].DocumentStatus != models.ExtractionSkipped || byTitle["Expired source tender"].ExtractionSkippedReason != tenderstate.ExpiredSkipReason {
+		t.Fatalf("expected expired source tender marked skipped, got %#v", byTitle["Expired source tender"])
+	}
+	if byTitle["Active source tender"].DocumentStatus != models.ExtractionQueued {
+		t.Fatalf("expected active source tender queued, got %#v", byTitle["Active source tender"])
+	}
+	jobs, err := s.ListJobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 || jobs[0].TenderID != byTitle["Active source tender"].ID || jobs[0].State != models.ExtractionQueued {
+		t.Fatalf("expected only active tender queued, got %#v", jobs)
 	}
 }
 

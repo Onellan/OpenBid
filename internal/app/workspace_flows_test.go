@@ -5,8 +5,10 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"openbid/internal/models"
+	"openbid/internal/tenderstate"
 	"strings"
 	"testing"
+	"time"
 )
 
 func seedTestTender(t *testing.T, a *App, tender models.Tender) models.Tender {
@@ -122,6 +124,46 @@ func TestQueueExtractionRejectsTenderWithoutDocumentURL(t *testing.T) {
 	}
 }
 
+func TestQueueExtractionSkipsExpiredTender(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, csrf := adminSession(t, a)
+	seedTestTender(t, a, models.Tender{
+		ID:          "queue-expired",
+		Title:       "Expired queue tender",
+		ClosingDate: time.Now().Add(-24 * time.Hour).Format("2006-01-02 15:04"),
+		DocumentURL: "https://example.com/expired.pdf",
+	})
+
+	form := url.Values{"csrf_token": {csrf}, "tender_id": {"queue-expired"}}
+	req := httptest.NewRequest(http.MethodPost, "/tenders/queue", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+
+	a.QueueExtraction(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", w.Code)
+	}
+	if location := w.Header().Get("Location"); !strings.Contains(location, "expired") {
+		t.Fatalf("expected expiry message redirect, got %q", location)
+	}
+	tender, err := a.Store.GetTender(t.Context(), "queue-expired")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tender.DocumentStatus != models.ExtractionSkipped || tender.ExtractionSkippedReason != tenderstate.ExpiredSkipReason {
+		t.Fatalf("expected expired tender marked skipped, got %#v", tender)
+	}
+	jobs, err := a.Store.ListJobs(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("expected no job queued for expired tender, got %#v", jobs)
+	}
+}
+
 func TestBulkTendersAppliesWorkflowToUniqueSelection(t *testing.T) {
 	a := newTestApp(t)
 	_, tenant, cookie, csrf := adminSession(t, a)
@@ -222,6 +264,51 @@ func TestBulkTendersBookmarkAndQueueActions(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected bulk queue job for tender bulk-queue, got %+v", jobs)
+	}
+}
+
+func TestBulkQueueSkipsExpiredTenderAndQueuesActiveTender(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, csrf := adminSession(t, a)
+	seedTestTender(t, a, models.Tender{
+		ID:          "bulk-expired",
+		Title:       "Expired bulk queue",
+		ClosingDate: time.Now().Add(-24 * time.Hour).Format("2006-01-02 15:04"),
+		DocumentURL: "https://example.com/bulk-expired.pdf",
+	})
+	seedTestTender(t, a, models.Tender{
+		ID:          "bulk-active",
+		Title:       "Active bulk queue",
+		ClosingDate: time.Now().Add(24 * time.Hour).Format("2006-01-02 15:04"),
+		DocumentURL: "https://example.com/bulk-active.pdf",
+	})
+
+	form := url.Values{
+		"csrf_token":   {csrf},
+		"selected_ids": {"bulk-expired,bulk-active"},
+		"action":       {"queue"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/tenders/bulk", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.BulkTenders(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", w.Code)
+	}
+	expired, err := a.Store.GetTender(t.Context(), "bulk-expired")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expired.DocumentStatus != models.ExtractionSkipped {
+		t.Fatalf("expected expired bulk tender skipped, got %#v", expired)
+	}
+	jobs, err := a.Store.ListJobs(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 || jobs[0].TenderID != "bulk-active" || jobs[0].State != models.ExtractionQueued {
+		t.Fatalf("expected only active bulk tender queued, got %#v", jobs)
 	}
 }
 

@@ -46,7 +46,7 @@
     <td>{{formatTime .Job.NextAttemptAt}}</td>
     <td class="small mono">{{if .Job.LastError}}{{.Job.LastError}}{{else}}No error recorded{{end}}</td>
     <td>
-      {{if and $.CanEditWorkspace (ne (printf "%s" .Job.State) "completed")}}
+      {{if and $.CanEditWorkspace (ne (printf "%s" .Job.State) "completed") (ne (printf "%s" .Job.State) "skipped")}}
       {{template "confirm_destructive_action" (dict
         "action" "/queue/requeue"
         "confirm" (printf "Requeue processing for '%s'?" .Tender.Title)
@@ -55,6 +55,8 @@
         "hidden" (slice (dict "name" "tender_id" "value" .Tender.ID))
         "label" "Retry"
       )}}
+      {{else if eq (printf "%s" .Job.State) "skipped"}}
+      <span class="footer-note">Skipped</span>
       {{else if ne (printf "%s" .Job.State) "completed"}}
       <span class="footer-note">Read only</span>
       {{else}}

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"openbid/internal/models"
+	"openbid/internal/tenderstate"
 	"strconv"
 	"strings"
 	"sync"
@@ -387,7 +388,7 @@ func eskomStatus(item eskomTender) string {
 	if strings.Contains(text, "cancel") {
 		return "cancelled"
 	}
-	if parsed, ok := parseEskomTime(item.ClosingDate); ok && parsed.Before(time.Now().UTC()) {
+	if tenderstate.IsExpired(models.Tender{ClosingDate: eskomSortableDateTime(item.ClosingDate)}, time.Now().UTC()) {
 		return "closed"
 	}
 	return "open"

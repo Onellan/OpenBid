@@ -38,19 +38,39 @@ func pageLink(path string, params map[string]string, page int) string {
 }
 
 func safeReturnTarget(dest, fallback string) *url.URL {
-	fallbackURL := &url.URL{Path: fallback}
+	fallbackURL := safeLocalTarget(fallback, "/")
 	dest = strings.TrimSpace(dest)
 	if dest == "" {
 		return fallbackURL
 	}
+	return safeLocalTarget(dest, fallbackURL.String())
+}
+
+func safeLocalTarget(dest, fallback string) *url.URL {
+	fallbackURL := &url.URL{Path: "/"}
+	if u, ok := parseSafeLocalURL(fallback); ok {
+		fallbackURL = u
+	}
+	dest = strings.TrimSpace(dest)
+	if dest == "" {
+		return fallbackURL
+	}
+	if u, ok := parseSafeLocalURL(dest); ok {
+		return u
+	}
+	return fallbackURL
+}
+
+func parseSafeLocalURL(dest string) (*url.URL, bool) {
+	dest = strings.TrimSpace(dest)
 	u, err := url.Parse(dest)
 	if err != nil || u == nil {
-		return fallbackURL
+		return nil, false
 	}
 	if u.IsAbs() || u.Host != "" || strings.HasPrefix(dest, "//") || !strings.HasPrefix(u.Path, "/") {
-		return fallbackURL
+		return nil, false
 	}
-	return u
+	return u, true
 }
 
 func (a *App) redirectAfterAction(w http.ResponseWriter, r *http.Request, fallback, tone, message string) {
