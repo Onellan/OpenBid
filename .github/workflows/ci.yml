@@ -61,7 +61,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26.1"
+          go-version: "1.26.2"
           cache: true
       - name: Run tests
         run: go test ./...
@@ -88,14 +88,34 @@ jobs:
         run: docker compose up --build -d
       - name: Wait for healthz
         run: |
+          echo "Waiting for app healthz endpoint..."
           for attempt in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8088/healthz; then
-              echo
+              echo "App healthz endpoint ready after $((attempt * 5)) seconds"
               exit 0
             fi
+            echo "Attempt $attempt: healthz not ready, waiting..."
             sleep 5
           done
-          echo "healthz did not become ready in time" >&2
+          echo "healthz did not become ready in time (150s timeout exceeded)" >&2
+          exit 1
+      - name: Diagnose compose stack on healthz timeout
+        if: failure()
+        run: |
+          echo "=== Docker Compose Status ==="
+          docker compose ps
+          echo ""
+          echo "=== App Container Logs (last 100 lines) ==="
+          docker compose logs --tail=100 app
+          echo ""
+          echo "=== Extractor Container Logs (last 50 lines) ==="
+          docker compose logs --tail=50 extractor
+          echo ""
+          echo "=== Proxy Container Logs (last 50 lines) ==="
+          docker compose logs --tail=50 proxy
+          echo ""
+          echo "=== Container Health Status ==="
+          docker inspect openbid-app-1 --format '{{json .State.Health}}' 2>/dev/null | jq . || docker inspect openbid-app-1 --format '{{json .State.Health}}'
           exit 1
       - name: Seed deterministic E2E data
         run: go run ./cmd/e2e_seed
