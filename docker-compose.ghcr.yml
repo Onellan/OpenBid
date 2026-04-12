@@ -2,7 +2,7 @@ name: openbid
 
 services:
   app:
-    image: ${APP_IMAGE_REF:-ghcr.io/OWNER/REPO/app:${APP_IMAGE_TAG:-v1.0.0}}
+    image: ${APP_IMAGE_REF:-ghcr.io/onellan/openbid/app:${APP_IMAGE_TAG:-latest}}
     pull_policy: always
     init: true
     environment:
@@ -43,7 +43,7 @@ services:
     stop_grace_period: 20s
 
   worker:
-    image: ${APP_IMAGE_REF:-ghcr.io/OWNER/REPO/app:${APP_IMAGE_TAG:-v1.0.0}}
+    image: ${APP_IMAGE_REF:-ghcr.io/onellan/openbid/app:${APP_IMAGE_TAG:-latest}}
     pull_policy: always
     init: true
     command: ["openbid-worker"]
@@ -86,7 +86,7 @@ services:
     stop_grace_period: 30s
 
   extractor:
-    image: ${EXTRACTOR_IMAGE_REF:-ghcr.io/OWNER/REPO/extractor:${EXTRACTOR_IMAGE_TAG:-v1.0.0}}
+    image: ${EXTRACTOR_IMAGE_REF:-ghcr.io/onellan/openbid/extractor:${EXTRACTOR_IMAGE_TAG:-latest}}
     pull_policy: always
     init: true
     tmpfs: ["/tmp"]
@@ -110,7 +110,7 @@ services:
   proxy:
     image: nginx:1.27-alpine
     init: true
-    ports: ["8088:80"]
+    ports: ["${OPENBID_HTTP_PORT:-8088}:80"]
     volumes:
       - "./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro"
     tmpfs: ["/var/cache/nginx", "/var/run", "/tmp"]

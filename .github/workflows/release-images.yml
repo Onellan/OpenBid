@@ -2,6 +2,7 @@ name: release-images
 
 on:
   push:
+    branches: ["main"]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -30,24 +31,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
+      - name: Set build metadata
+        id: build_metadata
+        run: echo "created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
       - uses: docker/metadata-action@v5
         id: app_meta
         with:
-          images: ghcr.io/${{ github.repository }}/app
+          images: ghcr.io/onellan/openbid/app
           flavor: |
-            latest=auto
+            latest=false
           tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha,prefix=sha-,format=long
+            type=semver,pattern={{version}},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
             type=ref,event=tag
-            type=sha
       - uses: docker/metadata-action@v5
         id: extractor_meta
         with:
-          images: ghcr.io/${{ github.repository }}/extractor
+          images: ghcr.io/onellan/openbid/extractor
           flavor: |
-            latest=auto
+            latest=false
           tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha,prefix=sha-,format=long
+            type=semver,pattern={{version}},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
             type=ref,event=tag
-            type=sha
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -64,7 +72,7 @@ jobs:
           build-args: |
             VERSION=${{ github.ref_name }}
             VCS_REF=${{ github.sha }}
-            BUILD_DATE=${{ github.run_id }}
+            BUILD_DATE=${{ steps.build_metadata.outputs.created }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Build and push extractor
