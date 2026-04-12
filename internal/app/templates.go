@@ -201,6 +201,10 @@ func routes(a *App) http.Handler {
 	}
 	mux.HandleFunc("/healthz", a.Healthz)
 	mux.HandleFunc("/login", a.Login)
+	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.WriteHeader(http.StatusNoContent)
+	})
 	registerProtected(mux, a, a.Logout, "/logout")
 	registerProtected(mux, a, a.Home, "/", "/home")
 	registerProtected(mux, a, a.Dashboard, "/dashboard")

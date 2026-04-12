@@ -28,6 +28,14 @@ const (
 	ExtractionSkipped    ExtractionState = "skipped"
 )
 
+const (
+	JobTypeExtraction           = "extraction"
+	JobTypeExpiredTenderCleanup = "expired_tender_cleanup"
+
+	ExpiredTenderCleanupJobID   = "maintenance-expired-tender-cleanup"
+	ExpiredTenderCleanupJobName = "Remove Expired Tenders"
+)
+
 type TenderDocument struct {
 	URL, FileName, MIMEType, Role, Source, LastModified string
 	SizeBytes                                           int64
@@ -160,6 +168,7 @@ type SyncRun struct {
 }
 type ExtractionJob struct {
 	ID, TenderID, DocumentURL, LastError, SkipReason, SkipSource string
+	JobType, JobName, TenantID, UserID, ResultSummary            string
 	State                                                        ExtractionState
 	Attempts                                                     int
 	NextAttemptAt, CreatedAt, UpdatedAt, SkippedAt               time.Time

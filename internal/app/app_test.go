@@ -1848,6 +1848,16 @@ func TestSettingsPageShowsAdminCardsOnlyForAuthorizedUsers(t *testing.T) {
 func TestRouteAccessibilityAndPageRendering(t *testing.T) {
 	a := newTestApp(t)
 	_, _, viewerCookie, _ := sessionForRole(t, a, models.TenantRoleViewer)
+	req := httptest.NewRequest(http.MethodGet, "/favicon.ico", nil)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected favicon to be a lightweight 204 got %d", w.Code)
+	}
+	if body := w.Body.String(); body != "" {
+		t.Fatalf("expected favicon response to avoid rendering home page, got %q", body)
+	}
+
 	routes := map[string]string{
 		"/dashboard":      "One home for daily bidding work and operational visibility",
 		"/bookmarks":      "Keep active opportunities separate",
@@ -1857,9 +1867,9 @@ func TestRouteAccessibilityAndPageRendering(t *testing.T) {
 		"/settings":       "Account, workspace, and administration settings",
 	}
 	for path, marker := range routes {
-		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req = httptest.NewRequest(http.MethodGet, path, nil)
 		req.AddCookie(viewerCookie)
-		w := httptest.NewRecorder()
+		w = httptest.NewRecorder()
 		a.Server.Handler.ServeHTTP(w, req)
 		if w.Code != http.StatusOK {
 			t.Fatalf("expected 200 for %s got %d", path, w.Code)
@@ -1870,9 +1880,9 @@ func TestRouteAccessibilityAndPageRendering(t *testing.T) {
 	}
 
 	for _, path := range []string{"/admin/users", "/admin/tenants", "/sources"} {
-		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req = httptest.NewRequest(http.MethodGet, path, nil)
 		req.AddCookie(viewerCookie)
-		w := httptest.NewRecorder()
+		w = httptest.NewRecorder()
 		a.Server.Handler.ServeHTTP(w, req)
 		if w.Code != http.StatusForbidden {
 			t.Fatalf("expected 403 for %s got %d", path, w.Code)

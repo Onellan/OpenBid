@@ -24,12 +24,12 @@
     <div class="section-disclosure-body">
       <div class="card-soft">
         <p class="footer-note" style="margin:0">Expired means the tender has a closing date/time that is earlier than now. Date-only tenders are treated as open until the end of that date.</p>
-        <p class="footer-note" style="margin:8px 0 0 0">This removes expired tenders from normal lists and dashboards while preserving bookmarks, workflows, notes, and audit history.</p>
+        <p class="footer-note" style="margin:8px 0 0 0">This queues a worker job that removes expired tenders from normal lists and dashboards while preserving bookmarks, workflows, notes, and audit history.</p>
       </div>
       {{if .CanRunCleanup}}
       <form method="post" action="/data-pipes/remove-expired-tenders" data-confirm="Remove expired tenders from normal views? Bookmarks, workflows, notes, and audit history will be preserved." style="margin-top:14px">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <button type="submit">Remove Expired Tenders</button>
+        <button type="submit">Queue Cleanup Job</button>
       </form>
       {{else}}
       <div class="footer-note" style="margin-top:14px">Read-only access. Ask an operator to run cleanup.</div>

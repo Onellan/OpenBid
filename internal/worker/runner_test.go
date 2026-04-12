@@ -106,6 +106,63 @@ func TestProcessJobsMarksFinalFailureAndClearsNextAttempt(t *testing.T) {
 	}
 }
 
+func TestProcessJobsRunsExpiredTenderCleanupMaintenanceJob(t *testing.T) {
+	s, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	if err := s.UpsertTender(ctx, models.Tender{ID: "expired-cleanup", Title: "Expired", ClosingDate: now.Add(-48 * time.Hour).Format("2006-01-02 15:04")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertTender(ctx, models.Tender{ID: "active-cleanup", Title: "Active", ClosingDate: now.Add(48 * time.Hour).Format("2006-01-02 15:04")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertBookmark(ctx, models.Bookmark{TenantID: "tenant-1", UserID: "user-1", TenderID: "expired-cleanup", Note: "preserve"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.QueueJob(ctx, models.ExtractionJob{
+		ID:       models.ExpiredTenderCleanupJobID,
+		JobType:  models.JobTypeExpiredTenderCleanup,
+		JobName:  models.ExpiredTenderCleanupJobName,
+		TenantID: "tenant-1",
+		UserID:   "user-1",
+		State:    models.ExtractionQueued,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	r := Runner{Store: s}
+	r.processJobs(ctx)
+
+	if _, err := s.GetTender(ctx, "expired-cleanup"); err != store.ErrNotFound {
+		t.Fatalf("expected expired tender hidden after cleanup, got %v", err)
+	}
+	if _, err := s.GetTender(ctx, "active-cleanup"); err != nil {
+		t.Fatalf("expected active tender preserved, got %v", err)
+	}
+	bookmarks, err := s.ListBookmarks(ctx, "tenant-1", "user-1")
+	if err != nil || len(bookmarks) != 1 || bookmarks[0].TenderID != "expired-cleanup" {
+		t.Fatalf("expected bookmark to be preserved, bookmarks=%#v err=%v", bookmarks, err)
+	}
+	jobs, err := s.ListJobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 || jobs[0].State != models.ExtractionCompleted || !strings.Contains(jobs[0].ResultSummary, "Removed 1 expired tenders") {
+		t.Fatalf("expected completed cleanup job with result summary, got %#v", jobs)
+	}
+	entries, err := s.ListAuditEntries(ctx, "tenant-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Action != "cleanup" || entries[0].Metadata["removed_count"] != "1" {
+		t.Fatalf("expected cleanup audit entry, got %#v", entries)
+	}
+}
+
 func TestProcessJobsPrunesOrphanJobs(t *testing.T) {
 	s, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {

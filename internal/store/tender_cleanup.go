@@ -71,6 +71,9 @@ func (s *SQLiteStore) CleanupExpiredTenders(ctx context.Context, now time.Time) 
 		if err = sqliteUpsertJSONExec(ctx, tx, "tenders", tender.ID, tender); err != nil {
 			return models.ExpiredTenderCleanupResult{}, err
 		}
+		if err = upsertTenderDashboardIndex(ctx, tx, tender); err != nil {
+			return models.ExpiredTenderCleanupResult{}, err
+		}
 		result.RemovedTenderIDs = append(result.RemovedTenderIDs, tender.ID)
 		if err = cleanupVolatileTenderLinks(ctx, tx, tender.ID); err != nil {
 			return models.ExpiredTenderCleanupResult{}, err

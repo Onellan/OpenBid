@@ -352,7 +352,7 @@ curl http://localhost:8088/healthz
 Expected:
 
 ```json
-{"ok":true}
+{ "ok": true }
 ```
 
 From another device on the same network, find the Pi address:

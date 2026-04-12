@@ -71,7 +71,7 @@ func (s *SQLiteStore) ValidateRuntime(ctx context.Context) error {
 	if userVersion != currentSchemaVersion {
 		return fmt.Errorf("unexpected schema version: got %d want %d", userVersion, currentSchemaVersion)
 	}
-	for _, table := range []string{"tenders", "tenants", "sync_runs", "source_configs", "source_schedule_settings", "jobs", "source_health", "audit_entries", "workflow_events", "user_records", "membership_records", "workflow_records", "bookmark_records", "saved_search_records", "keyword_profiles", "keyword_records", "keyword_match_records", "sessions", "tenant_source_assignments"} {
+	for _, table := range []string{"tenders", "tender_dashboard_index", "tenants", "sync_runs", "source_configs", "source_schedule_settings", "jobs", "source_health", "audit_entries", "workflow_events", "user_records", "membership_records", "workflow_records", "bookmark_records", "saved_search_records", "keyword_profiles", "keyword_records", "keyword_match_records", "sessions", "tenant_source_assignments"} {
 		var count int
 		if err := s.db.QueryRowContext(ctx, "select count(*) from sqlite_master where type='table' and name=?", table).Scan(&count); err != nil {
 			return err
@@ -115,6 +115,15 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		`create table if not exists source_configs (id text primary key, payload text not null);`,
 		`create table if not exists source_schedule_settings (id text primary key, payload text not null);`,
 		`create table if not exists jobs (id text primary key, payload text not null);`,
+		`create table if not exists tender_dashboard_index (
+			tender_id text primary key,
+			archived integer not null default 0,
+			engineering_relevant integer not null default 0,
+			has_document integer not null default 0,
+			document_status text not null default '',
+			status text not null default '',
+			published_date text not null default ''
+		);`,
 		`create table if not exists source_health (id text primary key, payload text not null);`,
 		`create table if not exists audit_entries (id text primary key, payload text not null);`,
 		`create table if not exists workflow_events (id text primary key, payload text not null);`,
@@ -124,6 +133,63 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		`create index if not exists idx_tenders_document_status on tenders(coalesce(json_extract(payload, '$.DocumentStatus'), ''));`,
 		`create index if not exists idx_tenders_published on tenders(coalesce(json_extract(payload, '$.PublishedDate'), ''));`,
 		`create index if not exists idx_tenders_closing on tenders(coalesce(json_extract(payload, '$.ClosingDate'), ''));`,
+		`create index if not exists idx_tenders_archived on tenders(coalesce(json_extract(payload, '$.ArchivedAt'), ''));`,
+		`create index if not exists idx_tenders_archived_status on tenders(coalesce(json_extract(payload, '$.ArchivedAt'), ''), lower(coalesce(json_extract(payload, '$.Status'), '')));`,
+		`create index if not exists idx_tenders_archived_document_status on tenders(coalesce(json_extract(payload, '$.ArchivedAt'), ''), coalesce(json_extract(payload, '$.DocumentStatus'), ''));`,
+		`create index if not exists idx_tenders_archived_engineering on tenders(coalesce(json_extract(payload, '$.ArchivedAt'), ''), coalesce(json_extract(payload, '$.EngineeringRelevant'), 0));`,
+		`create index if not exists idx_tenders_archived_document_url on tenders(coalesce(json_extract(payload, '$.ArchivedAt'), ''), coalesce(json_extract(payload, '$.DocumentURL'), ''));`,
+		`create index if not exists idx_tenders_archived_published on tenders(coalesce(json_extract(payload, '$.ArchivedAt'), ''), coalesce(json_extract(payload, '$.PublishedDate'), '') desc, id asc);`,
+		`create index if not exists idx_tender_dashboard_archived on tender_dashboard_index(archived);`,
+		`create index if not exists idx_tender_dashboard_archived_status on tender_dashboard_index(archived, status);`,
+		`create index if not exists idx_tender_dashboard_archived_document_status on tender_dashboard_index(archived, document_status);`,
+		`create index if not exists idx_tender_dashboard_archived_engineering on tender_dashboard_index(archived, engineering_relevant);`,
+		`create index if not exists idx_tender_dashboard_archived_has_document on tender_dashboard_index(archived, has_document);`,
+		`create index if not exists idx_tender_dashboard_archived_published on tender_dashboard_index(archived, published_date desc, tender_id asc);`,
+		`insert into tender_dashboard_index(tender_id, archived, engineering_relevant, has_document, document_status, status, published_date)
+		select id,
+			case when coalesce(json_extract(payload, '$.ArchivedAt'), '') in ('', '0001-01-01T00:00:00Z') then 0 else 1 end,
+			case when coalesce(json_extract(payload, '$.EngineeringRelevant'), 0) = 1 then 1 else 0 end,
+			case when coalesce(json_extract(payload, '$.DocumentURL'), '') <> '' then 1 else 0 end,
+			coalesce(json_extract(payload, '$.DocumentStatus'), ''),
+			lower(coalesce(json_extract(payload, '$.Status'), '')),
+			coalesce(json_extract(payload, '$.PublishedDate'), '')
+		from tenders
+		where true
+		on conflict(tender_id) do update set
+			archived=excluded.archived,
+			engineering_relevant=excluded.engineering_relevant,
+			has_document=excluded.has_document,
+			document_status=excluded.document_status,
+			status=excluded.status,
+			published_date=excluded.published_date;`,
+		`delete from jobs where id in (
+			select id from (
+				select id,
+					row_number() over (
+						partition by coalesce(json_extract(payload, '$.TenderID'), ''), coalesce(json_extract(payload, '$.DocumentURL'), '')
+						order by
+							case coalesce(json_extract(payload, '$.State'), '')
+								when 'processing' then 0
+								when 'queued' then 1
+								when 'retry' then 2
+								when 'failed' then 3
+								when 'completed' then 4
+								when 'skipped' then 5
+								else 6
+							end,
+							coalesce(json_extract(payload, '$.UpdatedAt'), json_extract(payload, '$.CreatedAt'), '') desc,
+							id asc
+					) as rn
+				from jobs
+				where coalesce(json_extract(payload, '$.TenderID'), '') <> ''
+			)
+			where rn > 1
+		);`,
+		`create unique index if not exists idx_jobs_tender_document_unique on jobs(
+			coalesce(json_extract(payload, '$.TenderID'), ''),
+			coalesce(json_extract(payload, '$.DocumentURL'), '')
+		) where coalesce(json_extract(payload, '$.TenderID'), '') <> '';`,
+		`create index if not exists idx_jobs_state on jobs(coalesce(json_extract(payload, '$.State'), ''));`,
 	}
 	for _, stmt := range stmts {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
@@ -259,6 +325,33 @@ func sqliteListJSON[T any](ctx context.Context, db *sql.DB, table string) ([]T, 
 
 func sqliteDelete(ctx context.Context, db *sql.DB, table, id string) error {
 	_, err := db.ExecContext(ctx, "delete from "+table+" where id = ?", id)
+	return err
+}
+
+func upsertTenderDashboardIndex(ctx context.Context, exec sqlExecer, tender models.Tender) error {
+	archived := 0
+	if tenderArchived(tender) {
+		archived = 1
+	}
+	engineeringRelevant := 0
+	if tender.EngineeringRelevant {
+		engineeringRelevant = 1
+	}
+	hasDocument := 0
+	if strings.TrimSpace(tender.DocumentURL) != "" {
+		hasDocument = 1
+	}
+	_, err := exec.ExecContext(ctx, `
+		insert into tender_dashboard_index(tender_id, archived, engineering_relevant, has_document, document_status, status, published_date)
+		values(?,?,?,?,?,?,?)
+		on conflict(tender_id) do update set
+			archived=excluded.archived,
+			engineering_relevant=excluded.engineering_relevant,
+			has_document=excluded.has_document,
+			document_status=excluded.document_status,
+			status=excluded.status,
+			published_date=excluded.published_date
+	`, tender.ID, archived, engineeringRelevant, hasDocument, string(tender.DocumentStatus), strings.ToLower(strings.TrimSpace(tender.Status)), strings.TrimSpace(tender.PublishedDate))
 	return err
 }
 
@@ -739,6 +832,9 @@ func (s *SQLiteStore) UpsertTender(ctx context.Context, v models.Tender) error {
 		v.ExtractedFacts = map[string]string{}
 	}
 	if err := sqliteUpsertJSON(ctx, s.db, "tenders", v.ID, v); err != nil {
+		return err
+	}
+	if err := upsertTenderDashboardIndex(ctx, s.db, v); err != nil {
 		return err
 	}
 	return s.refreshAllKeywordProfilesForTender(ctx, v)
@@ -1515,15 +1611,19 @@ func (s *SQLiteStore) ListValidJobs(ctx context.Context) ([]models.ExtractionJob
 	rows, err := s.db.QueryContext(ctx, `
 		select j.payload
 		from jobs j
-		where coalesce(json_extract(j.payload, '$.TenderID'), '') <> ''
-		  and exists (
-			select 1
-			from tenders t
-			where t.id = coalesce(json_extract(j.payload, '$.TenderID'), '')
-			  and `+activeTenderSQLClause("t")+`
-		  )
+		where coalesce(json_extract(j.payload, '$.JobType'), ?) = ?
+		   or (
+			coalesce(json_extract(j.payload, '$.JobType'), ?) = ?
+			and coalesce(json_extract(j.payload, '$.TenderID'), '') <> ''
+			and exists (
+				select 1
+				from tenders t
+				where t.id = coalesce(json_extract(j.payload, '$.TenderID'), '')
+				  and `+activeTenderSQLClause("t")+`
+			)
+		   )
 		order by coalesce(json_extract(j.payload, '$.CreatedAt'), '') desc, j.id desc
-	`)
+	`, models.JobTypeExtraction, models.JobTypeExpiredTenderCleanup, models.JobTypeExtraction, models.JobTypeExtraction)
 	if err != nil {
 		return nil, err
 	}
@@ -1546,14 +1646,17 @@ func (s *SQLiteStore) ListValidJobs(ctx context.Context) ([]models.ExtractionJob
 func (s *SQLiteStore) PruneInvalidJobs(ctx context.Context) (int, error) {
 	result, err := s.db.ExecContext(ctx, `
 		delete from jobs
-		where coalesce(json_extract(payload, '$.TenderID'), '') = ''
-		   or not exists (
-			select 1
-			from tenders t
-			where t.id = coalesce(json_extract(jobs.payload, '$.TenderID'), '')
-			  and `+activeTenderSQLClause("t")+`
-		   )
-	`)
+		where coalesce(json_extract(payload, '$.JobType'), ?) <> ?
+		  and (
+			coalesce(json_extract(payload, '$.TenderID'), '') = ''
+			or not exists (
+				select 1
+				from tenders t
+				where t.id = coalesce(json_extract(jobs.payload, '$.TenderID'), '')
+				  and `+activeTenderSQLClause("t")+`
+			)
+		  )
+	`, models.JobTypeExtraction, models.JobTypeExpiredTenderCleanup)
 	if err != nil {
 		return 0, err
 	}
@@ -1565,15 +1668,19 @@ func (s *SQLiteStore) JobStateCounts(ctx context.Context) (JobStateCounts, error
 	rows, err := s.db.QueryContext(ctx, `
 		select coalesce(json_extract(j.payload, '$.State'), '') as state, count(*)
 		from jobs j
-		where coalesce(json_extract(j.payload, '$.TenderID'), '') <> ''
-		  and exists (
-			select 1
-			from tenders t
-			where t.id = coalesce(json_extract(j.payload, '$.TenderID'), '')
-			  and `+activeTenderSQLClause("t")+`
-		  )
+		where coalesce(json_extract(j.payload, '$.JobType'), ?) = ?
+		   or (
+			coalesce(json_extract(j.payload, '$.JobType'), ?) = ?
+			and coalesce(json_extract(j.payload, '$.TenderID'), '') <> ''
+			and exists (
+				select 1
+				from tenders t
+				where t.id = coalesce(json_extract(j.payload, '$.TenderID'), '')
+				  and `+activeTenderSQLClause("t")+`
+			)
+		   )
 		group by state
-	`)
+	`, models.JobTypeExtraction, models.JobTypeExpiredTenderCleanup, models.JobTypeExtraction, models.JobTypeExtraction)
 	if err != nil {
 		return JobStateCounts{}, err
 	}
@@ -1620,13 +1727,17 @@ func (s *SQLiteStore) JobAlertSnapshot(ctx context.Context) (JobAlertSnapshot, e
 				else null
 			end)
 		from jobs j
-		where coalesce(json_extract(j.payload, '$.TenderID'), '') <> ''
-		  and exists (
-			select 1
-			from tenders t
-			where t.id = coalesce(json_extract(j.payload, '$.TenderID'), '')
-			  and `+activeTenderSQLClause("t")+`
-		  )
+		where coalesce(json_extract(j.payload, '$.JobType'), ?) = ?
+		   or (
+			coalesce(json_extract(j.payload, '$.JobType'), ?) = ?
+			and coalesce(json_extract(j.payload, '$.TenderID'), '') <> ''
+			and exists (
+				select 1
+				from tenders t
+				where t.id = coalesce(json_extract(j.payload, '$.TenderID'), '')
+				  and `+activeTenderSQLClause("t")+`
+			)
+		   )
 	`,
 		string(models.ExtractionQueued),
 		string(models.ExtractionProcessing),
@@ -1637,6 +1748,10 @@ func (s *SQLiteStore) JobAlertSnapshot(ctx context.Context) (JobAlertSnapshot, e
 		string(models.ExtractionQueued),
 		string(models.ExtractionRetry),
 		string(models.ExtractionProcessing),
+		models.JobTypeExtraction,
+		models.JobTypeExpiredTenderCleanup,
+		models.JobTypeExtraction,
+		models.JobTypeExtraction,
 	).Scan(
 		&snapshot.Queued,
 		&snapshot.Processing,
@@ -1659,21 +1774,12 @@ func (s *SQLiteStore) JobAlertSnapshot(ctx context.Context) (JobAlertSnapshot, e
 }
 
 func (s *SQLiteStore) QueueJob(ctx context.Context, v models.ExtractionJob) error {
-	var existingID string
-	err := s.db.QueryRowContext(ctx, `
-		select id
-		from jobs
-		where coalesce(json_extract(payload, '$.TenderID'), '') = ?
-		  and coalesce(json_extract(payload, '$.DocumentURL'), '') = ?
-		  and coalesce(json_extract(payload, '$.State'), '') <> ?
-		  and coalesce(json_extract(payload, '$.State'), '') <> ?
-		limit 1
-	`, v.TenderID, v.DocumentURL, string(models.ExtractionCompleted), string(models.ExtractionSkipped)).Scan(&existingID)
-	if err == nil {
-		return nil
+	now := time.Now().UTC()
+	if v.JobType == "" {
+		v.JobType = models.JobTypeExtraction
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return err
+	if v.JobType == models.JobTypeExpiredTenderCleanup {
+		return s.queueExpiredTenderCleanupJob(ctx, v, now)
 	}
 	if v.ID == "" {
 		v.ID = newid()
@@ -1682,14 +1788,50 @@ func (s *SQLiteStore) QueueJob(ctx context.Context, v models.ExtractionJob) erro
 		v.State = models.ExtractionQueued
 	}
 	if v.CreatedAt.IsZero() {
-		v.CreatedAt = time.Now().UTC()
+		v.CreatedAt = now
 	}
-	v.UpdatedAt = time.Now().UTC()
+	v.UpdatedAt = now
 	if v.NextAttemptAt.IsZero() {
-		v.NextAttemptAt = time.Now().UTC()
+		v.NextAttemptAt = now
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, "insert into jobs(id,payload) values(?,?) on conflict do nothing", v.ID, string(b))
+	return err
+}
+
+func (s *SQLiteStore) queueExpiredTenderCleanupJob(ctx context.Context, v models.ExtractionJob, now time.Time) error {
+	v.ID = models.ExpiredTenderCleanupJobID
+	v.JobType = models.JobTypeExpiredTenderCleanup
+	v.JobName = models.ExpiredTenderCleanupJobName
+	v.TenderID = ""
+	v.DocumentURL = ""
+	v.State = models.ExtractionQueued
+	v.Attempts = 0
+	v.NextAttemptAt = now
+	v.CreatedAt = now
+	v.UpdatedAt = now
+	v.SkippedAt = time.Time{}
+	v.SkipReason = ""
+	v.SkipSource = ""
+	v.LastError = ""
+	v.ResultSummary = "Waiting for the worker to archive expired tenders."
+
+	existing, err := sqliteGetJSON[models.ExtractionJob](ctx, s.db, "jobs", v.ID)
+	if err != nil && err != ErrNotFound {
+		return err
+	}
+	if err == nil {
+		switch existing.State {
+		case models.ExtractionQueued, models.ExtractionProcessing, models.ExtractionRetry:
+			return nil
+		}
 	}
 	return sqliteUpsertJSON(ctx, s.db, "jobs", v.ID, v)
 }
+
 func (s *SQLiteStore) UpdateJob(ctx context.Context, v models.ExtractionJob) error {
 	v.UpdatedAt = time.Now().UTC()
 	return sqliteUpsertJSON(ctx, s.db, "jobs", v.ID, v)
@@ -1699,32 +1841,30 @@ func (s *SQLiteStore) DeleteJob(ctx context.Context, id string) error {
 }
 func (s *SQLiteStore) Dashboard(ctx context.Context, tenantID string, lowMemory, analytics bool) (models.Dashboard, error) {
 	d := models.Dashboard{LowMemoryMode: lowMemory, AnalyticsEnabled: analytics}
-	if err := s.db.QueryRowContext(ctx, `
-		select
-			count(*),
-			coalesce(sum(case when coalesce(json_extract(payload, '$.EngineeringRelevant'), 0) = 1 then 1 else 0 end), 0),
-			coalesce(sum(case when coalesce(json_extract(payload, '$.DocumentURL'), '') <> '' then 1 else 0 end), 0),
-			coalesce(sum(case when coalesce(json_extract(payload, '$.DocumentStatus'), '') = ? then 1 else 0 end), 0),
-			coalesce(sum(case when coalesce(json_extract(payload, '$.DocumentStatus'), '') in (?, ?) then 1 else 0 end), 0),
-			coalesce(sum(case when lower(coalesce(json_extract(payload, '$.Status'), '')) = 'open' then 1 else 0 end), 0)
-		from tenders
-		where `+activeTenderSQLClause("")+`
-	`, string(models.ExtractionCompleted), string(models.ExtractionQueued), string(models.ExtractionRetry)).Scan(
-		&d.TotalTenders,
-		&d.EngineeringRelevant,
-		&d.WithDocuments,
-		&d.ExtractedDocuments,
-		&d.QueuedDocuments,
-		&d.OpenTenders,
-	); err != nil {
-		return models.Dashboard{}, err
+	countQueries := []struct {
+		target *int
+		where  string
+		args   []any
+	}{
+		{target: &d.TotalTenders, where: "archived = 0"},
+		{target: &d.EngineeringRelevant, where: "archived = 0 and engineering_relevant = 1"},
+		{target: &d.WithDocuments, where: "archived = 0 and has_document = 1"},
+		{target: &d.ExtractedDocuments, where: "archived = 0 and document_status = ?", args: []any{string(models.ExtractionCompleted)}},
+		{target: &d.QueuedDocuments, where: "archived = 0 and document_status in (?, ?)", args: []any{string(models.ExtractionQueued), string(models.ExtractionRetry)}},
+		{target: &d.OpenTenders, where: "archived = 0 and status = 'open'"},
+	}
+	for _, item := range countQueries {
+		if err := s.db.QueryRowContext(ctx, "select count(*) from tender_dashboard_index where "+item.where, item.args...).Scan(item.target); err != nil {
+			return models.Dashboard{}, err
+		}
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-		select payload
-		from tenders
-		where `+activeTenderSQLClause("")+`
-		order by coalesce(json_extract(payload, '$.PublishedDate'), '') desc, id asc
+		select t.payload
+		from tender_dashboard_index i
+		join tenders t on t.id = i.tender_id
+		where i.archived = 0
+		order by i.published_date desc, i.tender_id asc
 		limit 8
 	`)
 	if err != nil {

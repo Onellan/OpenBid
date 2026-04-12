@@ -22,6 +22,7 @@ FROM alpine:3.20
 ARG VERSION=dev
 ARG VCS_REF=local
 ARG BUILD_DATE=unknown
+# hadolint ignore=DL3018
 RUN apk add --no-cache ca-certificates
 RUN addgroup -S app && adduser -S app -G app
 LABEL org.opencontainers.image.title="OpenBid App" \
@@ -39,4 +40,5 @@ COPY web ./web
 RUN mkdir -p /app/data && chown -R app:app /app
 USER app
 EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD wget -qO- "http://127.0.0.1:${PORT:-8080}/healthz" || exit 1
 CMD ["openbid-server"]

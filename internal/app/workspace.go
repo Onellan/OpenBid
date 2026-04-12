@@ -5,7 +5,6 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"sort"
@@ -19,8 +18,11 @@ import (
 )
 
 type QueueItem struct {
-	Job    models.ExtractionJob
-	Tender models.Tender
+	Job           models.ExtractionJob
+	Tender        models.Tender
+	Title         string
+	DetailURL     string
+	IsMaintenance bool
 }
 
 type QueueSection struct {
@@ -819,7 +821,16 @@ func (a *App) QueuePage(w http.ResponseWriter, r *http.Request) {
 	items := make([]QueueItem, 0, len(jobs))
 	for _, job := range jobs {
 		tender := tenderByID[job.TenderID]
-		items = append(items, QueueItem{Job: job, Tender: tender})
+		item := QueueItem{Job: job, Tender: tender, Title: tender.Title, DetailURL: "/tenders/" + tender.ID}
+		if job.JobType == models.JobTypeExpiredTenderCleanup {
+			item.Title = models.ExpiredTenderCleanupJobName
+			if strings.TrimSpace(job.JobName) != "" {
+				item.Title = job.JobName
+			}
+			item.DetailURL = "/queue#expired-tender-cleanup"
+			item.IsMaintenance = true
+		}
+		items = append(items, item)
 	}
 	grouped := map[models.ExtractionState][]QueueItem{
 		models.ExtractionFailed:     {},
@@ -867,23 +878,19 @@ func (a *App) CleanupExpiredTenders(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	result, err := a.Store.CleanupExpiredTenders(r.Context(), time.Now().UTC())
-	if err != nil {
-		a.serverError(w, r, "unable to remove expired tenders", err)
+	if err := a.Store.QueueJob(r.Context(), models.ExtractionJob{
+		ID:       models.ExpiredTenderCleanupJobID,
+		JobType:  models.JobTypeExpiredTenderCleanup,
+		JobName:  models.ExpiredTenderCleanupJobName,
+		TenantID: t.ID,
+		UserID:   u.ID,
+		State:    models.ExtractionQueued,
+	}); err != nil {
+		a.serverError(w, r, "unable to queue expired tender cleanup", err)
 		return
 	}
-	metadata := map[string]string{
-		"removed_count": strconv.Itoa(result.RemovedCount),
-	}
-	if len(result.RemovedTenderIDs) > 0 {
-		metadata["removed_tender_ids"] = strings.Join(result.RemovedTenderIDs, ",")
-	}
-	log.Printf("user=%s tenant=%s removed %d expired tenders: %s", u.ID, t.ID, result.RemovedCount, strings.Join(result.RemovedTenderIDs, ","))
-	a.auditAction(r.Context(), actionContext{User: u, Tenant: t, Member: m}, "cleanup", "expired_tenders", t.ID, "Expired tender cleanup completed", metadata)
-	message := fmt.Sprintf("Removed %d expired tenders", result.RemovedCount)
-	if result.RemovedCount == 0 {
-		message = "No expired tenders to remove"
-	}
+	a.auditAction(r.Context(), actionContext{User: u, Tenant: t, Member: m}, "queue", "expired_tender_cleanup", models.ExpiredTenderCleanupJobID, "Expired tender cleanup queued", nil)
+	message := "Expired tender cleanup queued. Track it in the queue below."
 	a.redirectAfterAction(w, r, "/queue#expired-tender-cleanup", "success", message)
 }
 

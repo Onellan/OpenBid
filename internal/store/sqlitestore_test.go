@@ -211,6 +211,129 @@ func TestSQLiteQueueWritesDeduplicate(t *testing.T) {
 	}
 }
 
+func TestSQLiteQueueRejectsDuplicateTenderDocumentAcrossStates(t *testing.T) {
+	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if err := s.QueueJob(ctx, models.ExtractionJob{ID: "completed-job", TenderID: "t1", DocumentURL: "https://example.org/doc.pdf", State: models.ExtractionCompleted}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.QueueJob(ctx, models.ExtractionJob{ID: "queued-job", TenderID: "t1", DocumentURL: "https://example.org/doc.pdf", State: models.ExtractionQueued}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.QueueJob(ctx, models.ExtractionJob{ID: "second-doc", TenderID: "t1", DocumentURL: "https://example.org/other.pdf", State: models.ExtractionQueued}); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := s.ListJobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 2 {
+		t.Fatalf("expected duplicate document to be ignored while distinct document is queued, got %d jobs", len(jobs))
+	}
+	for _, job := range jobs {
+		if job.TenderID == "t1" && job.DocumentURL == "https://example.org/doc.pdf" && job.ID != "completed-job" {
+			t.Fatalf("expected original completed job to be preserved, got %#v", job)
+		}
+	}
+}
+
+func TestSQLiteMigrationDeduplicatesLegacyExtractionJobs(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "store.db")
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?_pragma=foreign_keys(ON)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `create table jobs (id text primary key, payload text not null);`); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := sqliteUpsertJSON(ctx, db, "jobs", "completed-job", models.ExtractionJob{ID: "completed-job", TenderID: "legacy-tender", DocumentURL: "https://example.org/doc.pdf", State: models.ExtractionCompleted, UpdatedAt: now.Add(-time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sqliteUpsertJSON(ctx, db, "jobs", "queued-job", models.ExtractionJob{ID: "queued-job", TenderID: "legacy-tender", DocumentURL: "https://example.org/doc.pdf", State: models.ExtractionQueued, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	jobs, err := s.ListJobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 || jobs[0].ID != "queued-job" {
+		t.Fatalf("expected legacy duplicates to collapse to queued job, got %#v", jobs)
+	}
+	if err := s.QueueJob(ctx, models.ExtractionJob{ID: "future-duplicate", TenderID: "legacy-tender", DocumentURL: "https://example.org/doc.pdf", State: models.ExtractionQueued}); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err = s.ListJobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected unique job index to reject future duplicate, got %d jobs", len(jobs))
+	}
+}
+
+func TestSQLiteMaintenanceJobIsTrackedWithoutTender(t *testing.T) {
+	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if err := s.QueueJob(ctx, models.ExtractionJob{
+		ID:      models.ExpiredTenderCleanupJobID,
+		JobType: models.JobTypeExpiredTenderCleanup,
+		JobName: models.ExpiredTenderCleanupJobName,
+		State:   models.ExtractionQueued,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := s.PruneInvalidJobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 0 {
+		t.Fatalf("expected maintenance job to be preserved by prune, removed %d", removed)
+	}
+	jobs, err := s.ListValidJobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 || jobs[0].JobType != models.JobTypeExpiredTenderCleanup {
+		t.Fatalf("expected maintenance job in valid queue listing, got %#v", jobs)
+	}
+	counts, err := s.JobStateCounts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts.Queued != 1 {
+		t.Fatalf("expected maintenance job counted as queued, got %#v", counts)
+	}
+	if err := s.QueueJob(ctx, models.ExtractionJob{JobType: models.JobTypeExpiredTenderCleanup, State: models.ExtractionQueued}); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err = s.ListJobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected repeated active maintenance enqueue to keep one job, got %#v", jobs)
+	}
+}
+
 func TestSQLiteUpsertBookmarkUpdatesExistingNote(t *testing.T) {
 	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {
@@ -980,5 +1103,22 @@ func TestSQLiteListAuditEntriesPageAndJobStateCountsUseFastPaths(t *testing.T) {
 	}
 	if counts.Processing != 0 || counts.Completed != 0 || counts.Retry != 0 {
 		t.Fatalf("unexpected extra job counts: %#v", counts)
+	}
+
+	if err := s.UpsertTender(ctx, models.Tender{ID: "dashboard-completed", Title: "Done", Status: "open", EngineeringRelevant: true, DocumentURL: "https://example.org/done.pdf", DocumentStatus: models.ExtractionCompleted, PublishedDate: "2026-04-04"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertTender(ctx, models.Tender{ID: "dashboard-archived", Title: "Archived", Status: "open", EngineeringRelevant: true, DocumentURL: "https://example.org/archived.pdf", DocumentStatus: models.ExtractionCompleted, PublishedDate: "2026-04-05", ArchivedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	dashboard, err := s.Dashboard(ctx, "tenant-1", true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dashboard.TotalTenders != 2 || dashboard.OpenTenders != 2 || dashboard.EngineeringRelevant != 1 || dashboard.WithDocuments != 1 || dashboard.ExtractedDocuments != 1 {
+		t.Fatalf("expected dashboard counts to use active tenders only, got %#v", dashboard)
+	}
+	if len(dashboard.RecentTenders) == 0 || dashboard.RecentTenders[0].ID == "dashboard-archived" {
+		t.Fatalf("expected archived tender excluded from recent dashboard tenders, got %#v", dashboard.RecentTenders)
 	}
 }

@@ -200,6 +200,10 @@ func (r Runner) processJobs(ctx context.Context) {
 		return
 	}
 	for _, job := range jobs {
+		if job.JobType == models.JobTypeExpiredTenderCleanup {
+			r.processExpiredTenderCleanupJob(ctx, job)
+			continue
+		}
 		if strings.TrimSpace(job.TenderID) == "" {
 			r.logKV("worker_job_prune_missing_tender_id", "job", job.ID)
 			r.deleteJob(ctx, job.ID)
@@ -277,6 +281,61 @@ func (r Runner) processJobs(ctx context.Context) {
 		r.persistJobUpdate(ctx, job)
 		r.logKV("worker_job_extract_completed", "job", job.ID, "tender", job.TenderID, "attempts", job.Attempts)
 	}
+}
+
+func (r Runner) processExpiredTenderCleanupJob(ctx context.Context, job models.ExtractionJob) {
+	if !(job.State == models.ExtractionQueued || job.State == models.ExtractionRetry) || r.now().Before(job.NextAttemptAt) {
+		return
+	}
+	job.State = models.ExtractionProcessing
+	job.Attempts++
+	job.LastError = ""
+	job.ResultSummary = "Archiving expired tenders now."
+	if !r.persistJobUpdate(ctx, job) {
+		return
+	}
+
+	result, err := r.Store.CleanupExpiredTenders(ctx, r.now())
+	if err != nil {
+		job.State = models.ExtractionRetry
+		if job.Attempts >= 3 {
+			job.State = models.ExtractionFailed
+		}
+		job.LastError = err.Error()
+		job.ResultSummary = "Expired tender cleanup could not finish."
+		if job.State == models.ExtractionFailed {
+			job.NextAttemptAt = time.Time{}
+		} else {
+			job.NextAttemptAt = r.now().Add(time.Duration(job.Attempts*job.Attempts) * time.Minute)
+		}
+		r.persistJobUpdate(ctx, job)
+		r.logKV("worker_expired_cleanup_failed", "job", job.ID, "attempts", job.Attempts, "state", job.State, "error", err)
+		return
+	}
+
+	job.State = models.ExtractionCompleted
+	job.NextAttemptAt = time.Time{}
+	job.LastError = ""
+	job.ResultSummary = fmt.Sprintf("Removed %d expired tenders.", result.RemovedCount)
+	r.persistJobUpdate(ctx, job)
+	if strings.TrimSpace(job.TenantID) != "" {
+		metadata := map[string]string{"removed_count": strconv.Itoa(result.RemovedCount)}
+		if len(result.RemovedTenderIDs) > 0 {
+			metadata["removed_tender_ids"] = strings.Join(result.RemovedTenderIDs, ",")
+		}
+		if err := r.Store.AddAuditEntry(ctx, models.AuditEntry{
+			TenantID: job.TenantID,
+			UserID:   job.UserID,
+			Action:   "cleanup",
+			Entity:   "expired_tenders",
+			EntityID: job.ID,
+			Summary:  "Expired tender cleanup completed",
+			Metadata: metadata,
+		}); err != nil {
+			r.logKV("worker_expired_cleanup_audit_failed", "job", job.ID, "tenant", job.TenantID, "error", err)
+		}
+	}
+	r.logKV("worker_expired_cleanup_completed", "job", job.ID, "removed", result.RemovedCount)
 }
 
 func (r Runner) processSourceChecks(ctx context.Context) {

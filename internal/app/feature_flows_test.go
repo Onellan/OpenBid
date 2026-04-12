@@ -349,18 +349,18 @@ func TestDataPipesMenuAndExpiredTenderCleanupFlow(t *testing.T) {
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("expected redirect after cleanup, got %d body=%s", w.Code, w.Body.String())
 	}
-	if location := w.Header().Get("Location"); !strings.Contains(location, "Removed+1+expired+tenders") {
-		t.Fatalf("expected cleanup result message, got %q", location)
+	if location := w.Header().Get("Location"); !strings.Contains(location, "Expired+tender+cleanup+queued") {
+		t.Fatalf("expected queued cleanup message, got %q", location)
 	}
-	if _, err := a.Store.GetTender(t.Context(), "cleanup-expired"); err != store.ErrNotFound {
-		t.Fatalf("expected expired tender hidden after cleanup, got %v", err)
+	if _, err := a.Store.GetTender(t.Context(), "cleanup-expired"); err != nil {
+		t.Fatalf("expected expired tender to remain until worker runs cleanup, got %v", err)
 	}
-	if _, err := a.Store.GetTender(t.Context(), "cleanup-active"); err != nil {
-		t.Fatalf("expected active tender preserved, got %v", err)
+	jobs, err := a.Store.ListJobs(t.Context())
+	if err != nil {
+		t.Fatal(err)
 	}
-	bookmarks, err := a.Store.ListBookmarks(t.Context(), tenant.ID, user.ID)
-	if err != nil || len(bookmarks) != 1 || bookmarks[0].TenderID != "cleanup-expired" {
-		t.Fatalf("expected linked bookmark to be preserved, bookmarks=%#v err=%v", bookmarks, err)
+	if len(jobs) != 1 || jobs[0].ID != models.ExpiredTenderCleanupJobID || jobs[0].State != models.ExtractionQueued {
+		t.Fatalf("expected queued expired cleanup job, got %#v", jobs)
 	}
 	entries, err := a.Store.ListAuditEntries(t.Context(), tenant.ID)
 	if err != nil {
@@ -368,13 +368,13 @@ func TestDataPipesMenuAndExpiredTenderCleanupFlow(t *testing.T) {
 	}
 	foundAudit := false
 	for _, entry := range entries {
-		if entry.Action == "cleanup" && entry.Entity == "expired_tenders" && entry.Metadata["removed_count"] == "1" {
+		if entry.Action == "queue" && entry.Entity == "expired_tender_cleanup" {
 			foundAudit = true
 			break
 		}
 	}
 	if !foundAudit {
-		t.Fatalf("expected cleanup audit entry, got %#v", entries)
+		t.Fatalf("expected cleanup queue audit entry, got %#v", entries)
 	}
 
 	req = httptest.NewRequest(http.MethodPost, "/data-pipes/remove-expired-tenders", strings.NewReader(form.Encode()))
@@ -383,10 +383,17 @@ func TestDataPipesMenuAndExpiredTenderCleanupFlow(t *testing.T) {
 	w = httptest.NewRecorder()
 	a.Server.Handler.ServeHTTP(w, req)
 	if w.Code != http.StatusSeeOther {
-		t.Fatalf("expected redirect after repeated cleanup, got %d", w.Code)
+		t.Fatalf("expected redirect after repeated cleanup enqueue, got %d", w.Code)
 	}
-	if location := w.Header().Get("Location"); !strings.Contains(location, "No+expired+tenders+to+remove") {
-		t.Fatalf("expected idempotent no-op result message, got %q", location)
+	if location := w.Header().Get("Location"); !strings.Contains(location, "Expired+tender+cleanup+queued") {
+		t.Fatalf("expected repeated enqueue message, got %q", location)
+	}
+	jobs, err = a.Store.ListJobs(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected repeated cleanup enqueue to keep a single tracking job, got %#v", jobs)
 	}
 }
 
