@@ -1,6 +1,7 @@
 .git
 .github
 .codex
+.trunk
 .idea
 .vscode
 .env
@@ -15,6 +16,7 @@ node_modules
 playwright-report
 test-results
 InstallationInstructions/runtime
+*.exe
 migrations
 nginx
 scripts

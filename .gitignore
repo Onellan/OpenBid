@@ -9,6 +9,9 @@
 /output/
 /InstallationInstructions/runtime/
 
+# Build artifacts
+*.exe
+
 # Local databases
 *.db
 *.db-shm
