@@ -59,6 +59,9 @@ func (r Runner) Run(ctx context.Context) error {
 		r.logKV("worker_reset_running_sources_failed", "error", err)
 	}
 	r.writeHeartbeat()
+	heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)
+	defer stopHeartbeat()
+	go r.runHeartbeat(heartbeatCtx)
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -75,6 +78,31 @@ func (r Runner) Run(ctx context.Context) error {
 		case <-timer.C:
 		}
 	}
+}
+
+func (r Runner) runHeartbeat(ctx context.Context) {
+	interval := r.heartbeatInterval()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			r.writeHeartbeat()
+		}
+	}
+}
+
+func (r Runner) heartbeatInterval() time.Duration {
+	interval := 30 * time.Second
+	if r.LoopEvery > 0 && r.LoopEvery < interval {
+		interval = r.LoopEvery
+	}
+	if interval < time.Second {
+		return time.Second
+	}
+	return interval
 }
 
 func (r Runner) writeHeartbeat() {
