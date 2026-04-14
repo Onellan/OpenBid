@@ -381,11 +381,22 @@ func (a *App) ensureSourceConfigs(ctx context.Context) error {
 		return err
 	}
 	existing := map[string]bool{}
+	existingByKey := map[string]models.SourceConfig{}
 	for _, cfg := range configs {
 		existing[cfg.Key] = true
+		existingByKey[cfg.Key] = cfg
 	}
 	for _, cfg := range source.DefaultConfigs(a.Config.TreasuryFeedURL) {
 		if existing[cfg.Key] {
+			current := existingByKey[cfg.Key]
+			if shouldUpgradeDefaultSourceConfig(current, cfg) {
+				current.Name = cfg.Name
+				current.Type = cfg.Type
+				current.FeedURL = cfg.FeedURL
+				if err := a.Store.UpsertSourceConfig(ctx, current); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		if err := a.Store.UpsertSourceConfig(ctx, cfg); err != nil {
@@ -402,6 +413,13 @@ func (a *App) ensureSourceConfigs(ctx context.Context) error {
 		existing[cfg.Key] = true
 	}
 	return nil
+}
+
+func shouldUpgradeDefaultSourceConfig(current, desired models.SourceConfig) bool {
+	if current.Key == "city-of-joburg" && desired.Type == source.TypeCityOfJoburgPortal {
+		return current.Type == source.TypeWebPagePortal && strings.Contains(current.FeedURL, "/2022%20TENDERS/Tenders.aspx")
+	}
+	return false
 }
 
 func (a *App) defaultSourceScheduleSettings() models.SourceScheduleSettings {

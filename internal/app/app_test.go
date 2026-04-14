@@ -455,7 +455,7 @@ func TestAdminCreateETendersSourceStoresConfig(t *testing.T) {
 	_, _, cookie, csrf := adminSession(t, a)
 	form := url.Values{
 		"csrf_token": {csrf},
-		"name":       {"eTenders"},
+		"name":       {"eTenders Custom"},
 		"feed_url":   {"https://www.etenders.gov.za/Home/opportunities?id=1"},
 		"type":       {"etenders_portal"},
 	}
@@ -473,7 +473,7 @@ func TestAdminCreateETendersSourceStoresConfig(t *testing.T) {
 	}
 	found := false
 	for _, cfg := range configs {
-		if cfg.Key == "etenders" && cfg.Type == "etenders_portal" && cfg.FeedURL == "https://www.etenders.gov.za/Home/opportunities?id=1" {
+		if cfg.Key == "etenders-custom" && cfg.Type == "etenders_portal" && cfg.FeedURL == "https://www.etenders.gov.za/Home/opportunities?id=1" {
 			found = true
 		}
 	}
@@ -575,6 +575,70 @@ func TestAdminCreateEskomSourceStoresConfig(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected stored Eskom source config, got %#v", configs)
+	}
+}
+
+func TestAdminCreateDurbanSourceStoresConfig(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, csrf := adminSession(t, a)
+	form := url.Values{
+		"csrf_token": {csrf},
+		"name":       {"Durban Procurement"},
+		"feed_url":   {"https://www.durban.gov.za/pages/business/procurement"},
+		"type":       {"durban_procurement_portal"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/sources/create", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", w.Code)
+	}
+	configs, err := a.Store.ListSourceConfigs(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, cfg := range configs {
+		if cfg.Key == "durban-procurement" && cfg.Type == "durban_procurement_portal" && cfg.FeedURL == "https://www.durban.gov.za/pages/business/procurement" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected stored Durban source config, got %#v", configs)
+	}
+}
+
+func TestAdminCreateCityOfJoburgSourceStoresConfig(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, csrf := adminSession(t, a)
+	form := url.Values{
+		"csrf_token": {csrf},
+		"name":       {"City of Johannesburg Custom"},
+		"feed_url":   {"https://joburg.org.za/work_/Pages/2026-Tenders/Bid-Opening-Registers-2026.aspx"},
+		"type":       {"city_of_joburg_portal"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/sources/create", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", w.Code)
+	}
+	configs, err := a.Store.ListSourceConfigs(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, cfg := range configs {
+		if cfg.Key == "city-of-johannesburg-custom" && cfg.Type == "city_of_joburg_portal" && cfg.FeedURL == "https://joburg.org.za/work_/Pages/2026-Tenders/Bid-Opening-Registers-2026.aspx" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected stored City of Johannesburg source config, got %#v", configs)
 	}
 }
 
