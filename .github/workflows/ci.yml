@@ -34,18 +34,19 @@ jobs:
         with:
           filters: |
             docker_app:
-              - 'Dockerfile.app'
+              - 'ProductionDeployment/Dockerfile.app'
               - 'go.mod'
               - 'go.sum'
               - 'cmd/**'
               - 'internal/**'
               - 'web/**'
             docker_extractor:
-              - 'Dockerfile.extractor'
+              - 'ProductionDeployment/Dockerfile.extractor'
               - 'extractor/**'
             compose_stack:
-              - 'docker-compose.yml'
-              - 'nginx/**'
+              - 'ProductionDeployment/docker-compose.yml'
+              - 'ProductionDeployment/docker-compose.ghcr.yml'
+              - 'ProductionDeployment/nginx/**'
               - '.github/workflows/ci.yml'
             browser_e2e:
               - 'package.json'
@@ -83,9 +84,9 @@ jobs:
           node-version: "20"
           cache: "npm"
       - name: Prepare runtime directories
-        run: mkdir -p data backups secrets
+        run: cd ProductionDeployment && sh ./setup.sh
       - name: Boot compose stack
-        run: docker compose up --build -d
+        run: APP_ENV=development SECURE_COOKIES=false docker compose -f ProductionDeployment/docker-compose.yml up --build -d
       - name: Wait for healthz
         run: |
           echo "Waiting for app healthz endpoint..."
@@ -103,22 +104,22 @@ jobs:
         if: failure()
         run: |
           echo "=== Docker Compose Status ==="
-          docker compose ps
+          docker compose -f ProductionDeployment/docker-compose.yml ps
           echo ""
           echo "=== App Container Logs (last 100 lines) ==="
-          docker compose logs --tail=100 app
+          docker compose -f ProductionDeployment/docker-compose.yml logs --tail=100 app
           echo ""
           echo "=== Extractor Container Logs (last 50 lines) ==="
-          docker compose logs --tail=50 extractor
+          docker compose -f ProductionDeployment/docker-compose.yml logs --tail=50 extractor
           echo ""
           echo "=== Proxy Container Logs (last 50 lines) ==="
-          docker compose logs --tail=50 proxy
+          docker compose -f ProductionDeployment/docker-compose.yml logs --tail=50 proxy
           echo ""
           echo "=== Container Health Status ==="
           docker inspect openbid-app-1 --format '{{json .State.Health}}' 2>/dev/null | jq . || docker inspect openbid-app-1 --format '{{json .State.Health}}'
           exit 1
       - name: Seed deterministic E2E data
-        run: go run ./cmd/e2e_seed
+        run: DATA_PATH=ProductionDeployment/runtime/data/store.db go run ./cmd/e2e_seed
       - name: Install browser test dependencies
         run: npm ci
       - name: Install Playwright browser
@@ -128,8 +129,8 @@ jobs:
       - name: Show compose status on failure
         if: failure()
         run: |
-          docker compose ps
-          docker compose logs --tail=200
+          docker compose -f ProductionDeployment/docker-compose.yml ps
+          docker compose -f ProductionDeployment/docker-compose.yml logs --tail=200
       - name: Tear down compose stack
         if: always()
-        run: docker compose down -v --remove-orphans
+        run: docker compose -f ProductionDeployment/docker-compose.yml down -v --remove-orphans

@@ -68,7 +68,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile.app
+          file: ProductionDeployment/Dockerfile.app
           push: true
           tags: ${{ steps.app_meta.outputs.tags }}
           labels: ${{ steps.app_meta.outputs.labels }}
@@ -82,7 +82,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile.extractor
+          file: ProductionDeployment/Dockerfile.extractor
           push: true
           tags: ${{ steps.extractor_meta.outputs.tags }}
           labels: ${{ steps.extractor_meta.outputs.labels }}

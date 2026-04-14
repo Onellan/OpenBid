@@ -7,9 +7,9 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-WorkingDirectory=/opt/openbid/InstallationInstructions
-ExecStart=/usr/bin/docker compose --env-file .env up -d
-ExecStop=/usr/bin/docker compose --env-file .env down
+Environment=OPENBID_DEPLOY_DIR=.
+ExecStart=sh -lc 'cd "$OPENBID_DEPLOY_DIR" && docker compose up -d'
+ExecStop=sh -lc 'cd "$OPENBID_DEPLOY_DIR" && docker compose down'
 TimeoutStartSec=0
 
 [Install]

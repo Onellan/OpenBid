@@ -2,7 +2,12 @@
 set -eu
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-STATE_DIR="${ALERT_STATE_DIR:-.ops-state}"
+if [ -d ./runtime ]; then
+  DEFAULT_ALERT_STATE_DIR="./runtime/ops-state"
+else
+  DEFAULT_ALERT_STATE_DIR=".ops-state"
+fi
+STATE_DIR="${ALERT_STATE_DIR:-$DEFAULT_ALERT_STATE_DIR}"
 STATE_FILE="$STATE_DIR/docker-alert-state.txt"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 ENV_FILE="${ENV_FILE:-}"

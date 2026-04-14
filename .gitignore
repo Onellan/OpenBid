@@ -7,7 +7,17 @@
 /backups/
 /secrets/
 /output/
-/InstallationInstructions/runtime/
+/ProductionDeployment/runtime/*
+!/ProductionDeployment/runtime/.gitkeep
+!/ProductionDeployment/runtime/data/
+/ProductionDeployment/runtime/data/*
+!/ProductionDeployment/runtime/data/.gitkeep
+!/ProductionDeployment/runtime/backups/
+/ProductionDeployment/runtime/backups/*
+!/ProductionDeployment/runtime/backups/.gitkeep
+!/ProductionDeployment/runtime/secrets/
+/ProductionDeployment/runtime/secrets/*
+!/ProductionDeployment/runtime/secrets/.gitkeep
 
 # Build artifacts
 *.exe

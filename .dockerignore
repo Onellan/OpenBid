@@ -7,7 +7,6 @@
 .env
 .env.*
 backups
-docs
 secrets
 tmp
 data
@@ -15,10 +14,9 @@ output
 node_modules
 playwright-report
 test-results
-InstallationInstructions/runtime
+ProductionDeployment/runtime
 *.exe
 migrations
-nginx
 scripts
 *.md
 *.txt
