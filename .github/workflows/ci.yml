@@ -86,7 +86,16 @@ jobs:
       - name: Prepare runtime directories
         run: cd ProductionDeployment && sh ./setup.sh
       - name: Boot compose stack
-        run: APP_ENV=development SECURE_COOKIES=false docker compose -f ProductionDeployment/docker-compose.yml up --build -d
+        run: |
+          # CI uses env-based secrets because setup.sh creates 600 bind-mounted secret files,
+          # which are not readable by the non-root app user; this is acceptable for ephemeral smoke tests.
+          APP_ENV=development \
+          SECURE_COOKIES=false \
+          SECRET_KEY=ci-smoke-secret-change-me-2026 \
+          SECRET_KEY_FILE= \
+          BOOTSTRAP_ADMIN_PASSWORD=OpenBid!2026-SmokeTest123 \
+          BOOTSTRAP_ADMIN_PASSWORD_FILE= \
+          docker compose -f ProductionDeployment/docker-compose.yml up --build -d
       - name: Wait for healthz
         run: |
           echo "Waiting for app healthz endpoint..."

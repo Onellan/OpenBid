@@ -25,7 +25,9 @@ services:
     volumes:
       - "./runtime/data:/app/data"
       - "./runtime/backups:/app/backups"
-      - "./runtime/secrets:/run/secrets:ro"
+    secrets:
+      - openbid_secret_key
+      - openbid_bootstrap_admin_password
     tmpfs:
       - "/tmp"
     read_only: true
@@ -80,7 +82,9 @@ services:
     volumes:
       - "./runtime/data:/app/data"
       - "./runtime/backups:/app/backups"
-      - "./runtime/secrets:/run/secrets:ro"
+    secrets:
+      - openbid_secret_key
+      - openbid_bootstrap_admin_password
     tmpfs:
       - "/tmp"
     read_only: true
@@ -177,3 +181,9 @@ services:
       start_period: 10s
     restart: unless-stopped
     stop_grace_period: 15s
+
+secrets:
+  openbid_secret_key:
+    file: ./runtime/secrets/openbid_secret_key
+  openbid_bootstrap_admin_password:
+    file: ./runtime/secrets/openbid_bootstrap_admin_password

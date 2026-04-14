@@ -8,7 +8,7 @@ All production runtime state lives under `runtime/`:
 
 - `runtime/data`: SQLite database files
 - `runtime/backups`: database backups
-- `runtime/secrets`: secret files mounted read-only into the app containers
+- `runtime/secrets`: host-side source files for Docker Compose secrets
 
 Create or repair the directory layout with:
 
@@ -17,6 +17,24 @@ Create or repair the directory layout with:
 ```
 
 The script is idempotent and does not overwrite existing data.
+
+## Secrets
+
+`setup.sh` creates these files when they are missing:
+
+```text
+runtime/secrets/openbid_secret_key
+runtime/secrets/openbid_bootstrap_admin_password
+```
+
+The compose files expose those files to only the `app` and `worker` services through Compose secrets:
+
+```text
+/run/secrets/openbid_secret_key
+/run/secrets/openbid_bootstrap_admin_password
+```
+
+OpenBid reads those paths through `SECRET_KEY_FILE` and `BOOTSTRAP_ADMIN_PASSWORD_FILE`. GitHub Actions smoke tests are the exception: CI uses fixed environment-based test secrets so the ephemeral smoke stack does not depend on host secret file ownership.
 
 ## Source Build
 

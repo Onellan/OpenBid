@@ -82,24 +82,36 @@ APP_IMAGE_TAG=latest
 EXTRACTOR_IMAGE_TAG=latest
 ```
 
-Secrets default to files mounted from `./runtime/secrets`:
+Host-side production secrets live in `runtime/secrets/` and Docker Compose injects them into the `app` and `worker` containers as Compose secrets. The application keeps reading the same in-container paths:
 
 ```env
 SECRET_KEY_FILE=/run/secrets/openbid_secret_key
 BOOTSTRAP_ADMIN_PASSWORD_FILE=/run/secrets/openbid_bootstrap_admin_password
 ```
 
+Do not put production secrets directly into `.env`; keep them in `runtime/secrets/` and let Compose mount them as secrets.
+
 ## Runtime Mounts
 
-All bind mounts are relative to this folder:
+All runtime bind mounts are relative to this folder:
 
 ```yaml
 ./runtime/data:/app/data
 ./runtime/backups:/app/backups
-./runtime/secrets:/run/secrets:ro
+```
+
+Secrets are not exposed with a direct directory bind mount. They are declared as Compose secrets sourced from:
+
+```yaml
+runtime/secrets/openbid_secret_key
+runtime/secrets/openbid_bootstrap_admin_password
 ```
 
 No host-specific install path is required.
+
+## CI Smoke Secrets
+
+GitHub Actions smoke tests use environment-based test secrets only for the short-lived CI stack. Production deployments should use the `runtime/secrets/` files injected through Compose secrets.
 
 ## Daily Commands
 
@@ -219,5 +231,6 @@ If production startup fails, check:
 
 - `runtime/secrets/openbid_secret_key` exists and is non-empty
 - `runtime/secrets/openbid_bootstrap_admin_password` exists and is non-empty
+- `docker compose ps` shows the `app` and `worker` containers healthy after Compose injects those files into `/run/secrets/...`
 - `SECURE_COOKIES=true` when `APP_ENV=production`
 - the command is being run from `ProductionDeployment/`

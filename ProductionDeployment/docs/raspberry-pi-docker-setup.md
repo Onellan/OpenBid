@@ -91,6 +91,13 @@ runtime/secrets/openbid_secret_key
 runtime/secrets/openbid_bootstrap_admin_password
 ```
 
+Docker Compose injects those host files into the `app` and `worker` containers as Compose secrets at:
+
+```text
+/run/secrets/openbid_secret_key
+/run/secrets/openbid_bootstrap_admin_password
+```
+
 Read the generated first-login password:
 
 ```bash
