@@ -203,7 +203,7 @@ func TestHealthPageShowsOperationalCardsForAdmins(t *testing.T) {
 		t.Fatalf("expected 200 got %d", w.Code)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, "Platform health") || !strings.Contains(body, "Worker pipeline") || !strings.Contains(body, "Database") || !strings.Contains(body, "Source health") || !strings.Contains(body, "treasury") {
+	if !strings.Contains(body, "Platform health") || !strings.Contains(body, "Worker data pipes") || !strings.Contains(body, "Database") || !strings.Contains(body, "Source health") || !strings.Contains(body, "treasury") {
 		t.Fatalf("expected health page content, got %s", body)
 	}
 }

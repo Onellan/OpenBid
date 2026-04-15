@@ -11,9 +11,9 @@ import (
 var ErrNotFound = errors.New("not found")
 
 type ListFilter struct {
-	Query, Source, Province, Category, Issuer, Status, CIDB, WorkflowStatus, DocumentStatus, Sort, View, TenantID, UserID string
-	BookmarkedOnly, HasDocuments                                                                                          bool
-	Page, PageSize                                                                                                        int
+	Query, Source, Province, Category, Issuer, Status, CIDB, WorkflowStatus, DocumentStatus, GroupTag, Sort, View, TenantID, UserID string
+	BookmarkedOnly, HasDocuments                                                                                                    bool
+	Page, PageSize                                                                                                                  int
 }
 
 type RuntimeStats struct {
@@ -32,6 +32,9 @@ type RuntimeStats struct {
 	WorkflowCount         int
 	BookmarkCount         int
 	SavedSearchCount      int
+	KeywordProfileCount   int
+	KeywordCount          int
+	KeywordMatchCount     int
 	SyncRunCount          int
 	SourceConfigCount     int
 	SourceHealthCount     int
@@ -47,6 +50,7 @@ type JobStateCounts struct {
 	Retry      int
 	Failed     int
 	Completed  int
+	Skipped    int
 }
 
 type JobAlertSnapshot struct {
@@ -55,6 +59,7 @@ type JobAlertSnapshot struct {
 	Retry           int
 	Failed          int
 	Completed       int
+	Skipped         int
 	OldestPendingAt time.Time
 }
 
@@ -72,6 +77,12 @@ type TenderFilterOptions struct {
 	CIDBGradings   []string
 	WorkflowStatus []string
 	DocumentStatus []string
+	GroupTags      []string
+}
+
+type KeywordMatchFilter struct {
+	Query, Source, Province, Status, Keyword, Sort string
+	Page, PageSize                                 int
 }
 
 func NormalizeFilter(f ListFilter) ListFilter {
@@ -100,6 +111,7 @@ type Store interface {
 	TenderFilterOptions(context.Context, string) (TenderFilterOptions, error)
 	GetTender(context.Context, string) (models.Tender, error)
 	UpsertTender(context.Context, models.Tender) error
+	CleanupExpiredTenders(context.Context, time.Time) (models.ExpiredTenderCleanupResult, error)
 
 	ListUsers(context.Context) ([]models.User, error)
 	ListUsersByIDs(context.Context, []string) ([]models.User, error)
@@ -136,6 +148,32 @@ type Store interface {
 	CountSavedSearches(context.Context, string, string) (int, error)
 	UpsertSavedSearch(context.Context, models.SavedSearch) error
 	DeleteSavedSearch(context.Context, string, string, string) error
+
+	GetSmartExtractionSettings(context.Context, string) (models.SmartExtractionSettings, error)
+	UpsertSmartExtractionSettings(context.Context, models.SmartExtractionSettings) error
+	ListSmartKeywordGroups(context.Context, string) ([]models.SmartKeywordGroup, error)
+	UpsertSmartKeywordGroup(context.Context, models.SmartKeywordGroup) (models.SmartKeywordGroup, error)
+	DeleteSmartKeywordGroup(context.Context, string, string) error
+	ListSmartKeywords(context.Context, string) ([]models.SmartKeyword, error)
+	UpsertSmartKeyword(context.Context, models.SmartKeyword) (models.SmartKeyword, error)
+	DeleteSmartKeyword(context.Context, string, string) error
+	EvaluateSmartTenderForExtraction(context.Context, models.Tender) (models.Tender, models.SmartKeywordEvaluation, bool, error)
+	PreviewSmartKeywords(context.Context, string, int) ([]models.SmartTenderPreview, error)
+	ReprocessSmartKeywords(context.Context, string) (models.SmartReprocessResult, error)
+	SeedSmartKeywordsFromCSV(context.Context, string, string) error
+	ListSavedSmartViews(context.Context, string, string) ([]models.SavedSmartView, error)
+	UpsertSavedSmartView(context.Context, models.SavedSmartView) (models.SavedSmartView, error)
+	DeleteSavedSmartView(context.Context, string, string, string) error
+	ListSmartAlertDeliveries(context.Context, string, string) ([]models.SmartAlertDelivery, error)
+	TestSmartViewAlert(context.Context, string, string, string) (models.SmartAlertDelivery, error)
+
+	GetKeywordProfile(context.Context, string, string) (models.KeywordProfile, error)
+	ListKeywords(context.Context, string, string) ([]models.Keyword, error)
+	UpsertKeyword(context.Context, models.Keyword) (models.Keyword, error)
+	DeleteKeyword(context.Context, string, string, string) error
+	RefreshKeywordMatches(context.Context, string, string) (models.KeywordSearchSummary, error)
+	ListKeywordTenderMatches(context.Context, string, string, KeywordMatchFilter) ([]models.KeywordTenderMatchResult, int, error)
+	KeywordSearchSummary(context.Context, string, string) (models.KeywordSearchSummary, error)
 
 	ListSyncRuns(context.Context) ([]models.SyncRun, error)
 	LatestSyncRun(context.Context) (models.SyncRun, error)

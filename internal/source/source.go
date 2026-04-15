@@ -18,6 +18,9 @@ const (
 	TypeCIDBPortal     = "cidb_portal"
 	TypeEskomPortal    = "eskom_portal"
 	TypeOnlineTenders  = "onlinetenders_portal"
+	TypeDurbanPortal   = "durban_procurement_portal"
+	TypeTransnetPortal = "transnet_portal"
+	TypeWebPagePortal  = "webpage_portal"
 
 	DefaultEskomPageURL = "https://tenderbulletin.eskom.co.za/?pageSize=5&pageNumber=1"
 )
@@ -103,39 +106,43 @@ func NormalizeTenderIdentity(t models.Tender) models.Tender {
 
 func DefaultConfigs(feedURL string) []models.SourceConfig {
 	return []models.SourceConfig{
-		{
-			Key:                 "treasury",
-			Name:                "National Treasury",
-			Type:                TypeJSONFeed,
-			FeedURL:             strings.TrimSpace(feedURL),
-			Enabled:             true,
-			ManualChecksEnabled: true,
-			AutoCheckEnabled:    true,
-		},
-		{
-			Key:                 "eskom",
-			Name:                "Eskom Tender Bulletin",
-			Type:                TypeEskomPortal,
-			FeedURL:             DefaultEskomPageURL,
-			Enabled:             true,
-			ManualChecksEnabled: true,
-			AutoCheckEnabled:    true,
-		},
-		{
-			Key:                 "onlinetenders",
-			Name:                "OnlineTenders South Africa",
-			Type:                TypeOnlineTenders,
-			FeedURL:             DefaultOnlineTendersPageURL,
-			Enabled:             true,
-			ManualChecksEnabled: true,
-			AutoCheckEnabled:    true,
-		},
+		defaultSourceConfig("treasury", "National Treasury", TypeJSONFeed, strings.TrimSpace(feedURL)),
+		defaultSourceConfig("etenders", "eTenders Portal", TypeETendersPortal, "https://www.etenders.gov.za/"),
+		defaultSourceConfig("eskom", "Eskom Tender Bulletin", TypeEskomPortal, DefaultEskomPageURL),
+		defaultSourceConfig("transnet", "Transnet e-Tenders", TypeTransnetPortal, "https://transnetetenders.azurewebsites.net/Home/AdvertisedTenders"),
+		defaultSourceConfig("transnet-esupplier", "Transnet eSupplier Portal", TypeTransnetPortal, "https://esupplierportal.transnet.net/portal/advertisedTenders"),
+		defaultSourceConfig("onlinetenders", "OnlineTenders South Africa", TypeOnlineTenders, DefaultOnlineTendersPageURL),
+		defaultSourceConfig("durban", "eThekwini Municipality Procurement", TypeDurbanPortal, DefaultDurbanProcurementURL),
+		defaultSourceConfig("jhb-property-rfqs", "Joburg Property Company RFQs", TypeWebPagePortal, "https://jhbproperty.co.za/supply-chain-management-scm/rfqs/"),
+		defaultSourceConfig("rand-water", "Rand Water Available Tenders", TypeWebPagePortal, "https://www.randwater.co.za/availabletenders.php"),
+		defaultSourceConfig("hda", "Housing Development Agency Tenders", TypeWebPagePortal, "https://thehda.co.za/index.php/tenders"),
+		defaultSourceConfig("city-of-joburg", "City of Johannesburg Tenders", TypeCityOfJoburgPortal, DefaultCityOfJoburgPageURL),
+		defaultSourceConfig("tshipi", "Tshipi Tenders", TypeWebPagePortal, "https://www.tshipi.co.za/opportunities/tenders"),
+		defaultSourceConfig("ecdc", "Eastern Cape Development Corporation Open Tenders", TypeWebPagePortal, "https://www.ecdc.co.za/open-tenders"),
+		defaultSourceConfig("jda", "Johannesburg Development Agency Current Tenders", TypeWebPagePortal, "https://www.jda.org.za/procurement/current-tenders/"),
+		defaultSourceConfig("gtac", "GTAC Advertised Tenders", TypeWebPagePortal, "https://www.gtac.gov.za/tenders/advertised-tenders/"),
+		defaultSourceConfig("freeport-saldanha", "Freeport Saldanha Tenders", TypeWebPagePortal, "https://freeportsaldanha.com/tenders/how-to-tender/"),
+		defaultSourceConfig("dbsa", "Development Bank of Southern Africa Procurement", TypeWebPagePortal, "https://www.dbsa.org/procurement"),
+		defaultSourceConfig("ppp-kenya", "PPP Kenya Procurement of Goods and Services", TypeWebPagePortal, "https://pppkenya.go.ke/procurement-of-goods-services/"),
+		defaultSourceConfig("csir", "CSIR Tenders", TypeWebPagePortal, "https://www.csir.co.za/work-with-us/tenders"),
+	}
+}
+
+func defaultSourceConfig(key, name, sourceType, feedURL string) models.SourceConfig {
+	return models.SourceConfig{
+		Key:                 key,
+		Name:                name,
+		Type:                sourceType,
+		FeedURL:             strings.TrimSpace(feedURL),
+		Enabled:             true,
+		ManualChecksEnabled: true,
+		AutoCheckEnabled:    true,
 	}
 }
 
 func IsSupportedType(sourceType string) bool {
 	switch strings.TrimSpace(sourceType) {
-	case "", TypeJSONFeed, TypeETendersPortal, TypePublicWorks, TypeCIDBPortal, TypeEskomPortal, TypeOnlineTenders:
+	case "", TypeJSONFeed, TypeETendersPortal, TypePublicWorks, TypeCIDBPortal, TypeEskomPortal, TypeOnlineTenders, TypeDurbanPortal, TypeTransnetPortal, TypeCityOfJoburgPortal, TypeWebPagePortal:
 		return true
 	default:
 		return false
@@ -165,6 +172,14 @@ func AdapterFromConfig(cfg models.SourceConfig) (Adapter, error) {
 		return NewEskomAdapter(key, cfg.FeedURL), nil
 	case TypeOnlineTenders:
 		return NewOnlineTendersAdapter(key, cfg.FeedURL), nil
+	case TypeDurbanPortal:
+		return NewDurbanAdapter(key, cfg.FeedURL), nil
+	case TypeTransnetPortal:
+		return NewTransnetAdapter(key, cfg.FeedURL), nil
+	case TypeCityOfJoburgPortal:
+		return NewCityOfJoburgAdapter(key, cfg.FeedURL), nil
+	case TypeWebPagePortal:
+		return NewWebPageAdapter(key, cfg.FeedURL), nil
 	default:
 		return nil, fmt.Errorf("unsupported source type %q", cfg.Type)
 	}

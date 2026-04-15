@@ -10,14 +10,19 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"openbid/internal/models"
 	"openbid/internal/store"
+	"openbid/internal/tenderstate"
 )
 
 type QueueItem struct {
-	Job    models.ExtractionJob
-	Tender models.Tender
+	Job           models.ExtractionJob
+	Tender        models.Tender
+	Title         string
+	DetailURL     string
+	IsMaintenance bool
 }
 
 type QueueSection struct {
@@ -40,6 +45,7 @@ type QueueSummary struct {
 	Processing int
 	Failed     int
 	Completed  int
+	Skipped    int
 }
 
 type BookmarkedTender struct {
@@ -67,6 +73,7 @@ type tenderFilterViewOptions struct {
 	CIDBGradings   []string
 	WorkflowStatus []string
 	DocumentStatus []string
+	GroupTags      []string
 }
 
 func queueSummary(jobs []models.ExtractionJob) QueueSummary {
@@ -81,6 +88,8 @@ func queueSummary(jobs []models.ExtractionJob) QueueSummary {
 			summary.Failed++
 		case models.ExtractionCompleted:
 			summary.Completed++
+		case models.ExtractionSkipped:
+			summary.Skipped++
 		}
 	}
 	return summary
@@ -92,7 +101,16 @@ func queueSummaryFromCounts(counts store.JobStateCounts) QueueSummary {
 		Processing: counts.Processing,
 		Failed:     counts.Failed,
 		Completed:  counts.Completed,
+		Skipped:    counts.Skipped,
 	}
+}
+
+func skipExpiredExtraction(tender *models.Tender, now time.Time) bool {
+	if !tenderstate.IsExpired(*tender, now) {
+		return false
+	}
+	tenderstate.MarkExtractionSkipped(tender, now)
+	return true
 }
 
 func cloneURLValues(values url.Values) url.Values {
@@ -252,6 +270,7 @@ func tenderFilterOptionsForView(base store.TenderFilterOptions, filter store.Lis
 		CIDBGradings:   ensureCurrentStringOption(base.CIDBGradings, filter.CIDB),
 		WorkflowStatus: ensureCurrentStringOption(base.WorkflowStatus, filter.WorkflowStatus),
 		DocumentStatus: ensureCurrentStringOption(base.DocumentStatus, filter.DocumentStatus),
+		GroupTags:      ensureCurrentStringOption(base.GroupTags, filter.GroupTag),
 	}
 }
 
@@ -260,7 +279,7 @@ func tenderFilterFromRequest(r *http.Request, tenantID, userID string, page, pag
 		Query: r.URL.Query().Get("q"), Source: r.URL.Query().Get("source"), Province: r.URL.Query().Get("province"),
 		Category: r.URL.Query().Get("category"), Issuer: r.URL.Query().Get("issuer"), Status: r.URL.Query().Get("status"),
 		CIDB: r.URL.Query().Get("cidb"), WorkflowStatus: r.URL.Query().Get("workflow_status"),
-		DocumentStatus: r.URL.Query().Get("document_status"), BookmarkedOnly: r.URL.Query().Get("bookmarked_only") == "1",
+		DocumentStatus: r.URL.Query().Get("document_status"), GroupTag: r.URL.Query().Get("group_tag"), BookmarkedOnly: r.URL.Query().Get("bookmarked_only") == "1",
 		HasDocuments: r.URL.Query().Get("has_documents") == "1", Sort: r.URL.Query().Get("sort"), View: r.URL.Query().Get("view"),
 		Page: page, PageSize: pageSize, TenantID: tenantID, UserID: userID,
 	})
@@ -305,6 +324,7 @@ func (a *App) Home(w http.ResponseWriter, r *http.Request) {
 	d, _ := a.Store.Dashboard(r.Context(), t.ID, a.Config.LowMemoryMode, false)
 	bookmarkCount, _ := a.Store.CountBookmarks(r.Context(), t.ID, u.ID)
 	savedCount, _ := a.Store.CountSavedSearches(r.Context(), t.ID, u.ID)
+	keywordSummary, _ := a.Store.KeywordSearchSummary(r.Context(), t.ID, u.ID)
 	jobCounts, _ := a.Store.JobStateCounts(r.Context())
 	sourceHealth, _ := a.Store.ListSourceHealth(r.Context())
 	a.render(w, r, "home.html", map[string]any{
@@ -314,6 +334,7 @@ func (a *App) Home(w http.ResponseWriter, r *http.Request) {
 		"Dashboard":         d,
 		"BookmarkCount":     bookmarkCount,
 		"SavedCount":        savedCount,
+		"KeywordSummary":    keywordSummary,
 		"QueueSummary":      queueSummaryFromCounts(jobCounts),
 		"SourceHealthCount": len(sourceHealth),
 	})
@@ -364,7 +385,7 @@ func (a *App) Tenders(w http.ResponseWriter, r *http.Request) {
 	workflowByTender, _ := a.Store.GetWorkflowsByTenderIDs(r.Context(), t.ID, tenderIDs)
 	params := map[string]string{
 		"q": f.Query, "source": f.Source, "province": f.Province, "category": f.Category, "issuer": f.Issuer, "status": f.Status,
-		"cidb": f.CIDB, "workflow_status": f.WorkflowStatus, "document_status": f.DocumentStatus, "sort": f.Sort, "view": f.View,
+		"cidb": f.CIDB, "workflow_status": f.WorkflowStatus, "document_status": f.DocumentStatus, "group_tag": f.GroupTag, "sort": f.Sort, "view": f.View,
 		"page_size": strconv.Itoa(f.PageSize),
 	}
 	if f.BookmarkedOnly {
@@ -526,6 +547,15 @@ func (a *App) QueueExtraction(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no document url", 400)
 		return
 	}
+	if skipExpiredExtraction(&tender, time.Now().UTC()) {
+		if err := a.Store.UpsertTender(r.Context(), tender); err != nil {
+			a.serverError(w, r, "unable to update tender status", err)
+			return
+		}
+		a.auditAction(r.Context(), actionContext{User: u, Tenant: t, Member: m}, "skip", "queue_job", tender.ID, "Extraction skipped because tender is expired", map[string]string{"reason": tender.ExtractionSkippedReason})
+		a.redirectAfterAction(w, r, "/tenders", "error", "Extraction not queued because the tender is expired")
+		return
+	}
 	tender.DocumentStatus = models.ExtractionQueued
 	if err := a.Store.UpsertTender(r.Context(), tender); err != nil {
 		a.serverError(w, r, "unable to update tender status", err)
@@ -622,6 +652,13 @@ func (a *App) BulkTenders(w http.ResponseWriter, r *http.Request) {
 		case "queue":
 			tender, err := a.Store.GetTender(r.Context(), id)
 			if err == nil && tender.DocumentURL != "" {
+				if skipExpiredExtraction(&tender, time.Now().UTC()) {
+					if err := a.Store.UpsertTender(r.Context(), tender); err != nil {
+						a.serverError(w, r, "unable to mark expired tender skipped", err)
+						return
+					}
+					continue
+				}
 				tender.DocumentStatus = models.ExtractionQueued
 				if err := a.Store.UpsertTender(r.Context(), tender); err != nil {
 					a.serverError(w, r, "unable to queue tender document", err)
@@ -786,13 +823,23 @@ func (a *App) QueuePage(w http.ResponseWriter, r *http.Request) {
 	items := make([]QueueItem, 0, len(jobs))
 	for _, job := range jobs {
 		tender := tenderByID[job.TenderID]
-		items = append(items, QueueItem{Job: job, Tender: tender})
+		item := QueueItem{Job: job, Tender: tender, Title: tender.Title, DetailURL: "/tenders/" + tender.ID}
+		if job.JobType == models.JobTypeExpiredTenderCleanup {
+			item.Title = models.ExpiredTenderCleanupJobName
+			if strings.TrimSpace(job.JobName) != "" {
+				item.Title = job.JobName
+			}
+			item.DetailURL = "/queue#expired-tender-cleanup"
+			item.IsMaintenance = true
+		}
+		items = append(items, item)
 	}
 	grouped := map[models.ExtractionState][]QueueItem{
 		models.ExtractionFailed:     {},
 		models.ExtractionProcessing: {},
 		models.ExtractionRetry:      {},
 		models.ExtractionQueued:     {},
+		models.ExtractionSkipped:    {},
 		models.ExtractionCompleted:  {},
 	}
 	for _, item := range items {
@@ -804,6 +851,7 @@ func (a *App) QueuePage(w http.ResponseWriter, r *http.Request) {
 		buildQueueSection("processing", "Processing", "warning", grouped[models.ExtractionProcessing], query, false),
 		buildQueueSection("retry", "Retry", "warning", grouped[models.ExtractionRetry], query, false),
 		buildQueueSection("queued", "Queued", "info", grouped[models.ExtractionQueued], query, false),
+		buildQueueSection("skipped", "Skipped", "warning", grouped[models.ExtractionSkipped], query, false),
 		buildQueueSection("completed", "Completed", "success", grouped[models.ExtractionCompleted], query, false),
 	}
 	a.render(w, r, "queue.html", map[string]any{
@@ -811,10 +859,41 @@ func (a *App) QueuePage(w http.ResponseWriter, r *http.Request) {
 		"User":          u,
 		"Tenant":        t,
 		"CanEditQueue":  canQueueWork(u, m),
+		"CanRunCleanup": canQueueWork(u, m),
 		"QueueItems":    items,
 		"QueueSummary":  queueSummary(jobs),
 		"QueueSections": sections,
 	})
+}
+
+func (a *App) CleanupExpiredTenders(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost || !a.ensureCSRF(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	u, t, m, ok := a.currentUserTenant(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if !canQueueWork(u, m) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := a.Store.QueueJob(r.Context(), models.ExtractionJob{
+		ID:       models.ExpiredTenderCleanupJobID,
+		JobType:  models.JobTypeExpiredTenderCleanup,
+		JobName:  models.ExpiredTenderCleanupJobName,
+		TenantID: t.ID,
+		UserID:   u.ID,
+		State:    models.ExtractionQueued,
+	}); err != nil {
+		a.serverError(w, r, "unable to queue expired tender cleanup", err)
+		return
+	}
+	a.auditAction(r.Context(), actionContext{User: u, Tenant: t, Member: m}, "queue", "expired_tender_cleanup", models.ExpiredTenderCleanupJobID, "Expired tender cleanup queued", nil)
+	message := "Expired tender cleanup queued. Track it in the queue below."
+	a.redirectAfterAction(w, r, "/queue#expired-tender-cleanup", "success", message)
 }
 
 func (a *App) QueueRequeue(w http.ResponseWriter, r *http.Request) {
@@ -838,6 +917,14 @@ func (a *App) QueueRequeue(w http.ResponseWriter, r *http.Request) {
 	}
 	if tender.DocumentURL == "" {
 		http.Error(w, "no document url", 400)
+		return
+	}
+	if skipExpiredExtraction(&tender, time.Now().UTC()) {
+		if err := a.Store.UpsertTender(r.Context(), tender); err != nil {
+			a.serverError(w, r, "unable to update tender status", err)
+			return
+		}
+		a.redirectAfterAction(w, r, "/queue", "error", "Extraction not requeued because the tender is expired")
 		return
 	}
 	tender.DocumentStatus = models.ExtractionQueued

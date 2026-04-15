@@ -2,27 +2,20 @@
 
 OpenBid is a lightweight, self-hosted, multi-tenant tender aggregation platform for engineering-focused South African opportunities.
 
-## What is implemented
+The repository root is for application source code and local development. Production deployment assets live under `ProductionDeployment/`.
 
-- Go web app with standard-library server rendering
-- HTMX-style server-side workflow with reusable template partials
-- SQLite runtime store at `./data/store.db`
-- Go worker for sync and extraction queue processing
-- Python extractor service for document text extraction
-- Multi-tenant workflow, bookmarks, saved searches, audit log, queue views, and tender detail pages
-- Docker Compose deployment
-- Unit and integration-style tests for the current runtime path
+## What Runs
 
-## Development bootstrap credentials
+OpenBid runs four services in Docker Compose:
 
-- Username: `admin`
-- Password: `OpenBid!2026`
+- `app`: Go web application
+- `worker`: source sync, queue processing, and extraction orchestration
+- `extractor`: Python document text extraction service
+- `proxy`: nginx reverse proxy exposed on port `8088` by default
 
-These are seeded only for local development when `APP_ENV=development` and `BOOTSTRAP_ADMIN_PASSWORD` is left empty. For production, set a strong `SECRET_KEY`, enable `SECURE_COOKIES=true`, and provide `BOOTSTRAP_ADMIN_PASSWORD` before first startup.
+## Local Development
 
-## Quick start
-
-### Local Go run
+Use this for development on your workstation:
 
 ```bash
 cp .env.example .env
@@ -31,91 +24,51 @@ go test ./...
 go run ./cmd/server
 ```
 
-Open `http://localhost:8080`.
+Open:
 
-### Docker Compose run
-
-```bash
-cp .env.example .env
-docker compose up --build
+```text
+http://localhost:8080
 ```
 
-Open `http://localhost:8088`.
-
-## Configuration notes
-
-- Default local database path: `./data/store.db`
-- Docker database path: `/app/data/store.db`
-- The app and worker both expect SQLite.
-- Fresh production deployments do not auto-import tenders on first boot unless `BOOTSTRAP_SYNC_ON_STARTUP=true` is explicitly set.
-- Production startup requires a strong non-default `SECRET_KEY`, `SECURE_COOKIES=true`, and a strong `BOOTSTRAP_ADMIN_PASSWORD` when the database is empty.
-
-## Environment file
-
-Start from:
+For the full Docker stack from source:
 
 ```bash
-cp .env.example .env
+cd ProductionDeployment
+./setup.sh
+APP_ENV=development SECURE_COOKIES=false docker compose up --build
 ```
 
-Common variables:
+Open:
 
-- `APP_ENV`: use `development` locally, `production` for hardened deployments
-- `SECRET_KEY`: at least 32 strong random characters in production
-- `SECRET_KEY_FILE`: preferred production path for a mounted secret file
-- `SECURE_COOKIES`: must be `true` in production
-- `BOOTSTRAP_ADMIN_PASSWORD`: initial admin password for first boot in production
-- `BOOTSTRAP_ADMIN_PASSWORD_FILE`: preferred production path for a mounted bootstrap password file
-- `BOOTSTRAP_TENANT_NAME`: default bootstrap workspace name. Default: `KolaboSolutions`
-- `BOOTSTRAP_TENANT_SLUG`: optional bootstrap workspace slug override. Default: `kolabosolutions`
-- `BOOTSTRAP_SYNC_ON_STARTUP`: whether to sync sources on the first startup. Default: `false`
-- `LOW_MEMORY_MODE`: keep `true` on smaller machines such as Raspberry Pi
-- `BACKUP_DIR`: directory used for runtime backup freshness checks
-- `WORKER_SYNC_MINUTES`: default source check interval
-- `WORKER_LOOP_SECONDS`: worker polling loop interval
-- `LOGIN_RATE_LIMIT_WINDOW_SECONDS`: rolling per-IP login throttling window for direct app access
-- `LOGIN_RATE_LIMIT_MAX_ATTEMPTS`: maximum failed login attempts allowed within that window
-- `ALERT_WEBHOOK_URL`: optional webhook for operational alerts
-- `ALERT_EVAL_SECONDS`: how often the server evaluates operational alerts
-- `ALERT_BACKUP_MAX_AGE_MINUTES`: backup freshness threshold before raising an alert
-- `ALERT_BACKLOG_MAX_JOBS`: queued/retry/processing job count threshold before raising a backlog alert
-- `ALERT_BACKLOG_MAX_AGE_MINUTES`: oldest pending job age threshold before raising a backlog alert
-- `ALERT_LOGIN_THROTTLE_THRESHOLD`: recent login throttle events required before raising an alert
-- `ALERT_EXTRACTOR_FAILURE_THRESHOLD`: failed/retry extraction jobs required before raising an alert
+```text
+http://localhost:8088
+```
 
-Production deployments should prefer `.env.production.example`, pinned GHCR image tags, mounted secret files under `./secrets`, and the packaged operations runbook in `docs/production-operations.md`.
+The Docker stack reads its first admin password from `ProductionDeployment/runtime/secrets/openbid_bootstrap_admin_password`.
 
-## Raspberry Pi deployment
+## Development Credentials
 
-For a self-contained Raspberry Pi deployment bundle with Dockerfiles, Compose config, nginx config, `.env` example, and a step-by-step installation guide, see [InstallationInstructions/README.md](InstallationInstructions/README.md).
+For local development only:
 
-For the older narrative Raspberry Pi guide, including Cloudflare-in-front HTTP origin deployment notes, see [docs/raspberry-pi-docker-setup.md](docs/raspberry-pi-docker-setup.md).
+- Username: `admin`
+- Password: `OpenBid!2026`
 
-## Operations
+These are seeded by `go run ./cmd/server` only when `APP_ENV=development` and no bootstrap password file is configured. Docker and production installs use secret files created by `ProductionDeployment/setup.sh`.
 
-- Production runbook: [docs/production-operations.md](docs/production-operations.md)
+## Production Deployment
+
+All deployment files are located in `ProductionDeployment/`.
+
+Start here:
+- `ProductionDeployment/README.md`
+- `ProductionDeployment/setup.sh`
+
+⚠️ NOTE: InstallationInstructions has been renamed to ProductionDeployment.
+Runtime data is now stored inside ProductionDeployment/runtime/ and is created automatically.
+
+## Documentation
+
 - Authorization model: [docs/authorization-model.md](docs/authorization-model.md)
-- SQLite backup: `./scripts/sqlite-backup.sh`
-- SQLite restore: `./scripts/sqlite-restore.sh`
-- SQLite validation: `./scripts/sqlite-validate.sh`
-- Container alert check: `./scripts/docker-alert-check.sh`
-- Operational alert feed: `/health/alerts.json`
-
-## Validation
-
-```bash
-go mod tidy
-go test ./...
-docker compose up --build
-```
-
-## Useful files
-
-- `cmd/server`
-- `cmd/worker`
-- `cmd/sqlite_check`
-- `internal/app`
-- `internal/store`
-- `web/templates`
-- `scripts/run-local.sh`
-- `scripts/sqlite-validate.sh`
+- Production deployment guide: [ProductionDeployment/README.md](ProductionDeployment/README.md)
+- Production operations: [ProductionDeployment/docs/production-operations.md](ProductionDeployment/docs/production-operations.md)
+- Raspberry Pi Docker setup: [ProductionDeployment/docs/raspberry-pi-docker-setup.md](ProductionDeployment/docs/raspberry-pi-docker-setup.md)

@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"openbid/internal/models"
 	"path/filepath"
@@ -65,6 +67,88 @@ func TestSQLiteMigrationAndRuntimeValidation(t *testing.T) {
 	}
 }
 
+func TestSQLiteMigrationAddsKeywordTablesWithoutDroppingExistingRecords(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store.db")
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?_pragma=foreign_keys(ON)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`
+		create table schema_meta (key text primary key, value text not null);
+		insert into schema_meta(key, value) values('schema_version', '6');
+		create table saved_search_records (
+			id text primary key,
+			tenant_id text not null,
+			user_id text not null,
+			name text not null,
+			query text not null,
+			filters text not null,
+			created_at text not null,
+			updated_at text not null
+		);
+		insert into saved_search_records(id, tenant_id, user_id, name, query, filters, created_at, updated_at)
+		values('saved-1', 'tenant-1', 'user-1', 'Legacy saved search', 'q=roads', '{}', '2026-04-01T00:00:00Z', '2026-04-01T00:00:00Z');
+		pragma user_version = 6;
+	`)
+	if closeErr := db.Close(); err == nil && closeErr != nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.ValidateRuntime(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	searches, err := s.ListSavedSearches(context.Background(), "tenant-1", "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(searches) != 1 || searches[0].Name != "Legacy saved search" {
+		t.Fatalf("expected existing saved search to survive migration, got %#v", searches)
+	}
+	stats, err := s.RuntimeStats(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.KeywordProfileCount != 0 || stats.KeywordCount != 0 || stats.KeywordMatchCount != 0 {
+		t.Fatalf("expected migration to add empty keyword tables without seeding data, got %#v", stats)
+	}
+}
+
+func TestSQLiteKeywordReadPathsDoNotCreateProfile(t *testing.T) {
+	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if _, err := s.KeywordSearchSummary(ctx, "tenant-1", "user-1"); err != nil {
+		t.Fatal(err)
+	}
+	if keywords, err := s.ListKeywords(ctx, "tenant-1", "user-1"); err != nil || len(keywords) != 0 {
+		t.Fatalf("expected empty keyword list without profile, keywords=%#v err=%v", keywords, err)
+	}
+	if matches, total, err := s.ListKeywordTenderMatches(ctx, "tenant-1", "user-1", KeywordMatchFilter{Page: 1, PageSize: 20}); err != nil || total != 0 || len(matches) != 0 {
+		t.Fatalf("expected empty matches without profile, total=%d matches=%#v err=%v", total, matches, err)
+	}
+	if _, err := s.GetKeywordProfile(ctx, "tenant-1", "user-1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected read paths not to create keyword profile, got %v", err)
+	}
+	stats, err := s.RuntimeStats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.KeywordProfileCount != 0 || stats.KeywordCount != 0 || stats.KeywordMatchCount != 0 {
+		t.Fatalf("expected no keyword rows after read paths, got %#v", stats)
+	}
+}
+
 func TestSQLiteRuntimeStatsReportsSchemaAndCounts(t *testing.T) {
 	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {
@@ -124,6 +208,129 @@ func TestSQLiteQueueWritesDeduplicate(t *testing.T) {
 	}
 	if len(jobs) != 1 {
 		t.Fatalf("expected 1 queued job, got %d", len(jobs))
+	}
+}
+
+func TestSQLiteQueueRejectsDuplicateTenderDocumentAcrossStates(t *testing.T) {
+	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if err := s.QueueJob(ctx, models.ExtractionJob{ID: "completed-job", TenderID: "t1", DocumentURL: "https://example.org/doc.pdf", State: models.ExtractionCompleted}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.QueueJob(ctx, models.ExtractionJob{ID: "queued-job", TenderID: "t1", DocumentURL: "https://example.org/doc.pdf", State: models.ExtractionQueued}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.QueueJob(ctx, models.ExtractionJob{ID: "second-doc", TenderID: "t1", DocumentURL: "https://example.org/other.pdf", State: models.ExtractionQueued}); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := s.ListJobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 2 {
+		t.Fatalf("expected duplicate document to be ignored while distinct document is queued, got %d jobs", len(jobs))
+	}
+	for _, job := range jobs {
+		if job.TenderID == "t1" && job.DocumentURL == "https://example.org/doc.pdf" && job.ID != "completed-job" {
+			t.Fatalf("expected original completed job to be preserved, got %#v", job)
+		}
+	}
+}
+
+func TestSQLiteMigrationDeduplicatesLegacyExtractionJobs(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "store.db")
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?_pragma=foreign_keys(ON)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `create table jobs (id text primary key, payload text not null);`); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := sqliteUpsertJSON(ctx, db, "jobs", "completed-job", models.ExtractionJob{ID: "completed-job", TenderID: "legacy-tender", DocumentURL: "https://example.org/doc.pdf", State: models.ExtractionCompleted, UpdatedAt: now.Add(-time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sqliteUpsertJSON(ctx, db, "jobs", "queued-job", models.ExtractionJob{ID: "queued-job", TenderID: "legacy-tender", DocumentURL: "https://example.org/doc.pdf", State: models.ExtractionQueued, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	jobs, err := s.ListJobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 || jobs[0].ID != "queued-job" {
+		t.Fatalf("expected legacy duplicates to collapse to queued job, got %#v", jobs)
+	}
+	if err := s.QueueJob(ctx, models.ExtractionJob{ID: "future-duplicate", TenderID: "legacy-tender", DocumentURL: "https://example.org/doc.pdf", State: models.ExtractionQueued}); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err = s.ListJobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected unique job index to reject future duplicate, got %d jobs", len(jobs))
+	}
+}
+
+func TestSQLiteMaintenanceJobIsTrackedWithoutTender(t *testing.T) {
+	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if err := s.QueueJob(ctx, models.ExtractionJob{
+		ID:      models.ExpiredTenderCleanupJobID,
+		JobType: models.JobTypeExpiredTenderCleanup,
+		JobName: models.ExpiredTenderCleanupJobName,
+		State:   models.ExtractionQueued,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := s.PruneInvalidJobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 0 {
+		t.Fatalf("expected maintenance job to be preserved by prune, removed %d", removed)
+	}
+	jobs, err := s.ListValidJobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 || jobs[0].JobType != models.JobTypeExpiredTenderCleanup {
+		t.Fatalf("expected maintenance job in valid queue listing, got %#v", jobs)
+	}
+	counts, err := s.JobStateCounts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts.Queued != 1 {
+		t.Fatalf("expected maintenance job counted as queued, got %#v", counts)
+	}
+	if err := s.QueueJob(ctx, models.ExtractionJob{JobType: models.JobTypeExpiredTenderCleanup, State: models.ExtractionQueued}); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err = s.ListJobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected repeated active maintenance enqueue to keep one job, got %#v", jobs)
 	}
 }
 
@@ -322,6 +529,245 @@ func TestSQLiteTenderRoundTripsStructuredFields(t *testing.T) {
 	}
 }
 
+func TestSQLiteKeywordSearchLifecycleMatchingAndScoping(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store.db")
+	s, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := s.UpsertTender(ctx, models.Tender{ID: "kw-solar", Title: "Solar panel installation", Summary: "Rooftop PV work", SourceKey: "treasury", Status: "open", ClosingDate: "2026-05-01"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertTender(ctx, models.Tender{ID: "kw-water", Title: "Pump station", Summary: "Water treatment upgrades", SourceKey: "cidb", Status: "open", ClosingDate: "2026-05-02"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertTender(ctx, models.Tender{ID: "kw-generator", Title: "Facilities maintenance", SourceKey: "eskom", Status: "open", DocumentFacts: map[string]string{"scope": "backup generator maintenance"}, ClosingDate: "2026-05-03"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertTender(ctx, models.Tender{ID: "kw-none", Title: "Road repairs", Summary: "Asphalt surfacing", SourceKey: "treasury", Status: "open"}); err != nil {
+		t.Fatal(err)
+	}
+
+	solar, err := s.UpsertKeyword(ctx, models.Keyword{TenantID: "tenant-1", UserID: "user-1", Value: "SOLAR", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertKeyword(ctx, models.Keyword{TenantID: "tenant-1", UserID: "user-1", Value: "water treatment", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	generator, err := s.UpsertKeyword(ctx, models.Keyword{TenantID: "tenant-1", UserID: "user-1", Value: "backup generator", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherKeyword, err := s.UpsertKeyword(ctx, models.Keyword{TenantID: "tenant-1", UserID: "user-2", Value: "asphalt", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertKeyword(ctx, models.Keyword{ID: otherKeyword.ID, TenantID: "tenant-1", UserID: "user-1", Value: "stolen edit", Enabled: true}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected cross-user keyword edit to be rejected, got %v", err)
+	}
+
+	items, total, err := s.ListKeywordTenderMatches(ctx, "tenant-1", "user-1", KeywordMatchFilter{Page: 1, PageSize: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 3 || len(items) != 3 {
+		t.Fatalf("expected three matches for user-1, got total=%d items=%#v", total, items)
+	}
+	matchByTender := map[string][]string{}
+	for _, item := range items {
+		matchByTender[item.Tender.ID] = item.Match.MatchedKeywords
+	}
+	if !containsString(matchByTender["kw-solar"], "SOLAR") || !containsString(matchByTender["kw-water"], "water treatment") || !containsString(matchByTender["kw-generator"], "backup generator") {
+		t.Fatalf("expected title, phrase, and fact matches, got %#v", matchByTender)
+	}
+
+	otherItems, otherTotal, err := s.ListKeywordTenderMatches(ctx, "tenant-1", "user-2", KeywordMatchFilter{Page: 1, PageSize: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if otherTotal != 1 || len(otherItems) != 1 || otherItems[0].Tender.ID != "kw-none" {
+		t.Fatalf("expected user scoping to isolate matches, got total=%d items=%#v", otherTotal, otherItems)
+	}
+
+	solar.Value = "asphalt"
+	if _, err := s.UpsertKeyword(ctx, solar); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteKeyword(ctx, "tenant-1", "user-1", generator.ID); err != nil {
+		t.Fatal(err)
+	}
+	items, total, err = s.ListKeywordTenderMatches(ctx, "tenant-1", "user-1", KeywordMatchFilter{Page: 1, PageSize: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	matchByTender = map[string][]string{}
+	for _, item := range items {
+		matchByTender[item.Tender.ID] = item.Match.MatchedKeywords
+	}
+	if total != 2 || matchByTender["kw-solar"] != nil || matchByTender["kw-generator"] != nil || !containsString(matchByTender["kw-none"], "asphalt") {
+		t.Fatalf("expected edits/deletes to recalculate results, total=%d matches=%#v", total, matchByTender)
+	}
+
+	summary, err := s.RefreshKeywordMatches(ctx, "tenant-1", "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.MatchedTenderCount != 2 || summary.ActiveKeywordCount != 2 || summary.LastRefreshedAt.IsZero() {
+		t.Fatalf("unexpected manual refresh summary: %#v", summary)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	keywords, err := reopened.ListKeywords(ctx, "tenant-1", "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keywords) != 2 {
+		t.Fatalf("expected keyword persistence after reopen, got %#v", keywords)
+	}
+}
+
+func TestSQLiteKeywordMatchesRefreshWhenTenderChanges(t *testing.T) {
+	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if _, err := s.UpsertKeyword(ctx, models.Keyword{TenantID: "tenant-1", UserID: "user-1", Value: "substation", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertTender(ctx, models.Tender{ID: "source-update", Title: "Substation repair", SourceKey: "eskom", Status: "open"}); err != nil {
+		t.Fatal(err)
+	}
+	_, total, err := s.ListKeywordTenderMatches(ctx, "tenant-1", "user-1", KeywordMatchFilter{Page: 1, PageSize: 20})
+	if err != nil || total != 1 {
+		t.Fatalf("expected tender write to create keyword match, total=%d err=%v", total, err)
+	}
+	if err := s.UpsertTender(ctx, models.Tender{ID: "source-update", Title: "Road repair", SourceKey: "eskom", Status: "open"}); err != nil {
+		t.Fatal(err)
+	}
+	_, total, err = s.ListKeywordTenderMatches(ctx, "tenant-1", "user-1", KeywordMatchFilter{Page: 1, PageSize: 20})
+	if err != nil || total != 0 {
+		t.Fatalf("expected tender write to remove stale keyword match, total=%d err=%v", total, err)
+	}
+}
+
+func TestSQLiteCleanupExpiredTendersArchivesSafelyAndIsIdempotent(t *testing.T) {
+	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 4, 11, 12, 0, 0, 0, time.UTC)
+	inputs := []models.Tender{
+		{ID: "expired-date", Title: "Expired Date Tender", Summary: "expired cleanup target", SourceKey: "treasury", Status: "open", ClosingDate: "2026-04-10"},
+		{ID: "expired-time", Title: "Expired Time Tender", SourceKey: "treasury", Status: "open", ClosingDate: "2026-04-11 11:00"},
+		{ID: "same-day-date", Title: "Same Day Date Tender", SourceKey: "treasury", Status: "open", ClosingDate: "2026-04-11"},
+		{ID: "future-date", Title: "Future Tender", SourceKey: "treasury", Status: "open", ClosingDate: "2026-04-12"},
+		{ID: "missing-date", Title: "Missing Date Tender", SourceKey: "treasury", Status: "open"},
+		{ID: "bad-date", Title: "Bad Date Tender", SourceKey: "treasury", Status: "open", ClosingDate: "not a date"},
+	}
+	for _, tender := range inputs {
+		if err := s.UpsertTender(ctx, tender); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.UpsertBookmark(ctx, models.Bookmark{TenantID: "tenant-1", UserID: "user-1", TenderID: "expired-date", Note: "keep history"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertWorkflow(ctx, models.Workflow{TenantID: "tenant-1", TenderID: "expired-date", Status: "reviewed", Priority: "low"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.QueueJob(ctx, models.ExtractionJob{ID: "expired-job", TenderID: "expired-date", DocumentURL: "https://example.org/doc.pdf", State: models.ExtractionQueued}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertKeyword(ctx, models.Keyword{TenantID: "tenant-1", UserID: "user-1", Value: "expired cleanup", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	matches, total, err := s.ListKeywordTenderMatches(ctx, "tenant-1", "user-1", KeywordMatchFilter{Page: 1, PageSize: 20})
+	if err != nil || total != 1 || len(matches) != 1 || matches[0].Tender.ID != "expired-date" {
+		t.Fatalf("expected keyword match before cleanup, total=%d matches=%#v err=%v", total, matches, err)
+	}
+
+	result, err := s.CleanupExpiredTenders(ctx, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RemovedCount != 2 || !containsString(result.RemovedTenderIDs, "expired-date") || !containsString(result.RemovedTenderIDs, "expired-time") {
+		t.Fatalf("expected two expired tenders to be removed, got %#v", result)
+	}
+	if _, err := s.GetTender(ctx, "expired-date"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected archived tender to be hidden from GetTender, got %v", err)
+	}
+	visible, total, err := s.ListTenders(ctx, ListFilter{Page: 1, PageSize: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 4 || len(visible) != 4 {
+		t.Fatalf("expected only active/non-expired tenders visible, total=%d visible=%#v", total, visible)
+	}
+	for _, tender := range visible {
+		if tender.ID == "expired-date" || tender.ID == "expired-time" {
+			t.Fatalf("expired tender still visible: %#v", visible)
+		}
+	}
+	if _, ok := mustTenderMap(t, s, []string{"expired-date", "future-date"})["expired-date"]; ok {
+		t.Fatal("expected archived tender to be hidden from GetTendersByIDs")
+	}
+	dashboard, err := s.Dashboard(ctx, "tenant-1", false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dashboard.TotalTenders != 4 || dashboard.OpenTenders != 4 {
+		t.Fatalf("expected dashboard to exclude archived tenders, got %#v", dashboard)
+	}
+	bookmarks, err := s.ListBookmarks(ctx, "tenant-1", "user-1")
+	if err != nil || len(bookmarks) != 1 || bookmarks[0].TenderID != "expired-date" {
+		t.Fatalf("expected bookmark record to be preserved, bookmarks=%#v err=%v", bookmarks, err)
+	}
+	bookmarkCount, err := s.CountBookmarks(ctx, "tenant-1", "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bookmarkCount != 0 {
+		t.Fatalf("expected visible bookmark count to exclude archived tenders, got %d", bookmarkCount)
+	}
+	workflow, err := s.GetWorkflow(ctx, "tenant-1", "expired-date")
+	if err != nil || workflow.Status != "reviewed" {
+		t.Fatalf("expected workflow record to be preserved, workflow=%#v err=%v", workflow, err)
+	}
+	jobs, err := s.ListJobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, job := range jobs {
+		if job.TenderID == "expired-date" {
+			t.Fatalf("expected cleanup to remove volatile extraction jobs for archived tenders, got %#v", jobs)
+		}
+	}
+	matches, total, err = s.ListKeywordTenderMatches(ctx, "tenant-1", "user-1", KeywordMatchFilter{Page: 1, PageSize: 20})
+	if err != nil || total != 0 || len(matches) != 0 {
+		t.Fatalf("expected keyword matches to be pruned for archived tenders, total=%d matches=%#v err=%v", total, matches, err)
+	}
+	repeated, err := s.CleanupExpiredTenders(ctx, now.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeated.RemovedCount != 0 || len(repeated.RemovedTenderIDs) != 0 {
+		t.Fatalf("expected repeated cleanup to be idempotent, got %#v", repeated)
+	}
+}
+
 func TestSQLiteSourceSchedulingRoundTrips(t *testing.T) {
 	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {
@@ -473,6 +919,15 @@ func containsString(items []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func mustTenderMap(t *testing.T, s *SQLiteStore, ids []string) map[string]models.Tender {
+	t.Helper()
+	items, err := s.GetTendersByIDs(context.Background(), ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return items
 }
 
 func TestSQLiteDeduplicateTendersCollapsesDuplicatesAndRepairsReferences(t *testing.T) {
@@ -648,5 +1103,22 @@ func TestSQLiteListAuditEntriesPageAndJobStateCountsUseFastPaths(t *testing.T) {
 	}
 	if counts.Processing != 0 || counts.Completed != 0 || counts.Retry != 0 {
 		t.Fatalf("unexpected extra job counts: %#v", counts)
+	}
+
+	if err := s.UpsertTender(ctx, models.Tender{ID: "dashboard-completed", Title: "Done", Status: "open", EngineeringRelevant: true, DocumentURL: "https://example.org/done.pdf", DocumentStatus: models.ExtractionCompleted, PublishedDate: "2026-04-04"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertTender(ctx, models.Tender{ID: "dashboard-archived", Title: "Archived", Status: "open", EngineeringRelevant: true, DocumentURL: "https://example.org/archived.pdf", DocumentStatus: models.ExtractionCompleted, PublishedDate: "2026-04-05", ArchivedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	dashboard, err := s.Dashboard(ctx, "tenant-1", true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dashboard.TotalTenders != 2 || dashboard.OpenTenders != 2 || dashboard.EngineeringRelevant != 1 || dashboard.WithDocuments != 1 || dashboard.ExtractedDocuments != 1 {
+		t.Fatalf("expected dashboard counts to use active tenders only, got %#v", dashboard)
+	}
+	if len(dashboard.RecentTenders) == 0 || dashboard.RecentTenders[0].ID == "dashboard-archived" {
+		t.Fatalf("expected archived tender excluded from recent dashboard tenders, got %#v", dashboard.RecentTenders)
 	}
 }

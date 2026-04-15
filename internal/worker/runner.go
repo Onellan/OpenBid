@@ -9,6 +9,7 @@ import (
 	"openbid/internal/netguard"
 	"openbid/internal/source"
 	"openbid/internal/store"
+	"openbid/internal/tenderstate"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -58,6 +59,9 @@ func (r Runner) Run(ctx context.Context) error {
 		r.logKV("worker_reset_running_sources_failed", "error", err)
 	}
 	r.writeHeartbeat()
+	heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)
+	defer stopHeartbeat()
+	go r.runHeartbeat(heartbeatCtx)
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -74,6 +78,31 @@ func (r Runner) Run(ctx context.Context) error {
 		case <-timer.C:
 		}
 	}
+}
+
+func (r Runner) runHeartbeat(ctx context.Context) {
+	interval := r.heartbeatInterval()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			r.writeHeartbeat()
+		}
+	}
+}
+
+func (r Runner) heartbeatInterval() time.Duration {
+	interval := 30 * time.Second
+	if r.LoopEvery > 0 && r.LoopEvery < interval {
+		interval = r.LoopEvery
+	}
+	if interval < time.Second {
+		return time.Second
+	}
+	return interval
 }
 
 func (r Runner) writeHeartbeat() {
@@ -139,6 +168,48 @@ func (r Runner) updateTenderDocumentState(ctx context.Context, tenderID string, 
 	r.persistTender(ctx, tender)
 }
 
+func (r Runner) markExpiredExtractionSkipped(ctx context.Context, tender models.Tender, job *models.ExtractionJob) {
+	now := r.now()
+	tenderstate.MarkExtractionSkipped(&tender, now)
+	r.persistTender(ctx, tender)
+	if job != nil {
+		tenderstate.MarkJobSkipped(job, now)
+		r.persistJobUpdate(ctx, *job)
+		r.logKV("worker_job_skipped_expired_tender", "job", job.ID, "tender", job.TenderID, "closing", tender.ClosingDate)
+		return
+	}
+	r.logKV("worker_source_tender_skipped_expired", "tender", tender.ID, "source", tender.SourceKey, "closing", tender.ClosingDate)
+}
+
+func (r Runner) persistSourceTender(ctx context.Context, tender models.Tender) {
+	now := r.now()
+	var evaluation models.SmartKeywordEvaluation
+	filteredTender, evaluation, accepted, err := r.Store.EvaluateSmartTenderForExtraction(ctx, tender)
+	if err != nil {
+		r.logKV("worker_smart_keyword_evaluation_failed", "tender", tender.ID, "source", tender.SourceKey, "error", err)
+		return
+	}
+	if !accepted {
+		r.logKV("worker_smart_keyword_skipped", "tender", tender.ID, "source", tender.SourceKey, "reasons", strings.Join(evaluation.Reasons, "; "))
+		return
+	}
+	tender = filteredTender
+	if evaluation.Enabled {
+		r.logKV("worker_smart_keyword_accepted", "tender", tender.ID, "source", tender.SourceKey, "group_tags", strings.Join(evaluation.GroupTags, ","))
+	}
+	if tenderstate.IsExpired(tender, now) {
+		r.markExpiredExtractionSkipped(ctx, tender, nil)
+		return
+	}
+	if tender.DocumentStatus == "" && (tender.DocumentURL != "" || len(tender.Documents) > 0) {
+		tender.DocumentStatus = models.ExtractionQueued
+	}
+	r.persistTender(ctx, tender)
+	if tender.DocumentURL != "" {
+		r.persistQueuedJob(ctx, models.ExtractionJob{TenderID: tender.ID, DocumentURL: tender.DocumentURL, State: models.ExtractionQueued})
+	}
+}
+
 func (r Runner) syncAll(ctx context.Context) {
 	registry := r.Sources
 	if r.SourceLoad != nil {
@@ -160,13 +231,7 @@ func (r Runner) syncAll(ctx context.Context) {
 		r.persistSourceHealth(ctx, models.SourceHealth{SourceKey: ad.Key(), LastSyncAt: r.now(), LastCheckedAt: r.now(), LastStatus: status, LastMessage: msg, LastItemCount: len(items), HealthStatus: status})
 		for _, t := range items {
 			t = source.NormalizeTenderIdentity(t)
-			if t.DocumentStatus == "" && (t.DocumentURL != "" || len(t.Documents) > 0) {
-				t.DocumentStatus = models.ExtractionQueued
-			}
-			r.persistTender(ctx, t)
-			if t.DocumentURL != "" {
-				r.persistQueuedJob(ctx, models.ExtractionJob{TenderID: t.ID, DocumentURL: t.DocumentURL, State: models.ExtractionQueued})
-			}
+			r.persistSourceTender(ctx, t)
 		}
 	}
 }
@@ -177,17 +242,26 @@ func (r Runner) processJobs(ctx context.Context) {
 		return
 	}
 	for _, job := range jobs {
+		if job.JobType == models.JobTypeExpiredTenderCleanup {
+			r.processExpiredTenderCleanupJob(ctx, job)
+			continue
+		}
 		if strings.TrimSpace(job.TenderID) == "" {
 			r.logKV("worker_job_prune_missing_tender_id", "job", job.ID)
 			r.deleteJob(ctx, job.ID)
 			continue
 		}
-		if _, err := r.Store.GetTender(ctx, job.TenderID); err != nil {
+		tender, err := r.Store.GetTender(ctx, job.TenderID)
+		if err != nil {
 			r.logKV("worker_job_prune_missing_tender", "job", job.ID, "tender", job.TenderID)
 			r.deleteJob(ctx, job.ID)
 			continue
 		}
 		if !(job.State == models.ExtractionQueued || job.State == models.ExtractionRetry) || r.now().Before(job.NextAttemptAt) {
+			continue
+		}
+		if tenderstate.IsExpired(tender, r.now()) {
+			r.markExpiredExtractionSkipped(ctx, tender, &job)
 			continue
 		}
 		job.State = models.ExtractionProcessing
@@ -240,6 +314,10 @@ func (r Runner) processJobs(ctx context.Context) {
 			t.DocumentFacts = cloneFactMap(res.Facts)
 			applyDocumentPromotions(&t, t.DocumentFacts)
 			t.ExtractedFacts = mergeFactMaps(t.ExtractedFacts, t.PageFacts, t.DocumentFacts)
+			if filtered, evaluation, accepted, err := r.Store.EvaluateSmartTenderForExtraction(ctx, t); err == nil && accepted {
+				t.GroupTags = evaluation.GroupTags
+				t = filtered
+			}
 			r.persistTender(ctx, t)
 		} else {
 			r.logKV("worker_tender_lookup_failed", "tender", job.TenderID, "error", err)
@@ -249,6 +327,61 @@ func (r Runner) processJobs(ctx context.Context) {
 		r.persistJobUpdate(ctx, job)
 		r.logKV("worker_job_extract_completed", "job", job.ID, "tender", job.TenderID, "attempts", job.Attempts)
 	}
+}
+
+func (r Runner) processExpiredTenderCleanupJob(ctx context.Context, job models.ExtractionJob) {
+	if !(job.State == models.ExtractionQueued || job.State == models.ExtractionRetry) || r.now().Before(job.NextAttemptAt) {
+		return
+	}
+	job.State = models.ExtractionProcessing
+	job.Attempts++
+	job.LastError = ""
+	job.ResultSummary = "Archiving expired tenders now."
+	if !r.persistJobUpdate(ctx, job) {
+		return
+	}
+
+	result, err := r.Store.CleanupExpiredTenders(ctx, r.now())
+	if err != nil {
+		job.State = models.ExtractionRetry
+		if job.Attempts >= 3 {
+			job.State = models.ExtractionFailed
+		}
+		job.LastError = err.Error()
+		job.ResultSummary = "Expired tender cleanup could not finish."
+		if job.State == models.ExtractionFailed {
+			job.NextAttemptAt = time.Time{}
+		} else {
+			job.NextAttemptAt = r.now().Add(time.Duration(job.Attempts*job.Attempts) * time.Minute)
+		}
+		r.persistJobUpdate(ctx, job)
+		r.logKV("worker_expired_cleanup_failed", "job", job.ID, "attempts", job.Attempts, "state", job.State, "error", err)
+		return
+	}
+
+	job.State = models.ExtractionCompleted
+	job.NextAttemptAt = time.Time{}
+	job.LastError = ""
+	job.ResultSummary = fmt.Sprintf("Removed %d expired tenders.", result.RemovedCount)
+	r.persistJobUpdate(ctx, job)
+	if strings.TrimSpace(job.TenantID) != "" {
+		metadata := map[string]string{"removed_count": strconv.Itoa(result.RemovedCount)}
+		if len(result.RemovedTenderIDs) > 0 {
+			metadata["removed_tender_ids"] = strings.Join(result.RemovedTenderIDs, ",")
+		}
+		if err := r.Store.AddAuditEntry(ctx, models.AuditEntry{
+			TenantID: job.TenantID,
+			UserID:   job.UserID,
+			Action:   "cleanup",
+			Entity:   "expired_tenders",
+			EntityID: job.ID,
+			Summary:  "Expired tender cleanup completed",
+			Metadata: metadata,
+		}); err != nil {
+			r.logKV("worker_expired_cleanup_audit_failed", "job", job.ID, "tenant", job.TenantID, "error", err)
+		}
+	}
+	r.logKV("worker_expired_cleanup_completed", "job", job.ID, "removed", result.RemovedCount)
 }
 
 func (r Runner) processSourceChecks(ctx context.Context) {
@@ -359,13 +492,8 @@ func (r Runner) finalizeSourceCheck(ctx context.Context, cfg models.SourceConfig
 		return
 	}
 	for _, t := range items {
-		if t.DocumentStatus == "" && (t.DocumentURL != "" || len(t.Documents) > 0) {
-			t.DocumentStatus = models.ExtractionQueued
-		}
-		r.persistTender(ctx, t)
-		if t.DocumentURL != "" {
-			r.persistQueuedJob(ctx, models.ExtractionJob{TenderID: t.ID, DocumentURL: t.DocumentURL, State: models.ExtractionQueued})
-		}
+		t = source.NormalizeTenderIdentity(t)
+		r.persistSourceTender(ctx, t)
 	}
 }
 

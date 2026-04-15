@@ -25,6 +25,15 @@ const (
 	ExtractionRetry      ExtractionState = "retry"
 	ExtractionCompleted  ExtractionState = "completed"
 	ExtractionFailed     ExtractionState = "failed"
+	ExtractionSkipped    ExtractionState = "skipped"
+)
+
+const (
+	JobTypeExtraction           = "extraction"
+	JobTypeExpiredTenderCleanup = "expired_tender_cleanup"
+
+	ExpiredTenderCleanupJobID   = "maintenance-expired-tender-cleanup"
+	ExpiredTenderCleanupJobName = "Remove Expired Tenders"
 )
 
 type TenderDocument struct {
@@ -66,6 +75,9 @@ type TenderLocation struct {
 
 type Tender struct {
 	ID, SourceKey, ExternalID, Title, Issuer, Province, Category, TenderNumber, PublishedDate, ClosingDate, Status, CIDBGrading, Summary, OriginalURL, DocumentURL, Excerpt string
+	ArchiveReason                                                                                                                                                           string
+	ExtractionSkippedReason, ExtractionSkippedSource                                                                                                                        string
+	GroupTags                                                                                                                                                               []string
 	EngineeringRelevant                                                                                                                                                     bool
 	RelevanceScore                                                                                                                                                          float64
 	TenderType                                                                                                                                                              string
@@ -83,7 +95,7 @@ type Tender struct {
 	Briefings                                                                                                                                                               []TenderBriefing
 	Documents                                                                                                                                                               []TenderDocument
 	Requirements                                                                                                                                                            []TenderRequirement
-	CreatedAt, UpdatedAt                                                                                                                                                    time.Time
+	CreatedAt, UpdatedAt, ArchivedAt, ExtractionSkippedAt                                                                                                                   time.Time
 }
 type User struct {
 	ID, Username, DisplayName, Email, PasswordHash, PasswordSalt, MFASecret string
@@ -116,16 +128,134 @@ type SavedSearch struct {
 	ID, TenantID, UserID, Name, Query, Filters string
 	CreatedAt, UpdatedAt                       time.Time
 }
+
+type SmartMatchMode string
+
+const (
+	SmartMatchModeAny SmartMatchMode = "ANY"
+	SmartMatchModeAll SmartMatchMode = "ALL"
+)
+
+type SmartExtractionSettings struct {
+	TenantID, RefreshStatus, RefreshMessage string
+	Enabled, AlertsEnabled                  bool
+	LastReprocessedAt, CreatedAt, UpdatedAt time.Time
+}
+
+type SmartKeywordGroup struct {
+	ID, TenantID, Name, TagName, Description string
+	MatchMode                                SmartMatchMode
+	ExcludeTerms                             []string
+	MinMatchCount, Priority                  int
+	Enabled                                  bool
+	CreatedAt, UpdatedAt                     time.Time
+}
+
+type SmartKeyword struct {
+	ID, TenantID, GroupID, Value, NormalizedValue string
+	Enabled                                       bool
+	CreatedAt, UpdatedAt                          time.Time
+}
+
+type SmartGroupEvaluation struct {
+	GroupID, GroupName, TagName string
+	MatchMode                   SmartMatchMode
+	MatchedKeywords             []string
+	ExcludeMatches              []string
+	MinMatchCount, Priority     int
+	Accepted                    bool
+	Reason                      string
+}
+
+type SmartKeywordEvaluation struct {
+	Enabled, Accepted                                      bool
+	ActiveKeywordCount                                     int
+	MatchedKeywords, StandaloneMatches, GroupTags, Reasons []string
+	GroupMatches                                           []SmartGroupEvaluation
+}
+
+type SmartTenderPreview struct {
+	Tender     Tender
+	Evaluation SmartKeywordEvaluation
+}
+
+type SmartReprocessResult struct {
+	TenantID                      string
+	Processed, Accepted, Excluded int
+	UpdatedAt                     time.Time
+}
+
+type SmartViewFilters struct {
+	Query, Source, Issuer, Category, Status, DateFrom, DateTo, MatchedStatus string
+	GroupTags                                                                []string
+	MinPriority                                                              int
+}
+
+type NotificationChannel struct {
+	ID, Type, Destination string
+	Enabled               bool
+	Settings              map[string]string
+}
+
+type SavedSmartView struct {
+	ID, TenantID, UserID, Name, FiltersJSON string
+	Pinned                                  bool
+	AlertsEnabled, AlertPaused              bool
+	AlertFrequency                          string
+	AlertChannels                           []NotificationChannel
+	CreatedAt, UpdatedAt                    time.Time
+}
+
+type SmartAlertDelivery struct {
+	ID, TenantID, ViewID, TenderID, ChannelType, Destination, Frequency string
+	Status, Error, DedupKey, Message                                    string
+	CreatedAt, SentAt                                                   time.Time
+}
+type KeywordProfile struct {
+	ID, TenantID, UserID, Name, RefreshStatus, RefreshMessage string
+	MatchCount                                                int
+	LastRefreshedAt, CreatedAt, UpdatedAt                     time.Time
+}
+type Keyword struct {
+	ID, ProfileID, TenantID, UserID, Value string
+	Enabled                                bool
+	CreatedAt, UpdatedAt                   time.Time
+}
+type KeywordTenderMatch struct {
+	ID, ProfileID, TenantID, UserID, TenderID string
+	MatchedKeywords                           []string
+	MatchCount                                int
+	RefreshedAt, CreatedAt, UpdatedAt         time.Time
+}
+type KeywordTenderMatchResult struct {
+	Match  KeywordTenderMatch
+	Tender Tender
+}
+type KeywordSearchSummary struct {
+	Profile            KeywordProfile
+	TotalKeywordCount  int
+	ActiveKeywordCount int
+	MatchedTenderCount int
+	LastRefreshedAt    time.Time
+	RefreshStatus      string
+	RefreshMessage     string
+}
+type ExpiredTenderCleanupResult struct {
+	RemovedCount     int
+	RemovedTenderIDs []string
+	RunAt            time.Time
+}
 type SyncRun struct {
 	ID, SourceKey, Status, Message, Trigger string
 	ItemCount                               int
 	StartedAt, FinishedAt                   time.Time
 }
 type ExtractionJob struct {
-	ID, TenderID, DocumentURL, LastError string
-	State                                ExtractionState
-	Attempts                             int
-	NextAttemptAt, CreatedAt, UpdatedAt  time.Time
+	ID, TenderID, DocumentURL, LastError, SkipReason, SkipSource string
+	JobType, JobName, TenantID, UserID, ResultSummary            string
+	State                                                        ExtractionState
+	Attempts                                                     int
+	NextAttemptAt, CreatedAt, UpdatedAt, SkippedAt               time.Time
 }
 type SourceHealth struct {
 	SourceKey, LastStatus, LastMessage, HealthStatus, LastTrigger          string

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"openbid/internal/models"
+	"openbid/internal/tenderstate"
 	"regexp"
 	"strconv"
 	"strings"
@@ -244,13 +245,8 @@ func onlinetendersStatus(closedFlag, closingRaw string) string {
 	if strings.TrimSpace(closedFlag) == "1" {
 		return "closed"
 	}
-	if dt := onlinetendersSortableDateTime(closingRaw); dt != "" {
-		if parsed, err := time.Parse("2006-01-02 15:04", dt); err == nil && parsed.Before(time.Now()) {
-			return "closed"
-		}
-		if parsed, err := time.Parse("2006-01-02", dt); err == nil && parsed.Before(time.Now()) {
-			return "closed"
-		}
+	if tenderstate.IsExpired(models.Tender{ClosingDate: onlinetendersSortableDateTime(closingRaw)}, time.Now().UTC()) {
+		return "closed"
 	}
 	return "open"
 }

@@ -88,6 +88,125 @@ func TestSavedSearchCreateAndDeleteFlow(t *testing.T) {
 	}
 }
 
+func TestKeywordSearchFlowHomepageAndNavigation(t *testing.T) {
+	a := newTestApp(t)
+	user, tenant, cookie, csrf := adminSession(t, a)
+	if err := a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:          "keyword-match",
+		Title:       "Solar backup installation",
+		Summary:     "Battery and inverter installation",
+		Issuer:      "City Power",
+		SourceKey:   "treasury",
+		Province:    "Gauteng",
+		Status:      "open",
+		ClosingDate: "2026-05-12",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:          "keyword-nomatch",
+		Title:       "Road resurfacing",
+		Summary:     "Asphalt and drainage",
+		Issuer:      "Roads Agency",
+		SourceKey:   "cidb",
+		Province:    "Free State",
+		Status:      "open",
+		ClosingDate: "2026-05-13",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected home 200 got %d", w.Code)
+	}
+	if !strings.Contains(body, "Keyword Search") || !strings.Contains(body, "href=\"/keyword-search\"") || !strings.Contains(body, "0 matched") {
+		t.Fatalf("home/nav missing keyword search empty state: %s", body)
+	}
+
+	form := url.Values{
+		"csrf_token": {csrf},
+		"value":      {"solar backup"},
+		"enabled":    {"1"},
+	}
+	req = httptest.NewRequest(http.MethodPost, "/keyword-search/keywords", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after keyword save, got %d", w.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/keyword-search/refresh", strings.NewReader(url.Values{"csrf_token": {csrf}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after manual refresh, got %d", w.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/keyword-search", nil)
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body = w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected keyword search page 200 got %d", w.Code)
+	}
+	for _, marker := range []string{
+		"Keyword Search",
+		"keyword-manager-disclosure\" open",
+		"keyword-filters-disclosure",
+		"keyword-results-disclosure\" open",
+		"Solar backup installation",
+		"solar backup",
+		"Refresh matches",
+	} {
+		if !strings.Contains(body, marker) {
+			t.Fatalf("keyword search page missing %q: %s", marker, body)
+		}
+	}
+	if strings.Contains(body, "Road resurfacing") {
+		t.Fatalf("keyword search page included non-matching tender: %s", body)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body = w.Body.String()
+	if !strings.Contains(body, "1 matched") || !strings.Contains(body, "1 active keywords") {
+		t.Fatalf("home keyword widget did not update after refresh: %s", body)
+	}
+
+	keywords, err := a.Store.ListKeywords(t.Context(), tenant.ID, user.ID)
+	if err != nil || len(keywords) != 1 {
+		t.Fatalf("expected keyword to persist, err=%v keywords=%#v", err, keywords)
+	}
+	deleteForm := url.Values{"csrf_token": {csrf}, "id": {keywords[0].ID}}
+	req = httptest.NewRequest(http.MethodPost, "/keyword-search/keywords/delete", strings.NewReader(deleteForm.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after keyword delete, got %d", w.Code)
+	}
+	summary, err := a.Store.KeywordSearchSummary(t.Context(), tenant.ID, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.MatchedTenderCount != 0 || summary.TotalKeywordCount != 0 {
+		t.Fatalf("expected delete to clear matches, got %#v", summary)
+	}
+}
+
 func TestLoginLocksAccountAfterRepeatedFailures(t *testing.T) {
 	a := newTestApp(t)
 	salt, hash, err := auth.HashPassword("Correct!2026")
@@ -174,5 +293,141 @@ func TestQueueRequeueRejectsViewerDirectPost(t *testing.T) {
 	a.Server.Handler.ServeHTTP(w, req)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("expected forbidden direct viewer retry, got %d", w.Code)
+	}
+}
+
+func TestDataPipesMenuAndExpiredTenderCleanupFlow(t *testing.T) {
+	a := newTestApp(t)
+	user, tenant, cookie, csrf := adminSession(t, a)
+	if err := a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:          "cleanup-expired",
+		Title:       "Expired Cleanup Tender",
+		Issuer:      "Metro",
+		SourceKey:   "treasury",
+		Status:      "open",
+		ClosingDate: "2026-01-01",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:          "cleanup-active",
+		Title:       "Active Cleanup Tender",
+		Issuer:      "Metro",
+		SourceKey:   "treasury",
+		Status:      "open",
+		ClosingDate: "2999-01-01",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store.UpsertBookmark(t.Context(), models.Bookmark{TenantID: tenant.ID, UserID: user.ID, TenderID: "cleanup-expired", Note: "preserve"}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/queue", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected queue page 200 got %d", w.Code)
+	}
+	for _, marker := range []string{"Data Pipes", "Remove Expired Tenders", "data-confirm=", "/data-pipes/remove-expired-tenders", "closing date/time"} {
+		if !strings.Contains(body, marker) {
+			t.Fatalf("queue page missing %q: %s", marker, body)
+		}
+	}
+	if strings.Contains(body, "Run Pipeline") {
+		t.Fatalf("old Run Pipeline menu label still rendered: %s", body)
+	}
+
+	form := url.Values{"csrf_token": {csrf}}
+	req = httptest.NewRequest(http.MethodPost, "/data-pipes/remove-expired-tenders", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after cleanup, got %d body=%s", w.Code, w.Body.String())
+	}
+	if location := w.Header().Get("Location"); !strings.Contains(location, "Expired+tender+cleanup+queued") {
+		t.Fatalf("expected queued cleanup message, got %q", location)
+	}
+	if _, err := a.Store.GetTender(t.Context(), "cleanup-expired"); err != nil {
+		t.Fatalf("expected expired tender to remain until worker runs cleanup, got %v", err)
+	}
+	jobs, err := a.Store.ListJobs(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 || jobs[0].ID != models.ExpiredTenderCleanupJobID || jobs[0].State != models.ExtractionQueued {
+		t.Fatalf("expected queued expired cleanup job, got %#v", jobs)
+	}
+	entries, err := a.Store.ListAuditEntries(t.Context(), tenant.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundAudit := false
+	for _, entry := range entries {
+		if entry.Action == "queue" && entry.Entity == "expired_tender_cleanup" {
+			foundAudit = true
+			break
+		}
+	}
+	if !foundAudit {
+		t.Fatalf("expected cleanup queue audit entry, got %#v", entries)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/data-pipes/remove-expired-tenders", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after repeated cleanup enqueue, got %d", w.Code)
+	}
+	if location := w.Header().Get("Location"); !strings.Contains(location, "Expired+tender+cleanup+queued") {
+		t.Fatalf("expected repeated enqueue message, got %q", location)
+	}
+	jobs, err = a.Store.ListJobs(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected repeated cleanup enqueue to keep a single tracking job, got %#v", jobs)
+	}
+}
+
+func TestExpiredTenderCleanupRequiresCSRFAndPermission(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := adminSession(t, a)
+	req := httptest.NewRequest(http.MethodPost, "/data-pipes/remove-expired-tenders", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected missing CSRF to be forbidden, got %d", w.Code)
+	}
+
+	_, _, viewerCookie, viewerCSRF := sessionForRole(t, a, models.TenantRoleViewer)
+	form := url.Values{"csrf_token": {viewerCSRF}}
+	req = httptest.NewRequest(http.MethodPost, "/data-pipes/remove-expired-tenders", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(viewerCookie)
+	w = httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected viewer cleanup to be forbidden, got %d", w.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/queue", nil)
+	req.AddCookie(viewerCookie)
+	w = httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	if strings.Contains(body, "action=\"/data-pipes/remove-expired-tenders\"") {
+		t.Fatalf("viewer should not see cleanup action form: %s", body)
+	}
+	if !strings.Contains(body, "Read-only access") {
+		t.Fatalf("viewer should see read-only cleanup state: %s", body)
 	}
 }

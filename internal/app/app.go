@@ -224,6 +224,9 @@ func (a *App) seed(ctx context.Context) error {
 	if err := a.ensureTenantSourceAssignments(ctx, defaultTenant.ID); err != nil {
 		return err
 	}
+	if err := a.Store.SeedSmartKeywordsFromCSV(ctx, defaultTenant.ID, smartKeywordSeedCSVPath()); err != nil {
+		log.Printf("smart keyword seed skipped for default tenant=%s: %v", defaultTenant.ID, err)
+	}
 	if err := a.ensureSourceScheduleSettings(ctx, seededUsers); err != nil {
 		return err
 	}
@@ -381,11 +384,22 @@ func (a *App) ensureSourceConfigs(ctx context.Context) error {
 		return err
 	}
 	existing := map[string]bool{}
+	existingByKey := map[string]models.SourceConfig{}
 	for _, cfg := range configs {
 		existing[cfg.Key] = true
+		existingByKey[cfg.Key] = cfg
 	}
 	for _, cfg := range source.DefaultConfigs(a.Config.TreasuryFeedURL) {
 		if existing[cfg.Key] {
+			current := existingByKey[cfg.Key]
+			if shouldUpgradeDefaultSourceConfig(current, cfg) {
+				current.Name = cfg.Name
+				current.Type = cfg.Type
+				current.FeedURL = cfg.FeedURL
+				if err := a.Store.UpsertSourceConfig(ctx, current); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		if err := a.Store.UpsertSourceConfig(ctx, cfg); err != nil {
@@ -402,6 +416,13 @@ func (a *App) ensureSourceConfigs(ctx context.Context) error {
 		existing[cfg.Key] = true
 	}
 	return nil
+}
+
+func shouldUpgradeDefaultSourceConfig(current, desired models.SourceConfig) bool {
+	if current.Key == "city-of-joburg" && desired.Type == source.TypeCityOfJoburgPortal {
+		return current.Type == source.TypeWebPagePortal && strings.Contains(current.FeedURL, "/2022%20TENDERS/Tenders.aspx")
+	}
+	return false
 }
 
 func (a *App) defaultSourceScheduleSettings() models.SourceScheduleSettings {
@@ -544,11 +565,25 @@ func (a *App) syncSources(ctx context.Context, registry source.Registry) error {
 		}
 		for _, t := range items {
 			t = source.NormalizeTenderIdentity(t)
-			if t.DocumentStatus == "" && (t.DocumentURL != "" || len(t.Documents) > 0) {
+			filtered, evaluation, accepted, err := a.Store.EvaluateSmartTenderForExtraction(ctx, t)
+			if err != nil {
+				return fmt.Errorf("evaluate smart keyword extraction for tender %s from %s: %w", t.ID, ad.Key(), err)
+			}
+			if !accepted {
+				log.Printf("startup source sync skipped tender=%s source=%s due to smart keyword extraction: %s", t.ID, ad.Key(), strings.Join(evaluation.Reasons, "; "))
+				continue
+			}
+			t = filtered
+			expired := skipExpiredExtraction(&t, now)
+			if !expired && t.DocumentStatus == "" && (t.DocumentURL != "" || len(t.Documents) > 0) {
 				t.DocumentStatus = models.ExtractionQueued
 			}
 			if err := a.Store.UpsertTender(ctx, t); err != nil {
 				return fmt.Errorf("persist tender %s from %s: %w", t.ID, ad.Key(), err)
+			}
+			if expired {
+				log.Printf("startup source sync skipped extraction for expired tender=%s source=%s closing=%s", t.ID, ad.Key(), t.ClosingDate)
+				continue
 			}
 			if t.DocumentURL != "" {
 				if err := a.Store.QueueJob(ctx, models.ExtractionJob{TenderID: t.ID, DocumentURL: t.DocumentURL, State: models.ExtractionQueued}); err != nil {
@@ -757,6 +792,9 @@ func (a *App) renderStatus(w http.ResponseWriter, r *http.Request, status int, n
 		}
 		if _, exists := data["CanEditWorkspace"]; !exists {
 			data["CanEditWorkspace"] = canEditWorkspace(u, m)
+		}
+		if _, exists := data["CanManageDataPipes"]; !exists {
+			data["CanManageDataPipes"] = canQueueWork(u, m)
 		}
 		if _, exists := data["PlatformRoleLabel"]; !exists {
 			data["PlatformRoleLabel"] = platformRoleLabel(u.PlatformRole)

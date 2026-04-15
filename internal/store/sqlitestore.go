@@ -18,7 +18,7 @@ import (
 	"openbid/internal/models"
 )
 
-const currentSchemaVersion = 6
+const currentSchemaVersion = 8
 
 type SQLiteStore struct {
 	db   *sql.DB
@@ -27,21 +27,36 @@ type SQLiteStore struct {
 
 func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
-	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)", filepath.ToSlash(path))
+
+	// Use a longer busy timeout and WAL mode to allow concurrent access (needed for e2e_seed in CI)
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)&_pragma=temp_store(MEMORY)&_pragma=locking_mode(NORMAL)", filepath.ToSlash(path))
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(0)
 
+	// Ensure WAL mode is properly initialized
+	var journalMode string
+	if err := db.QueryRow("PRAGMA journal_mode;").Scan(&journalMode); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to check journal mode: %w", err)
+	}
+	if journalMode != "wal" {
+		if err := db.QueryRow("PRAGMA journal_mode=WAL;").Scan(&journalMode); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
+		}
+	}
+
 	s := &SQLiteStore{db: db, path: path}
 	if err := s.migrate(context.Background()); err != nil {
 		_ = db.Close()
-		return nil, err
+		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 	return s, nil
 }
@@ -71,7 +86,7 @@ func (s *SQLiteStore) ValidateRuntime(ctx context.Context) error {
 	if userVersion != currentSchemaVersion {
 		return fmt.Errorf("unexpected schema version: got %d want %d", userVersion, currentSchemaVersion)
 	}
-	for _, table := range []string{"tenders", "tenants", "sync_runs", "source_configs", "source_schedule_settings", "jobs", "source_health", "audit_entries", "workflow_events", "user_records", "membership_records", "workflow_records", "bookmark_records", "saved_search_records", "sessions", "tenant_source_assignments"} {
+	for _, table := range []string{"tenders", "tender_dashboard_index", "tenants", "sync_runs", "source_configs", "source_schedule_settings", "jobs", "source_health", "audit_entries", "workflow_events", "user_records", "membership_records", "workflow_records", "bookmark_records", "saved_search_records", "keyword_profiles", "keyword_records", "keyword_match_records", "sessions", "tenant_source_assignments", "smart_extraction_settings", "smart_keyword_groups", "smart_keyword_records", "smart_tender_matches", "saved_smart_views", "smart_alert_deliveries"} {
 		var count int
 		if err := s.db.QueryRowContext(ctx, "select count(*) from sqlite_master where type='table' and name=?", table).Scan(&count); err != nil {
 			return err
@@ -115,6 +130,15 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		`create table if not exists source_configs (id text primary key, payload text not null);`,
 		`create table if not exists source_schedule_settings (id text primary key, payload text not null);`,
 		`create table if not exists jobs (id text primary key, payload text not null);`,
+		`create table if not exists tender_dashboard_index (
+			tender_id text primary key,
+			archived integer not null default 0,
+			engineering_relevant integer not null default 0,
+			has_document integer not null default 0,
+			document_status text not null default '',
+			status text not null default '',
+			published_date text not null default ''
+		);`,
 		`create table if not exists source_health (id text primary key, payload text not null);`,
 		`create table if not exists audit_entries (id text primary key, payload text not null);`,
 		`create table if not exists workflow_events (id text primary key, payload text not null);`,
@@ -124,6 +148,63 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		`create index if not exists idx_tenders_document_status on tenders(coalesce(json_extract(payload, '$.DocumentStatus'), ''));`,
 		`create index if not exists idx_tenders_published on tenders(coalesce(json_extract(payload, '$.PublishedDate'), ''));`,
 		`create index if not exists idx_tenders_closing on tenders(coalesce(json_extract(payload, '$.ClosingDate'), ''));`,
+		`create index if not exists idx_tenders_archived on tenders(coalesce(json_extract(payload, '$.ArchivedAt'), ''));`,
+		`create index if not exists idx_tenders_archived_status on tenders(coalesce(json_extract(payload, '$.ArchivedAt'), ''), lower(coalesce(json_extract(payload, '$.Status'), '')));`,
+		`create index if not exists idx_tenders_archived_document_status on tenders(coalesce(json_extract(payload, '$.ArchivedAt'), ''), coalesce(json_extract(payload, '$.DocumentStatus'), ''));`,
+		`create index if not exists idx_tenders_archived_engineering on tenders(coalesce(json_extract(payload, '$.ArchivedAt'), ''), coalesce(json_extract(payload, '$.EngineeringRelevant'), 0));`,
+		`create index if not exists idx_tenders_archived_document_url on tenders(coalesce(json_extract(payload, '$.ArchivedAt'), ''), coalesce(json_extract(payload, '$.DocumentURL'), ''));`,
+		`create index if not exists idx_tenders_archived_published on tenders(coalesce(json_extract(payload, '$.ArchivedAt'), ''), coalesce(json_extract(payload, '$.PublishedDate'), '') desc, id asc);`,
+		`create index if not exists idx_tender_dashboard_archived on tender_dashboard_index(archived);`,
+		`create index if not exists idx_tender_dashboard_archived_status on tender_dashboard_index(archived, status);`,
+		`create index if not exists idx_tender_dashboard_archived_document_status on tender_dashboard_index(archived, document_status);`,
+		`create index if not exists idx_tender_dashboard_archived_engineering on tender_dashboard_index(archived, engineering_relevant);`,
+		`create index if not exists idx_tender_dashboard_archived_has_document on tender_dashboard_index(archived, has_document);`,
+		`create index if not exists idx_tender_dashboard_archived_published on tender_dashboard_index(archived, published_date desc, tender_id asc);`,
+		`insert into tender_dashboard_index(tender_id, archived, engineering_relevant, has_document, document_status, status, published_date)
+		select id,
+			case when coalesce(json_extract(payload, '$.ArchivedAt'), '') in ('', '0001-01-01T00:00:00Z') then 0 else 1 end,
+			case when coalesce(json_extract(payload, '$.EngineeringRelevant'), 0) = 1 then 1 else 0 end,
+			case when coalesce(json_extract(payload, '$.DocumentURL'), '') <> '' then 1 else 0 end,
+			coalesce(json_extract(payload, '$.DocumentStatus'), ''),
+			lower(coalesce(json_extract(payload, '$.Status'), '')),
+			coalesce(json_extract(payload, '$.PublishedDate'), '')
+		from tenders
+		where true
+		on conflict(tender_id) do update set
+			archived=excluded.archived,
+			engineering_relevant=excluded.engineering_relevant,
+			has_document=excluded.has_document,
+			document_status=excluded.document_status,
+			status=excluded.status,
+			published_date=excluded.published_date;`,
+		`delete from jobs where id in (
+			select id from (
+				select id,
+					row_number() over (
+						partition by coalesce(json_extract(payload, '$.TenderID'), ''), coalesce(json_extract(payload, '$.DocumentURL'), '')
+						order by
+							case coalesce(json_extract(payload, '$.State'), '')
+								when 'processing' then 0
+								when 'queued' then 1
+								when 'retry' then 2
+								when 'failed' then 3
+								when 'completed' then 4
+								when 'skipped' then 5
+								else 6
+							end,
+							coalesce(json_extract(payload, '$.UpdatedAt'), json_extract(payload, '$.CreatedAt'), '') desc,
+							id asc
+					) as rn
+				from jobs
+				where coalesce(json_extract(payload, '$.TenderID'), '') <> ''
+			)
+			where rn > 1
+		);`,
+		`create unique index if not exists idx_jobs_tender_document_unique on jobs(
+			coalesce(json_extract(payload, '$.TenderID'), ''),
+			coalesce(json_extract(payload, '$.DocumentURL'), '')
+		) where coalesce(json_extract(payload, '$.TenderID'), '') <> '';`,
+		`create index if not exists idx_jobs_state on jobs(coalesce(json_extract(payload, '$.State'), ''));`,
 	}
 	for _, stmt := range stmts {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
@@ -190,6 +271,9 @@ func (s *SQLiteStore) RuntimeStats(ctx context.Context) (RuntimeStats, error) {
 		{"workflow_records", &stats.WorkflowCount},
 		{"bookmark_records", &stats.BookmarkCount},
 		{"saved_search_records", &stats.SavedSearchCount},
+		{"keyword_profiles", &stats.KeywordProfileCount},
+		{"keyword_records", &stats.KeywordCount},
+		{"keyword_match_records", &stats.KeywordMatchCount},
 		{"sync_runs", &stats.SyncRunCount},
 		{"source_configs", &stats.SourceConfigCount},
 		{"source_health", &stats.SourceHealthCount},
@@ -259,6 +343,33 @@ func sqliteDelete(ctx context.Context, db *sql.DB, table, id string) error {
 	return err
 }
 
+func upsertTenderDashboardIndex(ctx context.Context, exec sqlExecer, tender models.Tender) error {
+	archived := 0
+	if tenderArchived(tender) {
+		archived = 1
+	}
+	engineeringRelevant := 0
+	if tender.EngineeringRelevant {
+		engineeringRelevant = 1
+	}
+	hasDocument := 0
+	if strings.TrimSpace(tender.DocumentURL) != "" {
+		hasDocument = 1
+	}
+	_, err := exec.ExecContext(ctx, `
+		insert into tender_dashboard_index(tender_id, archived, engineering_relevant, has_document, document_status, status, published_date)
+		values(?,?,?,?,?,?,?)
+		on conflict(tender_id) do update set
+			archived=excluded.archived,
+			engineering_relevant=excluded.engineering_relevant,
+			has_document=excluded.has_document,
+			document_status=excluded.document_status,
+			status=excluded.status,
+			published_date=excluded.published_date
+	`, tender.ID, archived, engineeringRelevant, hasDocument, string(tender.DocumentStatus), strings.ToLower(strings.TrimSpace(tender.Status)), strings.TrimSpace(tender.PublishedDate))
+	return err
+}
+
 func placeholders(count int) string {
 	if count <= 0 {
 		return ""
@@ -313,9 +424,12 @@ func (s *SQLiteStore) GetTendersByIDs(ctx context.Context, ids []string) (map[st
 		if err := rows.Scan(&raw); err != nil {
 			return nil, err
 		}
-		var tender models.Tender
-		if err := json.Unmarshal([]byte(raw), &tender); err != nil {
+		tender, err := decodeTenderPayload(raw)
+		if err != nil {
 			return nil, err
+		}
+		if tenderArchived(tender) {
+			continue
 		}
 		out[tender.ID] = tender
 	}
@@ -342,6 +456,7 @@ func (s *SQLiteStore) TenderFilterOptions(ctx context.Context, tenantID string) 
 			trim(coalesce(json_extract(payload, '$.CIDBGrading'), '')),
 			trim(coalesce(json_extract(payload, '$.DocumentStatus'), ''))
 		from tenders
+		where `+activeTenderSQLClause("")+`
 	`)
 	if err != nil {
 		return TenderFilterOptions{}, err
@@ -355,6 +470,7 @@ func (s *SQLiteStore) TenderFilterOptions(ctx context.Context, tenantID string) 
 	issuerSet := map[string]struct{}{}
 	cidbSet := map[string]struct{}{}
 	documentStatusSet := map[string]struct{}{}
+	groupTagSet := map[string]struct{}{}
 	for rows.Next() {
 		var sourceKey, province, status, category, issuer, cidb, documentStatus string
 		if err := rows.Scan(&sourceKey, &province, &status, &category, &issuer, &cidb, &documentStatus); err != nil {
@@ -410,6 +526,13 @@ func (s *SQLiteStore) TenderFilterOptions(ctx context.Context, tenantID string) 
 		if err != nil {
 			return TenderFilterOptions{}, err
 		}
+		tags, err := s.distinctSmartGroupTags(ctx, tenantID)
+		if err != nil {
+			return TenderFilterOptions{}, err
+		}
+		for _, tag := range tags {
+			addDistinctValue(groupTagSet, tag)
+		}
 	}
 
 	return TenderFilterOptions{
@@ -421,7 +544,31 @@ func (s *SQLiteStore) TenderFilterOptions(ctx context.Context, tenantID string) 
 		CIDBGradings:   sortedDistinctValues(cidbSet),
 		WorkflowStatus: workflowStatuses,
 		DocumentStatus: sortedDistinctValues(documentStatusSet),
+		GroupTags:      sortedDistinctValues(groupTagSet),
 	}, nil
+}
+
+func (s *SQLiteStore) distinctSmartGroupTags(ctx context.Context, tenantID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		select group_tags
+		from smart_tender_matches
+		where tenant_id = ? and accepted = 1
+	`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	set := map[string]struct{}{}
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		for _, tag := range decodeStringSlice(raw) {
+			addDistinctValue(set, tag)
+		}
+	}
+	return sortedDistinctValues(set), rows.Err()
 }
 
 func addDistinctValue(values map[string]struct{}, value string) {
@@ -487,10 +634,33 @@ func (s *SQLiteStore) listTendersInMemory(ctx context.Context, f ListFilter) ([]
 			workflowByTender[wf.TenderID] = wf
 		}
 	}
+	smartEnabled := false
+	smartAccepted := map[string]bool{}
+	if strings.TrimSpace(f.TenantID) != "" {
+		if settings, err := s.GetSmartExtractionSettings(ctx, f.TenantID); err == nil && settings.Enabled {
+			smartEnabled = true
+			rows, err := s.db.QueryContext(ctx, "select tender_id from smart_tender_matches where tenant_id = ? and accepted = 1", f.TenantID)
+			if err == nil {
+				for rows.Next() {
+					var tenderID string
+					if rows.Scan(&tenderID) == nil {
+						smartAccepted[tenderID] = true
+					}
+				}
+				rows.Close()
+			}
+		}
+	}
 
 	out := []models.Tender{}
 	for _, t := range items {
-		if f.Query != "" && !(ContainsCI(t.Title, f.Query) || ContainsCI(t.Issuer, f.Query) || ContainsCI(t.Summary, f.Query) || ContainsCI(t.TenderNumber, f.Query)) {
+		if tenderArchived(t) {
+			continue
+		}
+		if smartEnabled && !smartAccepted[t.ID] {
+			continue
+		}
+		if f.Query != "" && !(ContainsCI(t.Title, f.Query) || ContainsCI(t.Issuer, f.Query) || ContainsCI(t.Summary, f.Query) || ContainsCI(t.TenderNumber, f.Query) || ContainsCI(strings.Join(t.GroupTags, " "), f.Query)) {
 			continue
 		}
 		if f.Source != "" && t.SourceKey != f.Source {
@@ -512,6 +682,9 @@ func (s *SQLiteStore) listTendersInMemory(ctx context.Context, f ListFilter) ([]
 			continue
 		}
 		if f.DocumentStatus != "" && string(t.DocumentStatus) != f.DocumentStatus {
+			continue
+		}
+		if f.GroupTag != "" && !ContainsCI(strings.Join(t.GroupTags, " "), f.GroupTag) {
 			continue
 		}
 		if f.WorkflowStatus != "" {
@@ -598,14 +771,14 @@ func tenderOrderClause(f ListFilter) string {
 }
 
 func buildTenderSQLFilter(f ListFilter) (string, []any, []string) {
-	clauses := []string{"1=1"}
+	clauses := []string{"1=1", activeTenderSQLClause("t")}
 	joins := []string{}
 	joinArgs := []any{}
 	whereArgs := []any{}
 	if f.Query != "" {
 		term := "%" + strings.ToLower(f.Query) + "%"
-		clauses = append(clauses, "(lower(coalesce(json_extract(t.payload, '$.Title'), '')) like ? or lower(coalesce(json_extract(t.payload, '$.Issuer'), '')) like ? or lower(coalesce(json_extract(t.payload, '$.Summary'), '')) like ? or lower(coalesce(json_extract(t.payload, '$.TenderNumber'), '')) like ?)")
-		whereArgs = append(whereArgs, term, term, term, term)
+		clauses = append(clauses, "(lower(coalesce(json_extract(t.payload, '$.Title'), '')) like ? or lower(coalesce(json_extract(t.payload, '$.Issuer'), '')) like ? or lower(coalesce(json_extract(t.payload, '$.Summary'), '')) like ? or lower(coalesce(json_extract(t.payload, '$.TenderNumber'), '')) like ? or lower(coalesce(json_extract(t.payload, '$.GroupTags'), '')) like ? or exists (select 1 from smart_tender_matches smq where smq.tender_id = t.id and (? = '' or smq.tenant_id = ?) and lower(smq.group_tags) like ?))")
+		whereArgs = append(whereArgs, term, term, term, term, term, f.TenantID, f.TenantID, term)
 	}
 	if f.Source != "" {
 		clauses = append(clauses, "coalesce(json_extract(t.payload, '$.SourceKey'), '') = ?")
@@ -634,6 +807,14 @@ func buildTenderSQLFilter(f ListFilter) (string, []any, []string) {
 	if f.DocumentStatus != "" {
 		clauses = append(clauses, "coalesce(json_extract(t.payload, '$.DocumentStatus'), '') = ?")
 		whereArgs = append(whereArgs, f.DocumentStatus)
+	}
+	if f.GroupTag != "" {
+		clauses = append(clauses, "exists (select 1 from smart_tender_matches smtag where smtag.tender_id = t.id and smtag.accepted = 1 and (? = '' or smtag.tenant_id = ?) and lower(smtag.group_tags) like ?)")
+		whereArgs = append(whereArgs, f.TenantID, f.TenantID, "%"+strings.ToLower(f.GroupTag)+"%")
+	}
+	if strings.TrimSpace(f.TenantID) != "" {
+		clauses = append(clauses, "(not exists (select 1 from smart_extraction_settings smcfg where smcfg.tenant_id = ? and smcfg.enabled = 1) or exists (select 1 from smart_tender_matches smvis where smvis.tenant_id = ? and smvis.tender_id = t.id and smvis.accepted = 1))")
+		whereArgs = append(whereArgs, f.TenantID, f.TenantID)
 	}
 	if f.HasDocuments {
 		clauses = append(clauses, "coalesce(json_extract(t.payload, '$.DocumentURL'), '') <> ''")
@@ -690,8 +871,8 @@ func (s *SQLiteStore) listTendersSQL(ctx context.Context, f ListFilter) ([]model
 		if err := rows.Scan(&raw); err != nil {
 			return nil, 0, err
 		}
-		var tender models.Tender
-		if err := json.Unmarshal([]byte(raw), &tender); err != nil {
+		tender, err := decodeTenderPayload(raw)
+		if err != nil {
 			return nil, 0, err
 		}
 		out = append(out, tender)
@@ -700,19 +881,44 @@ func (s *SQLiteStore) listTendersSQL(ctx context.Context, f ListFilter) ([]model
 }
 
 func (s *SQLiteStore) GetTender(ctx context.Context, id string) (models.Tender, error) {
+	tender, err := s.getTenderRaw(ctx, id)
+	if err != nil {
+		return models.Tender{}, err
+	}
+	if tenderArchived(tender) {
+		return models.Tender{}, ErrNotFound
+	}
+	return tender, nil
+}
+
+func (s *SQLiteStore) getTenderRaw(ctx context.Context, id string) (models.Tender, error) {
 	return sqliteGetJSON[models.Tender](ctx, s.db, "tenders", id)
 }
+
 func (s *SQLiteStore) UpsertTender(ctx context.Context, v models.Tender) error {
 	now := time.Now().UTC()
 	if v.ID == "" {
 		v.ID = newid()
 		v.CreatedAt = now
 	}
+	if existing, err := s.getTenderRaw(ctx, v.ID); err == nil && tenderArchived(existing) && !tenderArchived(v) {
+		v.ArchivedAt = existing.ArchivedAt
+		v.ArchiveReason = existing.ArchiveReason
+	}
 	v.UpdatedAt = now
 	if v.ExtractedFacts == nil {
 		v.ExtractedFacts = map[string]string{}
 	}
-	return sqliteUpsertJSON(ctx, s.db, "tenders", v.ID, v)
+	if err := sqliteUpsertJSON(ctx, s.db, "tenders", v.ID, v); err != nil {
+		return err
+	}
+	if err := upsertTenderDashboardIndex(ctx, s.db, v); err != nil {
+		return err
+	}
+	if err := s.refreshAllKeywordProfilesForTender(ctx, v); err != nil {
+		return err
+	}
+	return s.refreshSmartMatchesForTender(ctx, v, true)
 }
 func (s *SQLiteStore) ListUsers(ctx context.Context) ([]models.User, error) {
 	rows, err := s.db.QueryContext(ctx, `
@@ -1169,8 +1375,14 @@ func (s *SQLiteStore) CountBookmarks(ctx context.Context, tenantID, userID strin
 	var count int
 	err := s.db.QueryRowContext(ctx, `
 		select count(*)
-		from bookmark_records
-		where tenant_id = ? and user_id = ?
+		from bookmark_records b
+		where b.tenant_id = ? and b.user_id = ?
+		  and exists (
+			select 1
+			from tenders t
+			where t.id = b.tender_id
+			  and `+activeTenderSQLClause("t")+`
+		  )
 	`, tenantID, userID).Scan(&count)
 	return count, err
 }
@@ -1480,14 +1692,19 @@ func (s *SQLiteStore) ListValidJobs(ctx context.Context) ([]models.ExtractionJob
 	rows, err := s.db.QueryContext(ctx, `
 		select j.payload
 		from jobs j
-		where coalesce(json_extract(j.payload, '$.TenderID'), '') <> ''
-		  and exists (
-			select 1
-			from tenders t
-			where t.id = coalesce(json_extract(j.payload, '$.TenderID'), '')
-		  )
+		where coalesce(json_extract(j.payload, '$.JobType'), ?) = ?
+		   or (
+			coalesce(json_extract(j.payload, '$.JobType'), ?) = ?
+			and coalesce(json_extract(j.payload, '$.TenderID'), '') <> ''
+			and exists (
+				select 1
+				from tenders t
+				where t.id = coalesce(json_extract(j.payload, '$.TenderID'), '')
+				  and `+activeTenderSQLClause("t")+`
+			)
+		   )
 		order by coalesce(json_extract(j.payload, '$.CreatedAt'), '') desc, j.id desc
-	`)
+	`, models.JobTypeExtraction, models.JobTypeExpiredTenderCleanup, models.JobTypeExtraction, models.JobTypeExtraction)
 	if err != nil {
 		return nil, err
 	}
@@ -1510,13 +1727,17 @@ func (s *SQLiteStore) ListValidJobs(ctx context.Context) ([]models.ExtractionJob
 func (s *SQLiteStore) PruneInvalidJobs(ctx context.Context) (int, error) {
 	result, err := s.db.ExecContext(ctx, `
 		delete from jobs
-		where coalesce(json_extract(payload, '$.TenderID'), '') = ''
-		   or not exists (
-			select 1
-			from tenders t
-			where t.id = coalesce(json_extract(jobs.payload, '$.TenderID'), '')
-		   )
-	`)
+		where coalesce(json_extract(payload, '$.JobType'), ?) <> ?
+		  and (
+			coalesce(json_extract(payload, '$.TenderID'), '') = ''
+			or not exists (
+				select 1
+				from tenders t
+				where t.id = coalesce(json_extract(jobs.payload, '$.TenderID'), '')
+				  and `+activeTenderSQLClause("t")+`
+			)
+		  )
+	`, models.JobTypeExtraction, models.JobTypeExpiredTenderCleanup)
 	if err != nil {
 		return 0, err
 	}
@@ -1528,14 +1749,19 @@ func (s *SQLiteStore) JobStateCounts(ctx context.Context) (JobStateCounts, error
 	rows, err := s.db.QueryContext(ctx, `
 		select coalesce(json_extract(j.payload, '$.State'), '') as state, count(*)
 		from jobs j
-		where coalesce(json_extract(j.payload, '$.TenderID'), '') <> ''
-		  and exists (
-			select 1
-			from tenders t
-			where t.id = coalesce(json_extract(j.payload, '$.TenderID'), '')
-		  )
+		where coalesce(json_extract(j.payload, '$.JobType'), ?) = ?
+		   or (
+			coalesce(json_extract(j.payload, '$.JobType'), ?) = ?
+			and coalesce(json_extract(j.payload, '$.TenderID'), '') <> ''
+			and exists (
+				select 1
+				from tenders t
+				where t.id = coalesce(json_extract(j.payload, '$.TenderID'), '')
+				  and `+activeTenderSQLClause("t")+`
+			)
+		   )
 		group by state
-	`)
+	`, models.JobTypeExtraction, models.JobTypeExpiredTenderCleanup, models.JobTypeExtraction, models.JobTypeExtraction)
 	if err != nil {
 		return JobStateCounts{}, err
 	}
@@ -1558,6 +1784,8 @@ func (s *SQLiteStore) JobStateCounts(ctx context.Context) (JobStateCounts, error
 			counts.Failed = count
 		case models.ExtractionCompleted:
 			counts.Completed = count
+		case models.ExtractionSkipped:
+			counts.Skipped = count
 		}
 	}
 	return counts, rows.Err()
@@ -1573,33 +1801,45 @@ func (s *SQLiteStore) JobAlertSnapshot(ctx context.Context) (JobAlertSnapshot, e
 			coalesce(sum(case when coalesce(json_extract(j.payload, '$.State'), '') = ? then 1 else 0 end), 0),
 			coalesce(sum(case when coalesce(json_extract(j.payload, '$.State'), '') = ? then 1 else 0 end), 0),
 			coalesce(sum(case when coalesce(json_extract(j.payload, '$.State'), '') = ? then 1 else 0 end), 0),
+			coalesce(sum(case when coalesce(json_extract(j.payload, '$.State'), '') = ? then 1 else 0 end), 0),
 			min(case
 				when coalesce(json_extract(j.payload, '$.State'), '') in (?, ?, ?)
 				then coalesce(json_extract(j.payload, '$.CreatedAt'), '')
 				else null
 			end)
 		from jobs j
-		where coalesce(json_extract(j.payload, '$.TenderID'), '') <> ''
-		  and exists (
-			select 1
-			from tenders t
-			where t.id = coalesce(json_extract(j.payload, '$.TenderID'), '')
-		  )
+		where coalesce(json_extract(j.payload, '$.JobType'), ?) = ?
+		   or (
+			coalesce(json_extract(j.payload, '$.JobType'), ?) = ?
+			and coalesce(json_extract(j.payload, '$.TenderID'), '') <> ''
+			and exists (
+				select 1
+				from tenders t
+				where t.id = coalesce(json_extract(j.payload, '$.TenderID'), '')
+				  and `+activeTenderSQLClause("t")+`
+			)
+		   )
 	`,
 		string(models.ExtractionQueued),
 		string(models.ExtractionProcessing),
 		string(models.ExtractionRetry),
 		string(models.ExtractionFailed),
 		string(models.ExtractionCompleted),
+		string(models.ExtractionSkipped),
 		string(models.ExtractionQueued),
 		string(models.ExtractionRetry),
 		string(models.ExtractionProcessing),
+		models.JobTypeExtraction,
+		models.JobTypeExpiredTenderCleanup,
+		models.JobTypeExtraction,
+		models.JobTypeExtraction,
 	).Scan(
 		&snapshot.Queued,
 		&snapshot.Processing,
 		&snapshot.Retry,
 		&snapshot.Failed,
 		&snapshot.Completed,
+		&snapshot.Skipped,
 		&oldestPending,
 	)
 	if err != nil {
@@ -1615,20 +1855,12 @@ func (s *SQLiteStore) JobAlertSnapshot(ctx context.Context) (JobAlertSnapshot, e
 }
 
 func (s *SQLiteStore) QueueJob(ctx context.Context, v models.ExtractionJob) error {
-	var existingID string
-	err := s.db.QueryRowContext(ctx, `
-		select id
-		from jobs
-		where coalesce(json_extract(payload, '$.TenderID'), '') = ?
-		  and coalesce(json_extract(payload, '$.DocumentURL'), '') = ?
-		  and coalesce(json_extract(payload, '$.State'), '') <> ?
-		limit 1
-	`, v.TenderID, v.DocumentURL, string(models.ExtractionCompleted)).Scan(&existingID)
-	if err == nil {
-		return nil
+	now := time.Now().UTC()
+	if v.JobType == "" {
+		v.JobType = models.JobTypeExtraction
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return err
+	if v.JobType == models.JobTypeExpiredTenderCleanup {
+		return s.queueExpiredTenderCleanupJob(ctx, v, now)
 	}
 	if v.ID == "" {
 		v.ID = newid()
@@ -1637,14 +1869,50 @@ func (s *SQLiteStore) QueueJob(ctx context.Context, v models.ExtractionJob) erro
 		v.State = models.ExtractionQueued
 	}
 	if v.CreatedAt.IsZero() {
-		v.CreatedAt = time.Now().UTC()
+		v.CreatedAt = now
 	}
-	v.UpdatedAt = time.Now().UTC()
+	v.UpdatedAt = now
 	if v.NextAttemptAt.IsZero() {
-		v.NextAttemptAt = time.Now().UTC()
+		v.NextAttemptAt = now
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, "insert into jobs(id,payload) values(?,?) on conflict do nothing", v.ID, string(b))
+	return err
+}
+
+func (s *SQLiteStore) queueExpiredTenderCleanupJob(ctx context.Context, v models.ExtractionJob, now time.Time) error {
+	v.ID = models.ExpiredTenderCleanupJobID
+	v.JobType = models.JobTypeExpiredTenderCleanup
+	v.JobName = models.ExpiredTenderCleanupJobName
+	v.TenderID = ""
+	v.DocumentURL = ""
+	v.State = models.ExtractionQueued
+	v.Attempts = 0
+	v.NextAttemptAt = now
+	v.CreatedAt = now
+	v.UpdatedAt = now
+	v.SkippedAt = time.Time{}
+	v.SkipReason = ""
+	v.SkipSource = ""
+	v.LastError = ""
+	v.ResultSummary = "Waiting for the worker to archive expired tenders."
+
+	existing, err := sqliteGetJSON[models.ExtractionJob](ctx, s.db, "jobs", v.ID)
+	if err != nil && err != ErrNotFound {
+		return err
+	}
+	if err == nil {
+		switch existing.State {
+		case models.ExtractionQueued, models.ExtractionProcessing, models.ExtractionRetry:
+			return nil
+		}
 	}
 	return sqliteUpsertJSON(ctx, s.db, "jobs", v.ID, v)
 }
+
 func (s *SQLiteStore) UpdateJob(ctx context.Context, v models.ExtractionJob) error {
 	v.UpdatedAt = time.Now().UTC()
 	return sqliteUpsertJSON(ctx, s.db, "jobs", v.ID, v)
@@ -1654,32 +1922,50 @@ func (s *SQLiteStore) DeleteJob(ctx context.Context, id string) error {
 }
 func (s *SQLiteStore) Dashboard(ctx context.Context, tenantID string, lowMemory, analytics bool) (models.Dashboard, error) {
 	d := models.Dashboard{LowMemoryMode: lowMemory, AnalyticsEnabled: analytics}
-	if err := s.db.QueryRowContext(ctx, `
-		select
-			count(*),
-			coalesce(sum(case when coalesce(json_extract(payload, '$.EngineeringRelevant'), 0) = 1 then 1 else 0 end), 0),
-			coalesce(sum(case when coalesce(json_extract(payload, '$.DocumentURL'), '') <> '' then 1 else 0 end), 0),
-			coalesce(sum(case when coalesce(json_extract(payload, '$.DocumentStatus'), '') = ? then 1 else 0 end), 0),
-			coalesce(sum(case when coalesce(json_extract(payload, '$.DocumentStatus'), '') in (?, ?) then 1 else 0 end), 0),
-			coalesce(sum(case when lower(coalesce(json_extract(payload, '$.Status'), '')) = 'open' then 1 else 0 end), 0)
-		from tenders
-	`, string(models.ExtractionCompleted), string(models.ExtractionQueued), string(models.ExtractionRetry)).Scan(
-		&d.TotalTenders,
-		&d.EngineeringRelevant,
-		&d.WithDocuments,
-		&d.ExtractedDocuments,
-		&d.QueuedDocuments,
-		&d.OpenTenders,
-	); err != nil {
-		return models.Dashboard{}, err
+	smartClause := ""
+	smartArgs := []any{}
+	if strings.TrimSpace(tenantID) != "" {
+		if settings, err := s.GetSmartExtractionSettings(ctx, tenantID); err == nil && settings.Enabled {
+			smartClause = " and exists (select 1 from smart_tender_matches smdash where smdash.tenant_id = ? and smdash.tender_id = tender_dashboard_index.tender_id and smdash.accepted = 1)"
+			smartArgs = append(smartArgs, tenantID)
+		}
+	}
+	countQueries := []struct {
+		target *int
+		where  string
+		args   []any
+	}{
+		{target: &d.TotalTenders, where: "archived = 0"},
+		{target: &d.EngineeringRelevant, where: "archived = 0 and engineering_relevant = 1"},
+		{target: &d.WithDocuments, where: "archived = 0 and has_document = 1"},
+		{target: &d.ExtractedDocuments, where: "archived = 0 and document_status = ?", args: []any{string(models.ExtractionCompleted)}},
+		{target: &d.QueuedDocuments, where: "archived = 0 and document_status in (?, ?)", args: []any{string(models.ExtractionQueued), string(models.ExtractionRetry)}},
+		{target: &d.OpenTenders, where: "archived = 0 and status = 'open'"},
+	}
+	for _, item := range countQueries {
+		args := append(append([]any{}, item.args...), smartArgs...)
+		if err := s.db.QueryRowContext(ctx, "select count(*) from tender_dashboard_index where "+item.where+smartClause, args...).Scan(item.target); err != nil {
+			return models.Dashboard{}, err
+		}
 	}
 
+	recentSmartClause := ""
+	recentArgs := []any{}
+	if strings.TrimSpace(tenantID) != "" {
+		if settings, err := s.GetSmartExtractionSettings(ctx, tenantID); err == nil && settings.Enabled {
+			recentSmartClause = " and exists (select 1 from smart_tender_matches smdash where smdash.tenant_id = ? and smdash.tender_id = i.tender_id and smdash.accepted = 1)"
+			recentArgs = append(recentArgs, tenantID)
+		}
+	}
 	rows, err := s.db.QueryContext(ctx, `
-		select payload
-		from tenders
-		order by coalesce(json_extract(payload, '$.PublishedDate'), '') desc, id asc
+		select t.payload
+		from tender_dashboard_index i
+		join tenders t on t.id = i.tender_id
+		where i.archived = 0
+		`+recentSmartClause+`
+		order by i.published_date desc, i.tender_id asc
 		limit 8
-	`)
+	`, recentArgs...)
 	if err != nil {
 		return models.Dashboard{}, err
 	}

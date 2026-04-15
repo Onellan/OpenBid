@@ -1,0 +1,16 @@
+[Unit]
+Description=OpenBid Docker Compose Stack
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=OPENBID_DEPLOY_DIR=.
+ExecStart=sh -lc 'cd "$OPENBID_DEPLOY_DIR" && docker compose up -d'
+ExecStop=sh -lc 'cd "$OPENBID_DEPLOY_DIR" && docker compose down'
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

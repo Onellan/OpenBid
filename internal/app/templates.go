@@ -110,7 +110,7 @@ func templateFuncs() template.FuncMap {
 				return "success"
 			case "failed", "failing", "degraded", "disabled":
 				return "danger"
-			case "processing", "queued", "retry", "running", "paused", "manual-only":
+			case "processing", "queued", "retry", "running", "paused", "manual-only", "skipped":
 				return "warning"
 			default:
 				return "info"
@@ -118,6 +118,7 @@ func templateFuncs() template.FuncMap {
 		},
 		"platformRoleLabel": platformRoleLabel,
 		"tenantRoleLabel":   tenantRoleLabel,
+		"smartOpenURL":      smartOpenURL,
 	}
 }
 
@@ -201,6 +202,10 @@ func routes(a *App) http.Handler {
 	}
 	mux.HandleFunc("/healthz", a.Healthz)
 	mux.HandleFunc("/login", a.Login)
+	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.WriteHeader(http.StatusNoContent)
+	})
 	registerProtected(mux, a, a.Logout, "/logout")
 	registerProtected(mux, a, a.Home, "/", "/home")
 	registerProtected(mux, a, a.Dashboard, "/dashboard")
@@ -214,7 +219,22 @@ func routes(a *App) http.Handler {
 	registerProtected(mux, a, a.ResetWorkflow, "/tenders/workflow/reset")
 	registerProtected(mux, a, a.RemoveBookmark, "/tenders/bookmark/remove")
 	registerProtected(mux, a, a.BookmarksPage, "/bookmarks")
+	registerProtected(mux, a, a.KeywordSearchPage, "/keyword-search")
+	registerProtected(mux, a, a.SaveKeyword, "/keyword-search/keywords")
+	registerProtected(mux, a, a.DeleteKeyword, "/keyword-search/keywords/delete")
+	registerProtected(mux, a, a.RefreshKeywordSearch, "/keyword-search/refresh")
+	registerProtected(mux, a, a.SmartKeywordsPage, "/smart-keywords")
+	registerProtected(mux, a, a.SaveSmartKeywordSettings, "/smart-keywords/settings")
+	registerProtected(mux, a, a.SaveSmartKeywordGroup, "/smart-keywords/groups")
+	registerProtected(mux, a, a.DeleteSmartKeywordGroup, "/smart-keywords/groups/delete")
+	registerProtected(mux, a, a.SaveSmartKeyword, "/smart-keywords/keywords")
+	registerProtected(mux, a, a.DeleteSmartKeyword, "/smart-keywords/keywords/delete")
+	registerProtected(mux, a, a.ReprocessSmartKeywords, "/smart-keywords/reprocess")
+	registerProtected(mux, a, a.SaveSmartView, "/smart-keywords/views")
+	registerProtected(mux, a, a.DeleteSmartView, "/smart-keywords/views/delete")
+	registerProtected(mux, a, a.TestSmartViewAlert, "/smart-keywords/views/test-alert")
 	registerProtected(mux, a, a.QueuePage, "/queue")
+	registerProtected(mux, a, a.CleanupExpiredTenders, "/data-pipes/remove-expired-tenders")
 	registerProtected(mux, a, a.AuditLogPage, "/audit-log")
 	registerProtected(mux, a, a.SecurityAuditLogPage, "/audit-log/security")
 	registerProtected(mux, a, a.HealthPage, "/health")

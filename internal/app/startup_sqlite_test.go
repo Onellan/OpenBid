@@ -44,7 +44,7 @@ func TestSeededStartupSQLite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var sawTreasury, sawEskom, sawOnlineTenders bool
+	var sawTreasury, sawEskom, sawOnlineTenders, sawDurban, sawCityOfJoburg bool
 	for _, cfg := range configs {
 		if cfg.Key == "treasury" {
 			sawTreasury = true
@@ -55,10 +55,17 @@ func TestSeededStartupSQLite(t *testing.T) {
 		if cfg.Key == "onlinetenders" && cfg.Type == "onlinetenders_portal" && cfg.FeedURL == "https://www.onlinetenders.co.za/tenders/south-africa?tcs=civil%23engineering%20consultants" {
 			sawOnlineTenders = true
 		}
+		if cfg.Key == "durban" && cfg.Type == "durban_procurement_portal" && cfg.FeedURL == "https://www.durban.gov.za/pages/business/procurement" {
+			sawDurban = true
+		}
+		if cfg.Key == "city-of-joburg" && cfg.Type == "city_of_joburg_portal" {
+			sawCityOfJoburg = true
+		}
 	}
-	if !sawTreasury || !sawEskom || !sawOnlineTenders {
-		t.Fatalf("expected built-in treasury, eskom, and onlinetenders sources, got %#v", configs)
+	if !sawTreasury || !sawEskom || !sawOnlineTenders || !sawDurban || !sawCityOfJoburg {
+		t.Fatalf("expected built-in treasury, eskom, onlinetenders, durban, and city-of-joburg sources, got %#v", configs)
 	}
+	assertDefaultSourcesPresent(t, configs)
 	assignments, err := a.Store.ListSourceAssignments(t.Context(), defaultTenant.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -95,6 +102,17 @@ func TestStartupEnsuresBuiltInSourcesForExistingDatabase(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.UpsertSourceConfig(ctx, models.SourceConfig{
+		Key:                 "city-of-joburg",
+		Name:                "City of Johannesburg Tenders",
+		Type:                "webpage_portal",
+		FeedURL:             "https://joburg.org.za/work_/Pages/Work%20in%20Joburg/Tenders%20and%20Quotations/2022%20Tenders%20and%20Quotations/2022%20TENDERS/Tenders.aspx",
+		Enabled:             true,
+		ManualChecksEnabled: true,
+		AutoCheckEnabled:    true,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +129,7 @@ func TestStartupEnsuresBuiltInSourcesForExistingDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var sawCustom, sawTreasury, sawEskom, sawOnlineTenders bool
+	var sawCustom, sawTreasury, sawEskom, sawOnlineTenders, sawDurban, sawCityOfJoburg bool
 	for _, cfg := range configs {
 		switch cfg.Key {
 		case "municipal-feed":
@@ -122,11 +140,16 @@ func TestStartupEnsuresBuiltInSourcesForExistingDatabase(t *testing.T) {
 			sawEskom = cfg.Type == "eskom_portal"
 		case "onlinetenders":
 			sawOnlineTenders = cfg.Type == "onlinetenders_portal"
+		case "durban":
+			sawDurban = cfg.Type == "durban_procurement_portal"
+		case "city-of-joburg":
+			sawCityOfJoburg = cfg.Type == "city_of_joburg_portal" && cfg.FeedURL == "https://joburg.org.za/work_/Pages/Work%20in%20Joburg/Tenders%20and%20Quotations/2022%20Tenders%20and%20Quotations/2022%20TENDERS/BID%20OPENING%20REGISTERS/Invitation%20to%20Bid.aspx"
 		}
 	}
-	if !sawCustom || !sawTreasury || !sawEskom || !sawOnlineTenders {
+	if !sawCustom || !sawTreasury || !sawEskom || !sawOnlineTenders || !sawDurban || !sawCityOfJoburg {
 		t.Fatalf("expected existing and built-in sources, got %#v", configs)
 	}
+	assertDefaultSourcesPresent(t, configs)
 	tenants, err := a.Store.ListTenants(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -193,6 +216,57 @@ func TestStartupDefaultTenantSourceAssignmentsRemainIdempotent(t *testing.T) {
 	}
 	if len(assignments) != len(initialAssignments) {
 		t.Fatalf("expected idempotent tenant source assignments, got before=%d after=%d", len(initialAssignments), len(assignments))
+	}
+}
+
+func assertDefaultSourcesPresent(t *testing.T, configs []models.SourceConfig) {
+	t.Helper()
+	expected := []string{
+		"treasury",
+		"etenders",
+		"eskom",
+		"transnet",
+		"transnet-esupplier",
+		"onlinetenders",
+		"durban",
+		"jhb-property-rfqs",
+		"rand-water",
+		"hda",
+		"city-of-joburg",
+		"tshipi",
+		"ecdc",
+		"jda",
+		"gtac",
+		"freeport-saldanha",
+		"dbsa",
+		"ppp-kenya",
+		"csir",
+	}
+	seen := map[string]bool{}
+	for _, cfg := range configs {
+		seen[cfg.Key] = true
+	}
+	for _, key := range expected {
+		if !seen[key] {
+			t.Fatalf("expected default source %q, got %#v", key, configs)
+		}
+	}
+	omittedCredentialSources := []string{
+		"seriti",
+		"dcm-smme",
+		"south32-supplier-docs",
+		"procureai",
+		"hdgf-oracle",
+		"tshwane-ariba",
+		"botswana-oil",
+		"btc",
+		"bitc",
+		"csir-ebsp",
+	}
+	for _, key := range omittedCredentialSources {
+		if seen[key] {
+			t.Fatalf("credential-gated source %q should not be seeded by default", key)
+		}
 	}
 }
 

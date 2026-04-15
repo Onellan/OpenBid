@@ -6,11 +6,11 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-
 MODULE_PATH = Path(__file__).with_name("app.py")
 SPEC = importlib.util.spec_from_file_location("openbid_extractor_app", MODULE_PATH)
 extractor_app = importlib.util.module_from_spec(SPEC)
-assert SPEC.loader is not None
+if SPEC.loader is None:
+    raise ImportError(f"Could not load extractor module from {MODULE_PATH}")
 SPEC.loader.exec_module(extractor_app)
 
 
@@ -64,7 +64,9 @@ class ExtractorHelperTests(unittest.TestCase):
             "getaddrinfo",
             return_value=[(0, 0, 0, "", ("127.0.0.1", 0))],
         ):
-            with self.assertRaisesRegex(ValueError, "private or local network urls are not allowed"):
+            with self.assertRaisesRegex(
+                ValueError, "private or local network urls are not allowed"
+            ):
                 extractor_app.validate_public_url("https://example.invalid/doc.pdf")
 
 
@@ -109,12 +111,16 @@ class ExtractorHTTPTests(unittest.TestCase):
         self.assertEqual(json.loads(body), {"ok": True})
 
     def test_extract_returns_pdf_payload(self):
-        with mock.patch.object(extractor_app, "fetch", return_value=b"%PDF-1.4"), mock.patch.object(
+        with mock.patch.object(
+            extractor_app, "fetch", return_value=b"%PDF-1.4"
+        ), mock.patch.object(
             extractor_app,
             "parse_pdf",
             return_value="Tender Title\nCLOSING DATE: 12 April 2026 CLOSING TIME: 10:00",
         ):
-            status, body = self.request("POST", "/extract", {"url": "https://example.com/tender.pdf"})
+            status, body = self.request(
+                "POST", "/extract", {"url": "https://example.com/tender.pdf"}
+            )
 
         payload = json.loads(body)
         self.assertEqual(status, 200)
@@ -131,7 +137,9 @@ class ExtractorHTTPTests(unittest.TestCase):
                 b"<script>ignore()</script><p>Closing Date: 5 April 2026</p></body></html>"
             ),
         ):
-            status, body = self.request("POST", "/extract", {"url": "https://example.com/tender.html"})
+            status, body = self.request(
+                "POST", "/extract", {"url": "https://example.com/tender.html"}
+            )
 
         payload = json.loads(body)
         self.assertEqual(status, 200)
@@ -141,8 +149,12 @@ class ExtractorHTTPTests(unittest.TestCase):
         self.assertEqual(payload["facts"]["closing_date"], "2026-04-05")
 
     def test_extract_returns_error_payload_when_fetch_fails(self):
-        with mock.patch.object(extractor_app, "fetch", side_effect=ValueError("blocked")):
-            status, body = self.request("POST", "/extract", {"url": "https://example.com/bad.pdf"})
+        with mock.patch.object(
+            extractor_app, "fetch", side_effect=ValueError("blocked")
+        ):
+            status, body = self.request(
+                "POST", "/extract", {"url": "https://example.com/bad.pdf"}
+            )
 
         self.assertEqual(status, 400)
         self.assertEqual(json.loads(body), {"error": "blocked"})

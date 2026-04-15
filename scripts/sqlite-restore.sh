@@ -1,7 +1,12 @@
 #!/usr/bin/env sh
 set -eu
 BACKUP_PATH="${1:?Provide backup db path}"
-DB_PATH="${2:-./data/store.db}"
+if [ -d ./runtime/data ]; then
+  DEFAULT_DB_PATH="./runtime/data/store.db"
+else
+  DEFAULT_DB_PATH="./data/store.db"
+fi
+DB_PATH="${2:-$DEFAULT_DB_PATH}"
 mkdir -p "$(dirname "$DB_PATH")"
 
 if [ -f docker-compose.yml ] && command -v docker >/dev/null 2>&1; then

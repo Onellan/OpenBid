@@ -1,6 +1,11 @@
 #!/usr/bin/env sh
 set -eu
-DB_PATH="${1:-./data/store.db}"
+if [ -d ./runtime/data ]; then
+  DEFAULT_DB_PATH="./runtime/data/store.db"
+else
+  DEFAULT_DB_PATH="./data/store.db"
+fi
+DB_PATH="${1:-$DEFAULT_DB_PATH}"
 if [ ! -f "$DB_PATH" ]; then
   echo "Database not found: $DB_PATH" >&2
   exit 1

@@ -2,7 +2,12 @@
 set -eu
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 STAMP="$(date +%Y%m%d-%H%M%S)"
-OUT_DIR="${2:-./backups}"
+if [ -d ./runtime/backups ]; then
+  DEFAULT_OUT_DIR="./runtime/backups"
+else
+  DEFAULT_OUT_DIR="./backups"
+fi
+OUT_DIR="${2:-$DEFAULT_OUT_DIR}"
 mkdir -p "$OUT_DIR"
 OUT_PATH="${1:-$OUT_DIR/store-$STAMP.db}"
 backup_ok=0
@@ -17,7 +22,22 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 if command -v docker >/dev/null 2>&1 && [ -f docker-compose.yml ]; then
-  docker compose exec -T app openbid-sqlite-backup "$OUT_PATH"
+  CONTAINER_OUT_PATH="$OUT_PATH"
+  case "$OUT_PATH" in
+    ./runtime/backups/*)
+      CONTAINER_OUT_PATH="/app/backups/${OUT_PATH#./runtime/backups/}"
+      ;;
+    runtime/backups/*)
+      CONTAINER_OUT_PATH="/app/backups/${OUT_PATH#runtime/backups/}"
+      ;;
+    ./backups/*)
+      CONTAINER_OUT_PATH="/app/backups/${OUT_PATH#./backups/}"
+      ;;
+    backups/*)
+      CONTAINER_OUT_PATH="/app/backups/${OUT_PATH#backups/}"
+      ;;
+  esac
+  docker compose exec -T app openbid-sqlite-backup "$CONTAINER_OUT_PATH"
 else
   DATA_PATH="${DATA_PATH:-./data/store.db}"
   DATA_PATH="$DATA_PATH" BACKUP_DIR="$(dirname "$OUT_PATH")" go run ./cmd/sqlite_backup "$OUT_PATH"

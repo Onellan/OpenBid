@@ -50,6 +50,7 @@ func main() {
 	secondaryTenant := ensureTenant(ctx, s, e2eTenantName, e2eTenantSlug)
 	ensureMembership(ctx, s, e2eUser.ID, primaryTenantID, models.TenantRoleOwner)
 	ensureMembership(ctx, s, e2eUser.ID, secondaryTenant.ID, models.TenantRoleOwner)
+	ensureE2ESchedulesPaused(ctx, s)
 	ensureFailedQueueFixture(ctx, s, primaryTenantID)
 
 	log.Printf("seeded e2e user=%s tenant=%s tender=%s", e2eUser.Username, secondaryTenant.ID, e2eFailedTender)
@@ -163,7 +164,25 @@ func ensureE2EAdminUser(ctx context.Context, s store.Store, password string) mod
 	return updatedUser
 }
 
+func ensureE2ESchedulesPaused(ctx context.Context, s store.Store) {
+	settings, err := s.GetSourceScheduleSettings(ctx)
+	if err != nil && err != store.ErrNotFound {
+		log.Fatal(err)
+	}
+	if settings.ID == "" {
+		settings.ID = "global"
+	}
+	if settings.DefaultIntervalMinutes <= 0 {
+		settings.DefaultIntervalMinutes = 360
+	}
+	settings.Paused = true
+	if err := s.UpsertSourceScheduleSettings(ctx, settings); err != nil {
+		log.Fatal(err)
+	}
+}
+
 func ensureFailedQueueFixture(ctx context.Context, s store.Store, tenantID string) {
+	now := time.Now().UTC()
 	tender := models.Tender{
 		ID:             e2eFailedTender,
 		Title:          "E2E Failed Queue Tender",
@@ -176,8 +195,8 @@ func ensureFailedQueueFixture(ctx context.Context, s store.Store, tenantID strin
 		DocumentStatus: models.ExtractionFailed,
 		OriginalURL:    "https://example.org/e2e-queue-failed",
 		ClosingDate:    "2026-12-31",
-		CreatedAt:      time.Now().UTC(),
-		UpdatedAt:      time.Now().UTC(),
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	if existing, err := s.GetTender(ctx, tender.ID); err == nil {
 		tender.CreatedAt = existing.CreatedAt
@@ -187,14 +206,15 @@ func ensureFailedQueueFixture(ctx context.Context, s store.Store, tenantID strin
 	}
 	job := models.ExtractionJob{
 		ID:            e2eFailedJob,
+		JobType:       models.JobTypeExtraction,
 		TenderID:      tender.ID,
 		DocumentURL:   tender.DocumentURL,
 		State:         models.ExtractionFailed,
 		LastError:     "seeded E2E failure",
 		Attempts:      2,
-		CreatedAt:     time.Now().Add(-2 * time.Hour).UTC(),
-		UpdatedAt:     time.Now().Add(-90 * time.Minute).UTC(),
-		NextAttemptAt: time.Now().Add(-time.Hour).UTC(),
+		CreatedAt:     now,
+		UpdatedAt:     now,
+		NextAttemptAt: now,
 	}
 	if err := s.UpdateJob(ctx, job); err != nil {
 		if err := s.QueueJob(ctx, job); err != nil {

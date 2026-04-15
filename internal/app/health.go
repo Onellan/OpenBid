@@ -153,7 +153,7 @@ func (a *App) runtimeHealthCards(ctx context.Context, now time.Time) []HealthCar
 
 func (a *App) workerHealthCard(ctx context.Context, now time.Time) HealthCard {
 	card := HealthCard{
-		Name:    "Worker pipeline",
+		Name:    "Worker data pipes",
 		Tone:    "warning",
 		Summary: "Worker activity is being inferred from jobs, schedules, and source runs.",
 	}
@@ -257,6 +257,7 @@ func (a *App) healthQueueMetrics(ctx context.Context) []QueueMetric {
 		{Label: "Queued", Count: counts.Queued + counts.Retry, Tone: "info"},
 		{Label: "Processing", Count: counts.Processing, Tone: "warning"},
 		{Label: "Failed", Count: counts.Failed, Tone: "danger"},
+		{Label: "Skipped", Count: counts.Skipped, Tone: "warning"},
 		{Label: "Completed", Count: counts.Completed, Tone: "success"},
 	}
 	return metrics

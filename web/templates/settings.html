@@ -8,6 +8,7 @@
 <section class="feature-grid" style="margin-top:18px">
   <a class="feature-link" href="/settings/password"><strong>Password</strong><span class="footer-note">Update your password and keep your account current.</span></a>
   <a class="feature-link" href="/settings/mfa"><strong>MFA</strong><span class="footer-note">Add or remove multi-factor authentication.</span></a>
+  <a class="feature-link" href="/smart-keywords"><strong>Smart Keyword Extraction</strong><span class="footer-note">When enabled, only tenders matching your active saved keywords will be extracted.</span></a>
   {{if .CanAdminUsers}}<a class="feature-link" href="/admin/users"><strong>User Admin</strong><span class="footer-note">Manage users, role assignments, and workspace memberships.</span></a>{{end}}
   {{if .CanManageTenants}}<a class="feature-link" href="/admin/tenants"><strong>Tenant Admin</strong><span class="footer-note">Create and manage tenant workspaces and their owners.</span></a>{{end}}
   {{if .CanManageAudit}}<a class="feature-link" href="/audit-log"><strong>Audit Log</strong><span class="footer-note">Review workflow and administrative history across the workspace.</span></a>{{end}}
