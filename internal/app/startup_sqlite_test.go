@@ -226,6 +226,7 @@ func assertDefaultSourcesPresent(t *testing.T, configs []models.SourceConfig) {
 		"etenders",
 		"eskom",
 		"transnet",
+		"transnet-esupplier",
 		"onlinetenders",
 		"durban",
 		"jhb-property-rfqs",
@@ -239,6 +240,7 @@ func assertDefaultSourcesPresent(t *testing.T, configs []models.SourceConfig) {
 		"freeport-saldanha",
 		"dbsa",
 		"ppp-kenya",
+		"csir",
 	}
 	seen := map[string]bool{}
 	for _, cfg := range configs {

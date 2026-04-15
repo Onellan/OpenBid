@@ -110,6 +110,7 @@ func DefaultConfigs(feedURL string) []models.SourceConfig {
 		defaultSourceConfig("etenders", "eTenders Portal", TypeETendersPortal, "https://www.etenders.gov.za/"),
 		defaultSourceConfig("eskom", "Eskom Tender Bulletin", TypeEskomPortal, DefaultEskomPageURL),
 		defaultSourceConfig("transnet", "Transnet e-Tenders", TypeTransnetPortal, "https://transnetetenders.azurewebsites.net/Home/AdvertisedTenders"),
+		defaultSourceConfig("transnet-esupplier", "Transnet eSupplier Portal", TypeTransnetPortal, "https://esupplierportal.transnet.net/portal/advertisedTenders"),
 		defaultSourceConfig("onlinetenders", "OnlineTenders South Africa", TypeOnlineTenders, DefaultOnlineTendersPageURL),
 		defaultSourceConfig("durban", "eThekwini Municipality Procurement", TypeDurbanPortal, DefaultDurbanProcurementURL),
 		defaultSourceConfig("jhb-property-rfqs", "Joburg Property Company RFQs", TypeWebPagePortal, "https://jhbproperty.co.za/supply-chain-management-scm/rfqs/"),
@@ -123,6 +124,7 @@ func DefaultConfigs(feedURL string) []models.SourceConfig {
 		defaultSourceConfig("freeport-saldanha", "Freeport Saldanha Tenders", TypeWebPagePortal, "https://freeportsaldanha.com/tenders/how-to-tender/"),
 		defaultSourceConfig("dbsa", "Development Bank of Southern Africa Procurement", TypeWebPagePortal, "https://www.dbsa.org/procurement"),
 		defaultSourceConfig("ppp-kenya", "PPP Kenya Procurement of Goods and Services", TypeWebPagePortal, "https://pppkenya.go.ke/procurement-of-goods-services/"),
+		defaultSourceConfig("csir", "CSIR Tenders", TypeWebPagePortal, "https://www.csir.co.za/work-with-us/tenders"),
 	}
 }
 
