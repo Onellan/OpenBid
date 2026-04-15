@@ -176,6 +176,7 @@ type Store interface {
 	KeywordSearchSummary(context.Context, string, string) (models.KeywordSearchSummary, error)
 
 	ListSyncRuns(context.Context) ([]models.SyncRun, error)
+	ListRecentSyncRuns(context.Context, int) ([]models.SyncRun, error)
 	LatestSyncRun(context.Context) (models.SyncRun, error)
 	AddSyncRun(context.Context, models.SyncRun) error
 	ListSourceConfigs(context.Context) ([]models.SourceConfig, error)
@@ -193,6 +194,7 @@ type Store interface {
 
 	ListJobs(context.Context) ([]models.ExtractionJob, error)
 	ListValidJobs(context.Context) ([]models.ExtractionJob, error)
+	ListValidJobsByState(context.Context, models.ExtractionState, int, int) ([]models.ExtractionJob, error)
 	PruneInvalidJobs(context.Context) (int, error)
 	JobStateCounts(context.Context) (JobStateCounts, error)
 	JobAlertSnapshot(context.Context) (JobAlertSnapshot, error)

@@ -12,7 +12,10 @@ async function login(page, overrides = {}) {
   if (overrides.mfaCode) {
     await page.getByLabel("MFA or recovery code").fill(overrides.mfaCode);
   }
-  await page.getByRole("button", { name: "Sign in to OpenBid" }).click();
+  await Promise.all([
+    page.waitForURL(/\/$/, { waitUntil: "domcontentloaded" }),
+    page.getByRole("button", { name: "Sign in to OpenBid" }).click(),
+  ]);
 }
 
 async function expectHome(page) {

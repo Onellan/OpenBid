@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"openbid/internal/auth"
@@ -19,6 +20,53 @@ type SourceAdminItem struct {
 	Config    models.SourceConfig
 	Health    models.SourceHealth
 	RecentRun models.SyncRun
+}
+
+func (a *App) clearSourceAdminCache() {
+	a.sourceAdminCache.mu.Lock()
+	defer a.sourceAdminCache.mu.Unlock()
+	a.sourceAdminCache.expiresAt = time.Time{}
+	a.sourceAdminCache.snapshot = sourceAdminSnapshot{}
+}
+
+func (a *App) cachedSourceAdminSnapshot(ctx context.Context) sourceAdminSnapshot {
+	now := time.Now()
+	a.sourceAdminCache.mu.Lock()
+	if now.Before(a.sourceAdminCache.expiresAt) {
+		snapshot := a.sourceAdminCache.snapshot
+		a.sourceAdminCache.mu.Unlock()
+		return snapshot
+	}
+	a.sourceAdminCache.mu.Unlock()
+
+	var (
+		snapshot sourceAdminSnapshot
+		wg       sync.WaitGroup
+	)
+	wg.Add(4)
+	go func() {
+		defer wg.Done()
+		snapshot.Configs, _ = a.Store.ListSourceConfigs(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		snapshot.Health, _ = a.Store.ListSourceHealth(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		snapshot.SyncRuns, _ = a.Store.ListRecentSyncRuns(ctx, 100)
+	}()
+	go func() {
+		defer wg.Done()
+		snapshot.Settings = a.loadSourceScheduleSettings(ctx)
+	}()
+	wg.Wait()
+
+	a.sourceAdminCache.mu.Lock()
+	a.sourceAdminCache.snapshot = snapshot
+	a.sourceAdminCache.expiresAt = now.Add(15 * time.Second)
+	a.sourceAdminCache.mu.Unlock()
+	return snapshot
 }
 
 type RoleOption struct {
@@ -307,31 +355,28 @@ func (a *App) SourcesPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	configs, _ := a.Store.ListSourceConfigs(r.Context())
-	health, _ := a.Store.ListSourceHealth(r.Context())
-	syncRuns, _ := a.Store.ListSyncRuns(r.Context())
+	snapshot := a.cachedSourceAdminSnapshot(r.Context())
 	healthByKey := map[string]models.SourceHealth{}
-	for _, item := range health {
+	for _, item := range snapshot.Health {
 		healthByKey[item.SourceKey] = item
 	}
 	runByKey := map[string]models.SyncRun{}
-	for _, run := range syncRuns {
+	for _, run := range snapshot.SyncRuns {
 		if _, exists := runByKey[run.SourceKey]; !exists {
 			runByKey[run.SourceKey] = run
 		}
 	}
-	items := make([]SourceAdminItem, 0, len(configs))
-	for _, cfg := range configs {
+	items := make([]SourceAdminItem, 0, len(snapshot.Configs))
+	for _, cfg := range snapshot.Configs {
 		items = append(items, SourceAdminItem{Config: cfg, Health: healthByKey[cfg.Key], RecentRun: runByKey[cfg.Key]})
 	}
-	settings := a.loadSourceScheduleSettings(r.Context())
 	a.render(w, r, "sources.html", map[string]any{
 		"Title":            "Sources",
 		"User":             u,
 		"Tenant":           t,
 		"Items":            items,
-		"RecentRuns":       syncRuns,
-		"ScheduleSettings": settings,
+		"RecentRuns":       snapshot.SyncRuns,
+		"ScheduleSettings": snapshot.Settings,
 		"CSRFToken":        a.mustCSRF(r),
 		"SourceType":       source.TypeJSONFeed,
 		"CanManageSources": canManageSources(u, m),
@@ -412,6 +457,7 @@ func (a *App) AdminCreateSource(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, r, "unable to initialize source health", err)
 		return
 	}
+	a.clearSourceAdminCache()
 	a.auditAction(r.Context(), actionContext{User: u, Tenant: t, Member: m}, "create", "source", key, "Source added", map[string]string{"name": name, "type": sourceType})
 	a.redirectAfterAction(w, r, "/sources", "success", "Source added")
 }
@@ -469,6 +515,7 @@ func (a *App) AdminUpdateSource(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, r, "unable to update source health", err)
 		return
 	}
+	a.clearSourceAdminCache()
 	a.auditAction(r.Context(), actionContext{User: u, Tenant: t, Member: m}, "update", "source", key, "Source settings updated", map[string]string{
 		"enabled":            strconv.FormatBool(cfg.Enabled),
 		"auto_check_enabled": strconv.FormatBool(cfg.AutoCheckEnabled),
@@ -505,6 +552,7 @@ func (a *App) AdminDeleteSource(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, r, "unable to remove source health", err)
 		return
 	}
+	a.clearSourceAdminCache()
 	a.auditAction(r.Context(), actionContext{User: u, Tenant: t, Member: m}, "delete", "source", key, "Source removed", nil)
 	a.redirectAfterAction(w, r, "/sources", "success", "Source removed")
 }
@@ -541,6 +589,7 @@ func (a *App) AdminUpdateSourceSchedule(w http.ResponseWriter, r *http.Request) 
 		a.serverError(w, r, "unable to recalculate source schedules", err)
 		return
 	}
+	a.clearSourceAdminCache()
 	a.auditAction(r.Context(), actionContext{User: u, Tenant: t, Member: m}, "update", "source_schedule", "global", "Global source schedule updated", map[string]string{
 		"default_interval_minutes": strconv.Itoa(interval),
 		"paused":                   strconv.FormatBool(settings.Paused),
@@ -581,15 +630,12 @@ func (a *App) SourceStatusJSON(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	configs, _ := a.Store.ListSourceConfigs(r.Context())
-	health, _ := a.Store.ListSourceHealth(r.Context())
-	runs, _ := a.Store.ListSyncRuns(r.Context())
-	settings := a.loadSourceScheduleSettings(r.Context())
+	snapshot := a.cachedSourceAdminSnapshot(r.Context())
 	payload := map[string]any{
-		"settings": settings,
-		"configs":  configs,
-		"health":   health,
-		"runs":     runs,
+		"settings": snapshot.Settings,
+		"configs":  snapshot.Configs,
+		"health":   snapshot.Health,
+		"runs":     snapshot.SyncRuns,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(payload)
@@ -618,6 +664,7 @@ func (a *App) triggerSourceChecks(w http.ResponseWriter, r *http.Request, rawKey
 		a.redirectAfterAction(w, r, "/sources", "warning", "No eligible sources were queued")
 		return
 	}
+	a.clearSourceAdminCache()
 	a.auditAction(r.Context(), actionContext{User: u, Tenant: t, Member: m}, "trigger", "source_check", strings.Join(rawKeys, ","), successMessage, map[string]string{"queued": strconv.Itoa(queued)})
 	a.redirectAfterAction(w, r, "/sources", "success", successMessage)
 }

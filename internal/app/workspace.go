@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"openbid/internal/models"
@@ -31,6 +32,7 @@ type QueueSection struct {
 	Tone        string
 	Items       []QueueItem
 	PageItems   []QueueItem
+	Total       int
 	CurrentPage int
 	TotalPages  int
 	HasPrevPage bool
@@ -76,25 +78,6 @@ type tenderFilterViewOptions struct {
 	GroupTags      []string
 }
 
-func queueSummary(jobs []models.ExtractionJob) QueueSummary {
-	summary := QueueSummary{}
-	for _, job := range jobs {
-		switch job.State {
-		case models.ExtractionQueued:
-			summary.Queued++
-		case models.ExtractionProcessing:
-			summary.Processing++
-		case models.ExtractionFailed:
-			summary.Failed++
-		case models.ExtractionCompleted:
-			summary.Completed++
-		case models.ExtractionSkipped:
-			summary.Skipped++
-		}
-	}
-	return summary
-}
-
 func queueSummaryFromCounts(counts store.JobStateCounts) QueueSummary {
 	return QueueSummary{
 		Queued:     counts.Queued + counts.Retry,
@@ -102,6 +85,25 @@ func queueSummaryFromCounts(counts store.JobStateCounts) QueueSummary {
 		Failed:     counts.Failed,
 		Completed:  counts.Completed,
 		Skipped:    counts.Skipped,
+	}
+}
+
+func jobCountForState(counts store.JobStateCounts, state models.ExtractionState) int {
+	switch state {
+	case models.ExtractionQueued:
+		return counts.Queued
+	case models.ExtractionProcessing:
+		return counts.Processing
+	case models.ExtractionRetry:
+		return counts.Retry
+	case models.ExtractionFailed:
+		return counts.Failed
+	case models.ExtractionCompleted:
+		return counts.Completed
+	case models.ExtractionSkipped:
+		return counts.Skipped
+	default:
+		return 0
 	}
 }
 
@@ -138,14 +140,13 @@ func queryPageLink(path string, values url.Values, param string, page int) strin
 	return path + "?" + encoded
 }
 
-func buildQueueSection(key, title, tone string, items []QueueItem, query url.Values, open bool) QueueSection {
+func buildQueueSectionPage(key, title, tone string, items []QueueItem, total int, query url.Values, open bool) QueueSection {
 	const pageSize = 10
 	param := key + "_page"
 	currentPage, err := strconv.Atoi(query.Get(param))
 	if err != nil || currentPage < 1 {
 		currentPage = 1
 	}
-	total := len(items)
 	totalPages := total / pageSize
 	if total%pageSize != 0 {
 		totalPages++
@@ -156,21 +157,13 @@ func buildQueueSection(key, title, tone string, items []QueueItem, query url.Val
 	if currentPage > totalPages {
 		currentPage = totalPages
 	}
-	start := (currentPage - 1) * pageSize
-	if start > total {
-		start = total
-	}
-	end := start + pageSize
-	if end > total {
-		end = total
-	}
-	pageItems := items[start:end]
 	section := QueueSection{
 		Key:         key,
 		Title:       title,
 		Tone:        tone,
 		Items:       items,
-		PageItems:   pageItems,
+		PageItems:   items,
+		Total:       total,
 		CurrentPage: currentPage,
 		TotalPages:  totalPages,
 		Open:        open,
@@ -186,10 +179,22 @@ func buildQueueSection(key, title, tone string, items []QueueItem, query url.Val
 	return section
 }
 
-func (a *App) listRenderableJobs(ctx context.Context) []models.ExtractionJob {
-	_, _ = a.Store.PruneInvalidJobs(ctx)
-	jobs, _ := a.Store.ListValidJobs(ctx)
-	return jobs
+func queueItemsForJobs(jobs []models.ExtractionJob, tenderByID map[string]models.Tender) []QueueItem {
+	items := make([]QueueItem, 0, len(jobs))
+	for _, job := range jobs {
+		tender := tenderByID[job.TenderID]
+		item := QueueItem{Job: job, Tender: tender, Title: tender.Title, DetailURL: "/tenders/" + tender.ID}
+		if job.JobType == models.JobTypeExpiredTenderCleanup {
+			item.Title = models.ExpiredTenderCleanupJobName
+			if strings.TrimSpace(job.JobName) != "" {
+				item.Title = job.JobName
+			}
+			item.DetailURL = "/queue#expired-tender-cleanup"
+			item.IsMaintenance = true
+		}
+		items = append(items, item)
+	}
+	return items
 }
 
 func csvJSON(value any) string {
@@ -321,12 +326,42 @@ func (a *App) Home(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", 303)
 		return
 	}
-	d, _ := a.Store.Dashboard(r.Context(), t.ID, a.Config.LowMemoryMode, false)
-	bookmarkCount, _ := a.Store.CountBookmarks(r.Context(), t.ID, u.ID)
-	savedCount, _ := a.Store.CountSavedSearches(r.Context(), t.ID, u.ID)
-	keywordSummary, _ := a.Store.KeywordSearchSummary(r.Context(), t.ID, u.ID)
-	jobCounts, _ := a.Store.JobStateCounts(r.Context())
-	sourceHealth, _ := a.Store.ListSourceHealth(r.Context())
+	var (
+		d                 models.Dashboard
+		bookmarkCount     int
+		savedCount        int
+		keywordSummary    models.KeywordSearchSummary
+		jobCounts         store.JobStateCounts
+		sourceHealthCount int
+		wg                sync.WaitGroup
+	)
+	wg.Add(6)
+	go func() {
+		defer wg.Done()
+		d, _ = a.Store.Dashboard(r.Context(), t.ID, a.Config.LowMemoryMode, false)
+	}()
+	go func() {
+		defer wg.Done()
+		bookmarkCount, _ = a.Store.CountBookmarks(r.Context(), t.ID, u.ID)
+	}()
+	go func() {
+		defer wg.Done()
+		savedCount, _ = a.Store.CountSavedSearches(r.Context(), t.ID, u.ID)
+	}()
+	go func() {
+		defer wg.Done()
+		keywordSummary, _ = a.Store.KeywordSearchSummary(r.Context(), t.ID, u.ID)
+	}()
+	go func() {
+		defer wg.Done()
+		jobCounts, _ = a.Store.JobStateCounts(r.Context())
+	}()
+	go func() {
+		defer wg.Done()
+		sourceHealth, _ := a.Store.ListSourceHealth(r.Context())
+		sourceHealthCount = len(sourceHealth)
+	}()
+	wg.Wait()
 	a.render(w, r, "home.html", map[string]any{
 		"Title":             "Home",
 		"User":              u,
@@ -336,7 +371,7 @@ func (a *App) Home(w http.ResponseWriter, r *http.Request) {
 		"SavedCount":        savedCount,
 		"KeywordSummary":    keywordSummary,
 		"QueueSummary":      queueSummaryFromCounts(jobCounts),
-		"SourceHealthCount": len(sourceHealth),
+		"SourceHealthCount": sourceHealthCount,
 	})
 }
 
@@ -814,45 +849,47 @@ func (a *App) QueuePage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", 303)
 		return
 	}
-	jobs := a.listRenderableJobs(r.Context())
-	tenderIDs := make([]string, 0, len(jobs))
-	for _, job := range jobs {
-		tenderIDs = append(tenderIDs, job.TenderID)
-	}
-	tenderByID, _ := a.Store.GetTendersByIDs(r.Context(), tenderIDs)
-	items := make([]QueueItem, 0, len(jobs))
-	for _, job := range jobs {
-		tender := tenderByID[job.TenderID]
-		item := QueueItem{Job: job, Tender: tender, Title: tender.Title, DetailURL: "/tenders/" + tender.ID}
-		if job.JobType == models.JobTypeExpiredTenderCleanup {
-			item.Title = models.ExpiredTenderCleanupJobName
-			if strings.TrimSpace(job.JobName) != "" {
-				item.Title = job.JobName
-			}
-			item.DetailURL = "/queue#expired-tender-cleanup"
-			item.IsMaintenance = true
-		}
-		items = append(items, item)
-	}
-	grouped := map[models.ExtractionState][]QueueItem{
-		models.ExtractionFailed:     {},
-		models.ExtractionProcessing: {},
-		models.ExtractionRetry:      {},
-		models.ExtractionQueued:     {},
-		models.ExtractionSkipped:    {},
-		models.ExtractionCompleted:  {},
-	}
-	for _, item := range items {
-		grouped[item.Job.State] = append(grouped[item.Job.State], item)
-	}
 	query := r.URL.Query()
-	sections := []QueueSection{
-		buildQueueSection("failed", "Failed", "danger", grouped[models.ExtractionFailed], query, true),
-		buildQueueSection("processing", "Processing", "warning", grouped[models.ExtractionProcessing], query, false),
-		buildQueueSection("retry", "Retry", "warning", grouped[models.ExtractionRetry], query, false),
-		buildQueueSection("queued", "Queued", "info", grouped[models.ExtractionQueued], query, false),
-		buildQueueSection("skipped", "Skipped", "warning", grouped[models.ExtractionSkipped], query, false),
-		buildQueueSection("completed", "Completed", "success", grouped[models.ExtractionCompleted], query, false),
+	counts, _ := a.Store.JobStateCounts(r.Context())
+	type queueStateView struct {
+		Key   string
+		Title string
+		Tone  string
+		State models.ExtractionState
+		Open  bool
+	}
+	stateViews := []queueStateView{
+		{Key: "failed", Title: "Failed", Tone: "danger", State: models.ExtractionFailed, Open: true},
+		{Key: "processing", Title: "Processing", Tone: "warning", State: models.ExtractionProcessing},
+		{Key: "retry", Title: "Retry", Tone: "warning", State: models.ExtractionRetry},
+		{Key: "queued", Title: "Queued", Tone: "info", State: models.ExtractionQueued},
+		{Key: "skipped", Title: "Skipped", Tone: "warning", State: models.ExtractionSkipped},
+		{Key: "completed", Title: "Completed", Tone: "success", State: models.ExtractionCompleted},
+	}
+	sections := make([]QueueSection, len(stateViews))
+	sectionItems := make([][]QueueItem, len(stateViews))
+	var wg sync.WaitGroup
+	for i, view := range stateViews {
+		i, view := i, view
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			page := atoi(query.Get(view.Key+"_page"), 1)
+			jobs, _ := a.Store.ListValidJobsByState(r.Context(), view.State, page, 10)
+			tenderIDs := make([]string, 0, len(jobs))
+			for _, job := range jobs {
+				tenderIDs = append(tenderIDs, job.TenderID)
+			}
+			tenderByID, _ := a.Store.GetTendersByIDs(r.Context(), tenderIDs)
+			items := queueItemsForJobs(jobs, tenderByID)
+			sectionItems[i] = items
+			sections[i] = buildQueueSectionPage(view.Key, view.Title, view.Tone, items, jobCountForState(counts, view.State), query, view.Open)
+		}()
+	}
+	wg.Wait()
+	allPageItems := []QueueItem{}
+	for _, items := range sectionItems {
+		allPageItems = append(allPageItems, items...)
 	}
 	a.render(w, r, "queue.html", map[string]any{
 		"Title":         "Queue",
@@ -860,8 +897,8 @@ func (a *App) QueuePage(w http.ResponseWriter, r *http.Request) {
 		"Tenant":        t,
 		"CanEditQueue":  canQueueWork(u, m),
 		"CanRunCleanup": canQueueWork(u, m),
-		"QueueItems":    items,
-		"QueueSummary":  queueSummary(jobs),
+		"QueueItems":    allPageItems,
+		"QueueSummary":  queueSummaryFromCounts(counts),
 		"QueueSections": sections,
 	})
 }

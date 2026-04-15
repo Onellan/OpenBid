@@ -268,6 +268,7 @@ func routes(a *App) http.Handler {
 	registerProtected(mux, a, a.AdminUpdateSourceSchedule, "/sources/schedule")
 	registerProtected(mux, a, a.AdminDeleteSource, "/sources/delete")
 	registerRedirect(mux, "/admin/sources", "/sources")
+	registerRedirect(mux, "/admin/sources/", "/sources")
 	registerRedirect(mux, "/admin/sources/create", "/sources/create")
 	registerRedirect(mux, "/admin/sources/update", "/sources/update")
 	registerRedirect(mux, "/admin/sources/check", "/sources/check")

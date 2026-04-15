@@ -44,7 +44,7 @@
         <h2 class="card-title">{{.Title}}</h2>
         <p class="section-disclosure-copy">A focused view of jobs currently in the {{.Title}} state.</p>
       </div>
-      <span class="badge {{.Tone}}">{{len .Items}} items</span>
+      <span class="badge {{.Tone}}">{{.Total}} items</span>
     </summary>
     <div class="section-disclosure-body">
       <div class="table-wrap">{{template "queue_section_table_typed" (dict "PageItems" .PageItems "CSRFToken" $.CSRFToken "CanEditWorkspace" $.CanEditWorkspace)}}</div>
