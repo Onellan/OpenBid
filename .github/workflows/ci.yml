@@ -89,6 +89,7 @@ jobs:
         env:
           APP_ENV: development
           SECURE_COOKIES: "false"
+          # checkov:skip=CKV_SECRET_6: Test secret for ephemeral CI smoke test environment
           SECRET_KEY: ci-smoke-secret-change-me-2026
           SECRET_KEY_FILE: ""
           BOOTSTRAP_ADMIN_PASSWORD: OpenBid!2026-SmokeTest123
