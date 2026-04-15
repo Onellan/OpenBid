@@ -67,6 +67,15 @@ if command -v chmod >/dev/null 2>&1; then
   chmod 700 runtime/secrets || fail "failed to set runtime/secrets permissions"
 fi
 
+# Pre-create database file with permissive permissions so both container app and host e2e_seed can access it
+db_file="runtime/data/store.db"
+if [ ! -f "$db_file" ]; then
+  : > "$db_file" || fail "failed to create $db_file"
+  if command -v chmod >/dev/null 2>&1; then
+    chmod 666 "$db_file" || fail "failed to set $db_file permissions"
+  fi
+fi
+
 secret_key_file="runtime/secrets/openbid_secret_key"
 admin_password_file="runtime/secrets/openbid_bootstrap_admin_password"
 

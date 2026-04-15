@@ -53,12 +53,6 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 		}
 	}
 
-	// Ensure database file is readable/writable by all users (needed for e2e_seed access from host when app is in container)
-	if err := os.Chmod(path, 0o666); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("failed to set database file permissions: %w", err)
-	}
-
 	s := &SQLiteStore{db: db, path: path}
 	if err := s.migrate(context.Background()); err != nil {
 		_ = db.Close()
