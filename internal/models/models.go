@@ -77,6 +77,7 @@ type Tender struct {
 	ID, SourceKey, ExternalID, Title, Issuer, Province, Category, TenderNumber, PublishedDate, ClosingDate, Status, CIDBGrading, Summary, OriginalURL, DocumentURL, Excerpt string
 	ArchiveReason                                                                                                                                                           string
 	ExtractionSkippedReason, ExtractionSkippedSource                                                                                                                        string
+	GroupTags                                                                                                                                                               []string
 	EngineeringRelevant                                                                                                                                                     bool
 	RelevanceScore                                                                                                                                                          float64
 	TenderType                                                                                                                                                              string
@@ -126,6 +127,89 @@ type Bookmark struct {
 type SavedSearch struct {
 	ID, TenantID, UserID, Name, Query, Filters string
 	CreatedAt, UpdatedAt                       time.Time
+}
+
+type SmartMatchMode string
+
+const (
+	SmartMatchModeAny SmartMatchMode = "ANY"
+	SmartMatchModeAll SmartMatchMode = "ALL"
+)
+
+type SmartExtractionSettings struct {
+	TenantID, RefreshStatus, RefreshMessage string
+	Enabled, AlertsEnabled                  bool
+	LastReprocessedAt, CreatedAt, UpdatedAt time.Time
+}
+
+type SmartKeywordGroup struct {
+	ID, TenantID, Name, TagName, Description string
+	MatchMode                                SmartMatchMode
+	ExcludeTerms                             []string
+	MinMatchCount, Priority                  int
+	Enabled                                  bool
+	CreatedAt, UpdatedAt                     time.Time
+}
+
+type SmartKeyword struct {
+	ID, TenantID, GroupID, Value, NormalizedValue string
+	Enabled                                       bool
+	CreatedAt, UpdatedAt                          time.Time
+}
+
+type SmartGroupEvaluation struct {
+	GroupID, GroupName, TagName string
+	MatchMode                   SmartMatchMode
+	MatchedKeywords             []string
+	ExcludeMatches              []string
+	MinMatchCount, Priority     int
+	Accepted                    bool
+	Reason                      string
+}
+
+type SmartKeywordEvaluation struct {
+	Enabled, Accepted                                      bool
+	ActiveKeywordCount                                     int
+	MatchedKeywords, StandaloneMatches, GroupTags, Reasons []string
+	GroupMatches                                           []SmartGroupEvaluation
+}
+
+type SmartTenderPreview struct {
+	Tender     Tender
+	Evaluation SmartKeywordEvaluation
+}
+
+type SmartReprocessResult struct {
+	TenantID                      string
+	Processed, Accepted, Excluded int
+	UpdatedAt                     time.Time
+}
+
+type SmartViewFilters struct {
+	Query, Source, Issuer, Category, Status, DateFrom, DateTo, MatchedStatus string
+	GroupTags                                                                []string
+	MinPriority                                                              int
+}
+
+type NotificationChannel struct {
+	ID, Type, Destination string
+	Enabled               bool
+	Settings              map[string]string
+}
+
+type SavedSmartView struct {
+	ID, TenantID, UserID, Name, FiltersJSON string
+	Pinned                                  bool
+	AlertsEnabled, AlertPaused              bool
+	AlertFrequency                          string
+	AlertChannels                           []NotificationChannel
+	CreatedAt, UpdatedAt                    time.Time
+}
+
+type SmartAlertDelivery struct {
+	ID, TenantID, ViewID, TenderID, ChannelType, Destination, Frequency string
+	Status, Error, DedupKey, Message                                    string
+	CreatedAt, SentAt                                                   time.Time
 }
 type KeywordProfile struct {
 	ID, TenantID, UserID, Name, RefreshStatus, RefreshMessage string

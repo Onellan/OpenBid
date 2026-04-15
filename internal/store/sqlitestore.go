@@ -18,7 +18,7 @@ import (
 	"openbid/internal/models"
 )
 
-const currentSchemaVersion = 7
+const currentSchemaVersion = 8
 
 type SQLiteStore struct {
 	db   *sql.DB
@@ -73,7 +73,7 @@ func (s *SQLiteStore) ValidateRuntime(ctx context.Context) error {
 	if userVersion != currentSchemaVersion {
 		return fmt.Errorf("unexpected schema version: got %d want %d", userVersion, currentSchemaVersion)
 	}
-	for _, table := range []string{"tenders", "tender_dashboard_index", "tenants", "sync_runs", "source_configs", "source_schedule_settings", "jobs", "source_health", "audit_entries", "workflow_events", "user_records", "membership_records", "workflow_records", "bookmark_records", "saved_search_records", "keyword_profiles", "keyword_records", "keyword_match_records", "sessions", "tenant_source_assignments"} {
+	for _, table := range []string{"tenders", "tender_dashboard_index", "tenants", "sync_runs", "source_configs", "source_schedule_settings", "jobs", "source_health", "audit_entries", "workflow_events", "user_records", "membership_records", "workflow_records", "bookmark_records", "saved_search_records", "keyword_profiles", "keyword_records", "keyword_match_records", "sessions", "tenant_source_assignments", "smart_extraction_settings", "smart_keyword_groups", "smart_keyword_records", "smart_tender_matches", "saved_smart_views", "smart_alert_deliveries"} {
 		var count int
 		if err := s.db.QueryRowContext(ctx, "select count(*) from sqlite_master where type='table' and name=?", table).Scan(&count); err != nil {
 			return err
@@ -457,6 +457,7 @@ func (s *SQLiteStore) TenderFilterOptions(ctx context.Context, tenantID string) 
 	issuerSet := map[string]struct{}{}
 	cidbSet := map[string]struct{}{}
 	documentStatusSet := map[string]struct{}{}
+	groupTagSet := map[string]struct{}{}
 	for rows.Next() {
 		var sourceKey, province, status, category, issuer, cidb, documentStatus string
 		if err := rows.Scan(&sourceKey, &province, &status, &category, &issuer, &cidb, &documentStatus); err != nil {
@@ -512,6 +513,13 @@ func (s *SQLiteStore) TenderFilterOptions(ctx context.Context, tenantID string) 
 		if err != nil {
 			return TenderFilterOptions{}, err
 		}
+		tags, err := s.distinctSmartGroupTags(ctx, tenantID)
+		if err != nil {
+			return TenderFilterOptions{}, err
+		}
+		for _, tag := range tags {
+			addDistinctValue(groupTagSet, tag)
+		}
 	}
 
 	return TenderFilterOptions{
@@ -523,7 +531,31 @@ func (s *SQLiteStore) TenderFilterOptions(ctx context.Context, tenantID string) 
 		CIDBGradings:   sortedDistinctValues(cidbSet),
 		WorkflowStatus: workflowStatuses,
 		DocumentStatus: sortedDistinctValues(documentStatusSet),
+		GroupTags:      sortedDistinctValues(groupTagSet),
 	}, nil
+}
+
+func (s *SQLiteStore) distinctSmartGroupTags(ctx context.Context, tenantID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		select group_tags
+		from smart_tender_matches
+		where tenant_id = ? and accepted = 1
+	`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	set := map[string]struct{}{}
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		for _, tag := range decodeStringSlice(raw) {
+			addDistinctValue(set, tag)
+		}
+	}
+	return sortedDistinctValues(set), rows.Err()
 }
 
 func addDistinctValue(values map[string]struct{}, value string) {
@@ -589,13 +621,33 @@ func (s *SQLiteStore) listTendersInMemory(ctx context.Context, f ListFilter) ([]
 			workflowByTender[wf.TenderID] = wf
 		}
 	}
+	smartEnabled := false
+	smartAccepted := map[string]bool{}
+	if strings.TrimSpace(f.TenantID) != "" {
+		if settings, err := s.GetSmartExtractionSettings(ctx, f.TenantID); err == nil && settings.Enabled {
+			smartEnabled = true
+			rows, err := s.db.QueryContext(ctx, "select tender_id from smart_tender_matches where tenant_id = ? and accepted = 1", f.TenantID)
+			if err == nil {
+				for rows.Next() {
+					var tenderID string
+					if rows.Scan(&tenderID) == nil {
+						smartAccepted[tenderID] = true
+					}
+				}
+				rows.Close()
+			}
+		}
+	}
 
 	out := []models.Tender{}
 	for _, t := range items {
 		if tenderArchived(t) {
 			continue
 		}
-		if f.Query != "" && !(ContainsCI(t.Title, f.Query) || ContainsCI(t.Issuer, f.Query) || ContainsCI(t.Summary, f.Query) || ContainsCI(t.TenderNumber, f.Query)) {
+		if smartEnabled && !smartAccepted[t.ID] {
+			continue
+		}
+		if f.Query != "" && !(ContainsCI(t.Title, f.Query) || ContainsCI(t.Issuer, f.Query) || ContainsCI(t.Summary, f.Query) || ContainsCI(t.TenderNumber, f.Query) || ContainsCI(strings.Join(t.GroupTags, " "), f.Query)) {
 			continue
 		}
 		if f.Source != "" && t.SourceKey != f.Source {
@@ -617,6 +669,9 @@ func (s *SQLiteStore) listTendersInMemory(ctx context.Context, f ListFilter) ([]
 			continue
 		}
 		if f.DocumentStatus != "" && string(t.DocumentStatus) != f.DocumentStatus {
+			continue
+		}
+		if f.GroupTag != "" && !ContainsCI(strings.Join(t.GroupTags, " "), f.GroupTag) {
 			continue
 		}
 		if f.WorkflowStatus != "" {
@@ -709,8 +764,8 @@ func buildTenderSQLFilter(f ListFilter) (string, []any, []string) {
 	whereArgs := []any{}
 	if f.Query != "" {
 		term := "%" + strings.ToLower(f.Query) + "%"
-		clauses = append(clauses, "(lower(coalesce(json_extract(t.payload, '$.Title'), '')) like ? or lower(coalesce(json_extract(t.payload, '$.Issuer'), '')) like ? or lower(coalesce(json_extract(t.payload, '$.Summary'), '')) like ? or lower(coalesce(json_extract(t.payload, '$.TenderNumber'), '')) like ?)")
-		whereArgs = append(whereArgs, term, term, term, term)
+		clauses = append(clauses, "(lower(coalesce(json_extract(t.payload, '$.Title'), '')) like ? or lower(coalesce(json_extract(t.payload, '$.Issuer'), '')) like ? or lower(coalesce(json_extract(t.payload, '$.Summary'), '')) like ? or lower(coalesce(json_extract(t.payload, '$.TenderNumber'), '')) like ? or lower(coalesce(json_extract(t.payload, '$.GroupTags'), '')) like ? or exists (select 1 from smart_tender_matches smq where smq.tender_id = t.id and (? = '' or smq.tenant_id = ?) and lower(smq.group_tags) like ?))")
+		whereArgs = append(whereArgs, term, term, term, term, term, f.TenantID, f.TenantID, term)
 	}
 	if f.Source != "" {
 		clauses = append(clauses, "coalesce(json_extract(t.payload, '$.SourceKey'), '') = ?")
@@ -739,6 +794,14 @@ func buildTenderSQLFilter(f ListFilter) (string, []any, []string) {
 	if f.DocumentStatus != "" {
 		clauses = append(clauses, "coalesce(json_extract(t.payload, '$.DocumentStatus'), '') = ?")
 		whereArgs = append(whereArgs, f.DocumentStatus)
+	}
+	if f.GroupTag != "" {
+		clauses = append(clauses, "exists (select 1 from smart_tender_matches smtag where smtag.tender_id = t.id and smtag.accepted = 1 and (? = '' or smtag.tenant_id = ?) and lower(smtag.group_tags) like ?)")
+		whereArgs = append(whereArgs, f.TenantID, f.TenantID, "%"+strings.ToLower(f.GroupTag)+"%")
+	}
+	if strings.TrimSpace(f.TenantID) != "" {
+		clauses = append(clauses, "(not exists (select 1 from smart_extraction_settings smcfg where smcfg.tenant_id = ? and smcfg.enabled = 1) or exists (select 1 from smart_tender_matches smvis where smvis.tenant_id = ? and smvis.tender_id = t.id and smvis.accepted = 1))")
+		whereArgs = append(whereArgs, f.TenantID, f.TenantID)
 	}
 	if f.HasDocuments {
 		clauses = append(clauses, "coalesce(json_extract(t.payload, '$.DocumentURL'), '') <> ''")
@@ -839,7 +902,10 @@ func (s *SQLiteStore) UpsertTender(ctx context.Context, v models.Tender) error {
 	if err := upsertTenderDashboardIndex(ctx, s.db, v); err != nil {
 		return err
 	}
-	return s.refreshAllKeywordProfilesForTender(ctx, v)
+	if err := s.refreshAllKeywordProfilesForTender(ctx, v); err != nil {
+		return err
+	}
+	return s.refreshSmartMatchesForTender(ctx, v, true)
 }
 func (s *SQLiteStore) ListUsers(ctx context.Context) ([]models.User, error) {
 	rows, err := s.db.QueryContext(ctx, `
@@ -1843,6 +1909,14 @@ func (s *SQLiteStore) DeleteJob(ctx context.Context, id string) error {
 }
 func (s *SQLiteStore) Dashboard(ctx context.Context, tenantID string, lowMemory, analytics bool) (models.Dashboard, error) {
 	d := models.Dashboard{LowMemoryMode: lowMemory, AnalyticsEnabled: analytics}
+	smartClause := ""
+	smartArgs := []any{}
+	if strings.TrimSpace(tenantID) != "" {
+		if settings, err := s.GetSmartExtractionSettings(ctx, tenantID); err == nil && settings.Enabled {
+			smartClause = " and exists (select 1 from smart_tender_matches smdash where smdash.tenant_id = ? and smdash.tender_id = tender_dashboard_index.tender_id and smdash.accepted = 1)"
+			smartArgs = append(smartArgs, tenantID)
+		}
+	}
 	countQueries := []struct {
 		target *int
 		where  string
@@ -1856,19 +1930,29 @@ func (s *SQLiteStore) Dashboard(ctx context.Context, tenantID string, lowMemory,
 		{target: &d.OpenTenders, where: "archived = 0 and status = 'open'"},
 	}
 	for _, item := range countQueries {
-		if err := s.db.QueryRowContext(ctx, "select count(*) from tender_dashboard_index where "+item.where, item.args...).Scan(item.target); err != nil {
+		args := append(append([]any{}, item.args...), smartArgs...)
+		if err := s.db.QueryRowContext(ctx, "select count(*) from tender_dashboard_index where "+item.where+smartClause, args...).Scan(item.target); err != nil {
 			return models.Dashboard{}, err
 		}
 	}
 
+	recentSmartClause := ""
+	recentArgs := []any{}
+	if strings.TrimSpace(tenantID) != "" {
+		if settings, err := s.GetSmartExtractionSettings(ctx, tenantID); err == nil && settings.Enabled {
+			recentSmartClause = " and exists (select 1 from smart_tender_matches smdash where smdash.tenant_id = ? and smdash.tender_id = i.tender_id and smdash.accepted = 1)"
+			recentArgs = append(recentArgs, tenantID)
+		}
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		select t.payload
 		from tender_dashboard_index i
 		join tenders t on t.id = i.tender_id
 		where i.archived = 0
+		`+recentSmartClause+`
 		order by i.published_date desc, i.tender_id asc
 		limit 8
-	`)
+	`, recentArgs...)
 	if err != nil {
 		return models.Dashboard{}, err
 	}

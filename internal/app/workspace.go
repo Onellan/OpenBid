@@ -73,6 +73,7 @@ type tenderFilterViewOptions struct {
 	CIDBGradings   []string
 	WorkflowStatus []string
 	DocumentStatus []string
+	GroupTags      []string
 }
 
 func queueSummary(jobs []models.ExtractionJob) QueueSummary {
@@ -269,6 +270,7 @@ func tenderFilterOptionsForView(base store.TenderFilterOptions, filter store.Lis
 		CIDBGradings:   ensureCurrentStringOption(base.CIDBGradings, filter.CIDB),
 		WorkflowStatus: ensureCurrentStringOption(base.WorkflowStatus, filter.WorkflowStatus),
 		DocumentStatus: ensureCurrentStringOption(base.DocumentStatus, filter.DocumentStatus),
+		GroupTags:      ensureCurrentStringOption(base.GroupTags, filter.GroupTag),
 	}
 }
 
@@ -277,7 +279,7 @@ func tenderFilterFromRequest(r *http.Request, tenantID, userID string, page, pag
 		Query: r.URL.Query().Get("q"), Source: r.URL.Query().Get("source"), Province: r.URL.Query().Get("province"),
 		Category: r.URL.Query().Get("category"), Issuer: r.URL.Query().Get("issuer"), Status: r.URL.Query().Get("status"),
 		CIDB: r.URL.Query().Get("cidb"), WorkflowStatus: r.URL.Query().Get("workflow_status"),
-		DocumentStatus: r.URL.Query().Get("document_status"), BookmarkedOnly: r.URL.Query().Get("bookmarked_only") == "1",
+		DocumentStatus: r.URL.Query().Get("document_status"), GroupTag: r.URL.Query().Get("group_tag"), BookmarkedOnly: r.URL.Query().Get("bookmarked_only") == "1",
 		HasDocuments: r.URL.Query().Get("has_documents") == "1", Sort: r.URL.Query().Get("sort"), View: r.URL.Query().Get("view"),
 		Page: page, PageSize: pageSize, TenantID: tenantID, UserID: userID,
 	})
@@ -383,7 +385,7 @@ func (a *App) Tenders(w http.ResponseWriter, r *http.Request) {
 	workflowByTender, _ := a.Store.GetWorkflowsByTenderIDs(r.Context(), t.ID, tenderIDs)
 	params := map[string]string{
 		"q": f.Query, "source": f.Source, "province": f.Province, "category": f.Category, "issuer": f.Issuer, "status": f.Status,
-		"cidb": f.CIDB, "workflow_status": f.WorkflowStatus, "document_status": f.DocumentStatus, "sort": f.Sort, "view": f.View,
+		"cidb": f.CIDB, "workflow_status": f.WorkflowStatus, "document_status": f.DocumentStatus, "group_tag": f.GroupTag, "sort": f.Sort, "view": f.View,
 		"page_size": strconv.Itoa(f.PageSize),
 	}
 	if f.BookmarkedOnly {

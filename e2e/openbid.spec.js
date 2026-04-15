@@ -104,6 +104,89 @@ test.describe.serial("OpenBid critical browser journeys", () => {
     await expect(page.locator(".kpi-band")).toContainText("Queued");
   });
 
+  test("Smart Keyword Extraction group tags, saved views, and alerts work", async ({
+    page,
+  }) => {
+    await login(page);
+    await page.goto("/smart-keywords");
+    await expect(
+      page.getByRole("heading", { name: "Extract only the tenders that match your active keywords" }),
+    ).toBeVisible();
+
+    const groupName = `E2E Smart ${Date.now()}`;
+    const createGroupForm = page
+      .locator('form[action="/smart-keywords/groups"]')
+      .first();
+    await createGroupForm.getByLabel("Group name").fill(groupName);
+    await createGroupForm.getByLabel("Group Tag").fill(groupName);
+    await createGroupForm.getByLabel("Match mode").selectOption("ANY");
+    await createGroupForm.getByLabel("Enabled").check();
+    await createGroupForm.getByLabel("Minimum matches").fill("1");
+    await createGroupForm.getByLabel("Priority").fill("7");
+    await createGroupForm.getByRole("button", { name: "Create group" }).click();
+    await expect(page.getByText("Keyword group saved")).toBeVisible();
+
+    const groupSection = page
+      .locator(`input[name="name"][value="${groupName}"]`)
+      .locator(
+        'xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " card-soft ")][1]',
+      );
+    await expect(groupSection).toBeVisible();
+    const addKeywordForm = groupSection
+      .locator('form[action="/smart-keywords/keywords"]')
+      .last();
+    await addKeywordForm.getByLabel("Add keyword").fill("Queue");
+    await addKeywordForm.getByRole("button", { name: "Add to group" }).click();
+    await expect(page.getByText("Keyword saved")).toBeVisible();
+
+    const settingsForm = page.locator('form[action="/smart-keywords/settings"]');
+    await settingsForm.getByLabel("Smart Keyword Extraction").check();
+    await settingsForm.getByLabel("Global smart alerts").check();
+    await settingsForm.getByRole("button", { name: "Save settings" }).click();
+    await expect(
+      page.getByText("Smart Keyword Extraction settings saved"),
+    ).toBeVisible();
+
+    page.once("dialog", (dialog) => dialog.accept());
+    await page
+      .locator('form[action="/smart-keywords/reprocess"]')
+      .getByRole("button", { name: "Reprocess existing tenders" })
+      .click();
+    await expect(
+      page.locator('[role="status"]').getByText(/Reprocessed \d+ tenders/),
+    ).toBeVisible();
+
+    await page.goto(`/tenders?group_tag=${encodeURIComponent(groupName)}`);
+    await expect(page.getByText("E2E Failed Queue Tender")).toBeVisible();
+    await expect(
+      page.locator("tr", { hasText: "E2E Failed Queue Tender" }).getByText(groupName),
+    ).toBeVisible();
+
+    await page.goto("/smart-keywords");
+    const viewForm = page.locator('form[action="/smart-keywords/views"]').first();
+    await viewForm.getByLabel("Name").fill(`${groupName} View`);
+    await viewForm.getByLabel("Group Tags").fill(groupName);
+    await viewForm.getByLabel("Enable alerts").check();
+    await viewForm.getByLabel("Frequency").selectOption("immediate");
+    await viewForm.getByLabel("Email").check();
+    await viewForm
+      .locator('input[name="email_destination"]')
+      .fill("smart-alerts@example.org");
+    await viewForm.getByRole("button", { name: "Save view" }).click();
+    await expect(page.getByText("Saved Smart View saved")).toBeVisible();
+
+    page.once("dialog", (dialog) => dialog.accept());
+    await page
+      .locator('form[action="/smart-keywords/reprocess"]')
+      .getByRole("button", { name: "Reprocess existing tenders" })
+      .click();
+    await expect(
+      page.locator('[role="status"]').getByText(/Reprocessed \d+ tenders/),
+    ).toBeVisible();
+    await expect(page.getByText("smart-alerts@example.org")).toBeVisible();
+    await expect(page.getByText("sent").first()).toBeVisible();
+  });
+
   test("MFA setup and MFA login flow work", async ({ page }) => {
     await login(page);
     await page.goto("/settings/mfa");

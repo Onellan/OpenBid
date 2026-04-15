@@ -187,6 +187,7 @@ func ensureFailedQueueFixture(ctx context.Context, s store.Store, tenantID strin
 	}
 	job := models.ExtractionJob{
 		ID:            e2eFailedJob,
+		JobType:       models.JobTypeExtraction,
 		TenderID:      tender.ID,
 		DocumentURL:   tender.DocumentURL,
 		State:         models.ExtractionFailed,

@@ -224,6 +224,9 @@ func (a *App) seed(ctx context.Context) error {
 	if err := a.ensureTenantSourceAssignments(ctx, defaultTenant.ID); err != nil {
 		return err
 	}
+	if err := a.Store.SeedSmartKeywordsFromCSV(ctx, defaultTenant.ID, smartKeywordSeedCSVPath()); err != nil {
+		log.Printf("smart keyword seed skipped for default tenant=%s: %v", defaultTenant.ID, err)
+	}
 	if err := a.ensureSourceScheduleSettings(ctx, seededUsers); err != nil {
 		return err
 	}
@@ -562,6 +565,15 @@ func (a *App) syncSources(ctx context.Context, registry source.Registry) error {
 		}
 		for _, t := range items {
 			t = source.NormalizeTenderIdentity(t)
+			filtered, evaluation, accepted, err := a.Store.EvaluateSmartTenderForExtraction(ctx, t)
+			if err != nil {
+				return fmt.Errorf("evaluate smart keyword extraction for tender %s from %s: %w", t.ID, ad.Key(), err)
+			}
+			if !accepted {
+				log.Printf("startup source sync skipped tender=%s source=%s due to smart keyword extraction: %s", t.ID, ad.Key(), strings.Join(evaluation.Reasons, "; "))
+				continue
+			}
+			t = filtered
 			expired := skipExpiredExtraction(&t, now)
 			if !expired && t.DocumentStatus == "" && (t.DocumentURL != "" || len(t.Documents) > 0) {
 				t.DocumentStatus = models.ExtractionQueued

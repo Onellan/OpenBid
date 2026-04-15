@@ -183,6 +183,20 @@ func (r Runner) markExpiredExtractionSkipped(ctx context.Context, tender models.
 
 func (r Runner) persistSourceTender(ctx context.Context, tender models.Tender) {
 	now := r.now()
+	var evaluation models.SmartKeywordEvaluation
+	filteredTender, evaluation, accepted, err := r.Store.EvaluateSmartTenderForExtraction(ctx, tender)
+	if err != nil {
+		r.logKV("worker_smart_keyword_evaluation_failed", "tender", tender.ID, "source", tender.SourceKey, "error", err)
+		return
+	}
+	if !accepted {
+		r.logKV("worker_smart_keyword_skipped", "tender", tender.ID, "source", tender.SourceKey, "reasons", strings.Join(evaluation.Reasons, "; "))
+		return
+	}
+	tender = filteredTender
+	if evaluation.Enabled {
+		r.logKV("worker_smart_keyword_accepted", "tender", tender.ID, "source", tender.SourceKey, "group_tags", strings.Join(evaluation.GroupTags, ","))
+	}
 	if tenderstate.IsExpired(tender, now) {
 		r.markExpiredExtractionSkipped(ctx, tender, nil)
 		return
@@ -300,6 +314,10 @@ func (r Runner) processJobs(ctx context.Context) {
 			t.DocumentFacts = cloneFactMap(res.Facts)
 			applyDocumentPromotions(&t, t.DocumentFacts)
 			t.ExtractedFacts = mergeFactMaps(t.ExtractedFacts, t.PageFacts, t.DocumentFacts)
+			if filtered, evaluation, accepted, err := r.Store.EvaluateSmartTenderForExtraction(ctx, t); err == nil && accepted {
+				t.GroupTags = evaluation.GroupTags
+				t = filtered
+			}
 			r.persistTender(ctx, t)
 		} else {
 			r.logKV("worker_tender_lookup_failed", "tender", job.TenderID, "error", err)

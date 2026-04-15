@@ -1,0 +1,191 @@
+package store
+
+import (
+	"path/filepath"
+	"testing"
+
+	"openbid/internal/models"
+)
+
+func newSmartTestStore(t *testing.T) *SQLiteStore {
+	t.Helper()
+	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "smart.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	return s
+}
+
+func TestSmartKeywordEvaluationModesTagsAndExcludes(t *testing.T) {
+	s := newSmartTestStore(t)
+	ctx := t.Context()
+	group, err := s.UpsertSmartKeywordGroup(ctx, models.SmartKeywordGroup{
+		TenantID:      "tenant-1",
+		Name:          "Water",
+		TagName:       "Water",
+		Enabled:       true,
+		MatchMode:     models.SmartMatchModeAny,
+		MinMatchCount: 1,
+		ExcludeTerms:  []string{"training"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertSmartKeyword(ctx, models.SmartKeyword{TenantID: "tenant-1", GroupID: group.ID, Value: "wastewater", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertSmartKeyword(ctx, models.SmartKeyword{TenantID: "tenant-1", Value: "pump station", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertSmartExtractionSettings(ctx, models.SmartExtractionSettings{TenantID: "tenant-1", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	tender, evaluation, accepted, err := s.EvaluateSmartTenderForExtraction(ctx, models.Tender{ID: "t1", Title: "Wastewater pump station upgrade", Issuer: "Metro"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !accepted || !evaluation.Accepted || len(tender.GroupTags) != 1 || tender.GroupTags[0] != "Water" {
+		t.Fatalf("expected accepted Water tagged tender, got accepted=%v eval=%#v tender=%#v", accepted, evaluation, tender)
+	}
+
+	_, evaluation, accepted, err = s.EvaluateSmartTenderForExtraction(ctx, models.Tender{ID: "t2", Title: "Wastewater training workshop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if accepted || evaluation.Accepted || len(evaluation.GroupTags) != 0 {
+		t.Fatalf("expected exclude term to suppress group match, got accepted=%v eval=%#v", accepted, evaluation)
+	}
+
+	group.MatchMode = models.SmartMatchModeAll
+	group.ExcludeTerms = nil
+	if _, err := s.UpsertSmartKeywordGroup(ctx, group); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertSmartKeyword(ctx, models.SmartKeyword{TenantID: "tenant-1", GroupID: group.ID, Value: "treatment", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, accepted, err = s.EvaluateSmartTenderForExtraction(ctx, models.Tender{ID: "t3", Title: "Wastewater works only"}); err != nil {
+		t.Fatal(err)
+	}
+	if accepted {
+		t.Fatal("expected ALL mode to require every active group keyword")
+	}
+	if _, _, accepted, err = s.EvaluateSmartTenderForExtraction(ctx, models.Tender{ID: "t4", Title: "Wastewater treatment package"}); err != nil {
+		t.Fatal(err)
+	}
+	if !accepted {
+		t.Fatal("expected ALL mode to accept when every active group keyword matches")
+	}
+}
+
+func TestSmartReprocessSearchAndAlertDedup(t *testing.T) {
+	s := newSmartTestStore(t)
+	ctx := t.Context()
+	group, err := s.UpsertSmartKeywordGroup(ctx, models.SmartKeywordGroup{TenantID: "tenant-1", Name: "Wastewater", TagName: "Wastewater", Enabled: true, MatchMode: models.SmartMatchModeAny, MinMatchCount: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertSmartKeyword(ctx, models.SmartKeyword{TenantID: "tenant-1", GroupID: group.ID, Value: "wastewater", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertSmartExtractionSettings(ctx, models.SmartExtractionSettings{TenantID: "tenant-1", Enabled: true, AlertsEnabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertTender(ctx, models.Tender{ID: "match", Title: "Wastewater treatment upgrade", Status: "open"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertTender(ctx, models.Tender{ID: "skip", Title: "Road works", Status: "open"}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := s.ReprocessSmartKeywords(ctx, "tenant-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Accepted != 1 || result.Excluded != 1 {
+		t.Fatalf("unexpected reprocess result: %#v", result)
+	}
+	items, total, err := s.ListTenders(ctx, ListFilter{TenantID: "tenant-1", GroupTag: "Wastewater", Page: 1, PageSize: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || items[0].ID != "match" {
+		t.Fatalf("expected group tag search to return only match, total=%d items=%#v", total, items)
+	}
+	filterJSON := `{"GroupTags":["Wastewater"]}`
+	view, err := s.UpsertSavedSmartView(ctx, models.SavedSmartView{
+		TenantID: "tenant-1", UserID: "user-1", Name: "Wastewater view", FiltersJSON: filterJSON,
+		AlertsEnabled: true, AlertFrequency: "immediate",
+		AlertChannels: []models.NotificationChannel{{Type: "email", Destination: "ops@example.org", Enabled: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tender, err := s.GetTender(ctx, "match")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.triggerSmartViewAlertsForTender(ctx, "tenant-1", tender, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.triggerSmartViewAlertsForTender(ctx, "tenant-1", tender, "test"); err != nil {
+		t.Fatal(err)
+	}
+	deliveries, err := s.ListSmartAlertDeliveries(ctx, "tenant-1", view.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deliveries) != 1 || deliveries[0].Status != "sent" {
+		t.Fatalf("expected one deduplicated sent alert, got %#v", deliveries)
+	}
+}
+
+func TestSmartSeedIsDefaultTenantScopedAndIdempotent(t *testing.T) {
+	s := newSmartTestStore(t)
+	ctx := t.Context()
+	seed := filepath.Join("..", "..", "internal", "seeddata", "africa_water_wastewater_tender_keywords.csv")
+	if err := s.SeedSmartKeywordsFromCSV(ctx, "default-tenant", seed); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SeedSmartKeywordsFromCSV(ctx, "default-tenant", seed); err != nil {
+		t.Fatal(err)
+	}
+	groups, err := s.ListSmartKeywordGroups(ctx, "default-tenant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keywords, err := s.ListSmartKeywords(ctx, "default-tenant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 19 || len(keywords) != 471 {
+		t.Fatalf("expected seeded 19 groups and 471 keywords without duplicates, got groups=%d keywords=%d", len(groups), len(keywords))
+	}
+	keywords[0].Enabled = false
+	if _, err := s.UpsertSmartKeyword(ctx, keywords[0]); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SeedSmartKeywordsFromCSV(ctx, "default-tenant", seed); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := s.smartKeywordByID(ctx, "default-tenant", keywords[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Enabled {
+		t.Fatal("reseed should preserve user-disabled seeded keyword")
+	}
+	for _, group := range groups {
+		if group.Enabled || group.MatchMode != models.SmartMatchModeAny || group.MinMatchCount != 1 || group.Priority != 0 || group.TagName == "" {
+			t.Fatalf("seeded group missing explicit defaults: %#v", group)
+		}
+	}
+	otherGroups, err := s.ListSmartKeywordGroups(ctx, "other-tenant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(otherGroups) != 0 {
+		t.Fatalf("seed leaked into non-default tenant: %#v", otherGroups)
+	}
+}

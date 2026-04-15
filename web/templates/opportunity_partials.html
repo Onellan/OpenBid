@@ -51,6 +51,10 @@
       <option value="">Any document status</option>
       {{range .FilterOptions.DocumentStatus}}<option value="{{.}}" {{if eq $.Filter.DocumentStatus .}}selected{{end}}>{{.}}</option>{{end}}
     </select></label>
+    <label>Group Tag<select name="group_tag">
+      <option value="">Any Group Tag</option>
+      {{range .FilterOptions.GroupTags}}<option value="{{.}}" {{if eq $.Filter.GroupTag .}}selected{{end}}>{{.}}</option>{{end}}
+    </select></label>
     <label>View<select name="view">
       <option value="cards" {{if eq .Filter.View "cards"}}selected{{end}}>Cards</option>
       <option value="table" {{if eq .Filter.View "table"}}selected{{end}}>Table</option>
@@ -85,13 +89,14 @@
 
 {{define "opportunity_table"}}
 <table>
-  <tr><th>ID</th><th>Opportunity</th><th>Issuer</th><th>Type</th><th>Closing</th><th>Workflow</th><th>Document</th><th>Quick actions</th></tr>
+  <tr><th>ID</th><th>Opportunity</th><th>Issuer</th><th>Type</th><th>Group Tags</th><th>Closing</th><th>Workflow</th><th>Document</th><th>Quick actions</th></tr>
   {{range .Items}}
   <tr>
     <td class="small mono">{{.ID}}</td>
     <td>{{.Title}}<div class="footer-note mono" style="margin-top:6px">{{.TenderNumber}}</div></td>
     <td>{{.Issuer}}</td>
     <td>{{if .TenderType}}{{.TenderType}}{{else}}Not set{{end}}</td>
+    <td>{{range .GroupTags}}<span class="badge success">{{.}}</span> {{else}}<span class="footer-note">None</span>{{end}}</td>
     <td>{{.ClosingDate}}</td>
     <td>{{with index $.Workflows .ID}}{{.Status}} / {{.Priority}}{{end}}</td>
     <td>{{.DocumentStatus}}<div class="footer-note" style="margin-top:6px">{{len .Documents}} docs</div></td>
@@ -117,7 +122,7 @@
     </td>
   </tr>
   {{else}}
-  <tr><td colspan="8">{{template "empty_state" "No opportunities matched your filters."}}</td></tr>
+  <tr><td colspan="9">{{template "empty_state" "No opportunities matched your filters."}}</td></tr>
   {{end}}
 </table>
 {{end}}
@@ -130,6 +135,7 @@
   {{if .Item.TenderType}}{{template "status_badge" (dict "tone" "info" "label" .Item.TenderType)}}{{end}}
   {{template "status_badge" (dict "tone" "info" "label" (printf "%d docs" (len .Item.Documents)))}}
   {{if .Item.DocumentStatus}}{{template "status_badge" (dict "tone" (condTone .Item.DocumentStatus) "label" (printf "Doc %s" .Item.DocumentStatus))}}{{end}}
+  {{range .Item.GroupTags}}{{template "status_badge" (dict "tone" "success" "label" (printf "Group %s" .))}}{{end}}
   {{with index .Root.Workflows .Item.ID}}{{if .Status}}{{template "status_badge" (dict "tone" "success" "label" (printf "Workflow %s" .Status))}}{{end}}{{if .Priority}}{{template "status_badge" (dict "tone" "warning" "label" (printf "Priority %s" .Priority))}}{{end}}{{end}}
   </div>
 </div>

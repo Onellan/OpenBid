@@ -20,6 +20,7 @@
       <div class="card-soft"><strong>Validity</strong><div class="footer-note">{{if .Item.ValidityDays}}{{.Item.ValidityDays}} days{{else}}Not stated{{end}}</div></div>
       <div class="card-soft"><strong>CIDB grading</strong><div class="footer-note">{{if .Item.CIDBGrading}}{{.Item.CIDBGrading}}{{else}}Not captured yet{{end}}</div></div>
       <div class="card-soft"><strong>Document status</strong><div class="footer-note">{{if .Item.DocumentStatus}}{{.Item.DocumentStatus}}{{else}}No public source document linked{{end}}{{if .Item.ExtractionSkippedReason}} · Skipped because the tender closing date/time has passed.{{end}}</div></div>
+      <div class="card-soft"><strong>Group Tags</strong><div class="footer-note">{{range .Item.GroupTags}}<span class="badge success">{{.}}</span> {{else}}No Group Tags applied{{end}}</div></div>
     </div>
     {{if .Item.Scope}}
     <div class="card-soft" style="margin-top:14px"><strong>Scope</strong><p class="footer-note" style="margin-top:8px">{{.Item.Scope}}</p></div>

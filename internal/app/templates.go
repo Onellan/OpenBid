@@ -118,6 +118,7 @@ func templateFuncs() template.FuncMap {
 		},
 		"platformRoleLabel": platformRoleLabel,
 		"tenantRoleLabel":   tenantRoleLabel,
+		"smartOpenURL":      smartOpenURL,
 	}
 }
 
@@ -222,6 +223,16 @@ func routes(a *App) http.Handler {
 	registerProtected(mux, a, a.SaveKeyword, "/keyword-search/keywords")
 	registerProtected(mux, a, a.DeleteKeyword, "/keyword-search/keywords/delete")
 	registerProtected(mux, a, a.RefreshKeywordSearch, "/keyword-search/refresh")
+	registerProtected(mux, a, a.SmartKeywordsPage, "/smart-keywords")
+	registerProtected(mux, a, a.SaveSmartKeywordSettings, "/smart-keywords/settings")
+	registerProtected(mux, a, a.SaveSmartKeywordGroup, "/smart-keywords/groups")
+	registerProtected(mux, a, a.DeleteSmartKeywordGroup, "/smart-keywords/groups/delete")
+	registerProtected(mux, a, a.SaveSmartKeyword, "/smart-keywords/keywords")
+	registerProtected(mux, a, a.DeleteSmartKeyword, "/smart-keywords/keywords/delete")
+	registerProtected(mux, a, a.ReprocessSmartKeywords, "/smart-keywords/reprocess")
+	registerProtected(mux, a, a.SaveSmartView, "/smart-keywords/views")
+	registerProtected(mux, a, a.DeleteSmartView, "/smart-keywords/views/delete")
+	registerProtected(mux, a, a.TestSmartViewAlert, "/smart-keywords/views/test-alert")
 	registerProtected(mux, a, a.QueuePage, "/queue")
 	registerProtected(mux, a, a.CleanupExpiredTenders, "/data-pipes/remove-expired-tenders")
 	registerProtected(mux, a, a.AuditLogPage, "/audit-log")

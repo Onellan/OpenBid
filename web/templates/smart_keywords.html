@@ -1,0 +1,128 @@
+{{define "smart_keywords.html"}}{{template "base" .}}{{end}}{{define "content"}}
+{{template "page_hero" (dict
+  "eyebrow" "Smart Keyword Extraction"
+  "title" "Extract only the tenders that match your active keywords"
+  "copy" "When enabled, only tenders matching your active saved keywords will be extracted."
+)}}
+<div style="margin:14px 0">{{template "flash_messages" .}}</div>
+
+<div class="stack" style="margin-top:18px">
+  <section class="card">
+    {{template "card_header" (dict "title" "Smart Keyword Extraction" "subtitle" "Enable this after at least one standalone keyword or enabled group keyword is active.")}}
+    <form method="post" action="/smart-keywords/settings" class="form-grid" style="margin-top:14px">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <div class="row-4">
+        <label><span class="footer-note">Smart Keyword Extraction</span><input type="checkbox" name="enabled" value="1" {{if .Settings.Enabled}}checked{{end}}></label>
+        <label><span class="footer-note">Global smart alerts</span><input type="checkbox" name="alerts_enabled" value="1" {{if .Settings.AlertsEnabled}}checked{{end}}></label>
+        <div class="card-soft"><strong>Status</strong><div class="footer-note">{{.Settings.RefreshStatus}} · {{.Settings.RefreshMessage}}</div></div>
+        <div class="actions"><button type="submit">Save settings</button></div>
+      </div>
+    </form>
+  </section>
+
+  <details class="section-disclosure" open>
+    <summary><div><h2 class="card-title">Standalone keywords</h2><p class="section-disclosure-copy">Standalone keywords match tenders without creating Group Tags.</p></div><span class="badge info">{{len .Standalone}} keywords</span></summary>
+    <div class="section-disclosure-body">
+      <form method="post" action="/smart-keywords/keywords" class="form-grid">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="hidden" name="enabled" value="1">
+        <label>New standalone keyword<input name="value" placeholder="water treatment"></label>
+        <div class="actions"><button type="submit">Add keyword</button></div>
+      </form>
+      <div class="table-wrap" style="margin-top:14px"><table>
+        <tr><th>Keyword</th><th>Enabled</th><th>Actions</th></tr>
+        {{range .Standalone}}
+        <tr>
+          <td><input form="smart-keyword-{{.ID}}" name="value" value="{{.Value}}"></td>
+          <td><input form="smart-keyword-{{.ID}}" type="checkbox" name="enabled" value="1" {{if .Enabled}}checked{{end}}></td>
+          <td class="actions compact-actions">
+            <form id="smart-keyword-{{.ID}}" method="post" action="/smart-keywords/keywords"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button type="submit">Save</button></form>
+            <form method="post" action="/smart-keywords/keywords/delete" data-confirm="Delete keyword '{{.Value}}'?"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button type="submit">Delete</button></form>
+          </td>
+        </tr>
+        {{else}}<tr><td colspan="3">{{template "empty_state" "No standalone keywords configured."}}</td></tr>{{end}}
+      </table></div>
+    </div>
+  </details>
+
+  <details class="section-disclosure" open>
+    <summary><div><h2 class="card-title">Keyword groups</h2><p class="section-disclosure-copy">Groups apply deterministic Group Tags when their rules match.</p></div><span class="badge info">{{len .Groups}} groups</span></summary>
+    <div class="section-disclosure-body">
+      <form method="post" action="/smart-keywords/groups" class="form-grid">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <div class="row-4">
+          <label>Group name<input name="name" placeholder="Water"></label>
+          <label>Group Tag<input name="tag_name" placeholder="Water"></label>
+          <label>Match mode<select name="match_mode"><option value="ANY">ANY</option><option value="ALL">ALL</option></select></label>
+          <label><span class="footer-note">Enabled</span><input type="checkbox" name="enabled" value="1"></label>
+        </div>
+        <label>Description<textarea name="description"></textarea></label>
+        <div class="row-4">
+          <label>Exclude terms<input name="exclude_terms" placeholder="training, bursary"></label>
+          <label>Minimum matches<input name="min_match_count" value="1"></label>
+          <label>Priority<input name="priority" value="0"></label>
+          <div class="actions"><button type="submit">Create group</button></div>
+        </div>
+      </form>
+
+      {{range .Groups}}
+      <section class="card-soft" style="margin-top:14px">
+        <form method="post" action="/smart-keywords/groups" class="form-grid">
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.Group.ID}}">
+          <div class="row-4">
+            <label>Name<input name="name" value="{{.Group.Name}}"></label>
+            <label>Group Tag<input name="tag_name" value="{{.Group.TagName}}"></label>
+            <label>Match mode<select name="match_mode"><option value="ANY" {{if eq .Group.MatchMode "ANY"}}selected{{end}}>ANY</option><option value="ALL" {{if eq .Group.MatchMode "ALL"}}selected{{end}}>ALL</option></select></label>
+            <label><span class="footer-note">Enabled</span><input type="checkbox" name="enabled" value="1" {{if .Group.Enabled}}checked{{end}}></label>
+          </div>
+          <label>Description<textarea name="description">{{.Group.Description}}</textarea></label>
+          <div class="row-4">
+            <label>Exclude terms<input name="exclude_terms" value="{{range .Group.ExcludeTerms}}{{.}}, {{end}}"></label>
+            <label>Minimum matches<input name="min_match_count" value="{{.Group.MinMatchCount}}"></label>
+            <label>Priority<input name="priority" value="{{.Group.Priority}}"></label>
+            <div class="actions compact-actions"><button type="submit">Save group</button></div>
+          </div>
+        </form>
+        <form method="post" action="/smart-keywords/groups/delete" data-confirm="Delete group '{{.Group.Name}}' and its keywords?" style="margin-top:8px"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.Group.ID}}"><button type="submit">Delete group</button></form>
+        <div class="table-wrap" style="margin-top:12px"><table>
+          <tr><th>Keyword</th><th>Enabled</th><th>Actions</th></tr>
+          {{range .Keywords}}
+          <tr><td><input form="smart-keyword-{{.ID}}" name="value" value="{{.Value}}"></td><td><input form="smart-keyword-{{.ID}}" type="checkbox" name="enabled" value="1" {{if .Enabled}}checked{{end}}></td><td class="actions compact-actions"><form id="smart-keyword-{{.ID}}" method="post" action="/smart-keywords/keywords"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><input type="hidden" name="group_id" value="{{.GroupID}}"><button type="submit">Save</button></form><form method="post" action="/smart-keywords/keywords/delete"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button type="submit">Delete</button></form></td></tr>
+          {{else}}<tr><td colspan="3">{{template "empty_state" "This group is empty and will not affect extraction until keywords are added."}}</td></tr>{{end}}
+        </table></div>
+        <form method="post" action="/smart-keywords/keywords" class="form-grid" style="margin-top:10px"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="group_id" value="{{.Group.ID}}"><input type="hidden" name="enabled" value="1"><label>Add keyword<input name="value"></label><div class="actions"><button type="submit">Add to group</button></div></form>
+      </section>
+      {{end}}
+    </div>
+  </details>
+
+  <details class="section-disclosure" open>
+    <summary><div><h2 class="card-title">Preview and reprocess</h2><p class="section-disclosure-copy">Preview does not modify production records. Reprocess updates historical matches and Group Tags.</p></div><span class="badge warning">Manual apply</span></summary>
+    <div class="section-disclosure-body">
+      <form method="post" action="/smart-keywords/reprocess" data-confirm="Reprocess existing tenders using the current Smart Keyword Extraction configuration?"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit">Reprocess existing tenders</button></form>
+      <div class="table-wrap" style="margin-top:14px"><table>
+        <tr><th>Tender</th><th>Result</th><th>Matched keywords</th><th>Group Tags</th><th>Reasons</th></tr>
+        {{range .Preview}}<tr><td><a href="/tenders/{{.Tender.ID}}">{{.Tender.Title}}</a></td><td>{{if .Evaluation.Accepted}}Matched{{else}}Excluded{{end}}</td><td>{{range .Evaluation.MatchedKeywords}}<span class="badge info">{{.}}</span> {{end}}</td><td>{{range .Evaluation.GroupTags}}<span class="badge success">{{.}}</span> {{end}}</td><td>{{range .Evaluation.Reasons}}{{.}} {{end}}</td></tr>{{else}}<tr><td colspan="5">{{template "empty_state" "No tenders are available to preview yet."}}</td></tr>{{end}}
+      </table></div>
+    </div>
+  </details>
+
+  <details class="section-disclosure" open>
+    <summary><div><h2 class="card-title">Saved Smart Views and alerts</h2><p class="section-disclosure-copy">Save Group Tag filters and attach alert channels.</p></div><span class="badge info">{{len .Views}} views</span></summary>
+    <div class="section-disclosure-body">
+      <form method="post" action="/smart-keywords/views" class="form-grid">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <div class="row-4"><label>Name<input name="name" placeholder="Water this week"></label><label>Group Tags<input name="group_tags" placeholder="Water, Wastewater"></label><label>Source<input name="source"></label><label>Issuer<input name="issuer"></label></div>
+        <div class="row-4"><label>Keyword<input name="query"></label><label>Category<input name="category"></label><label>Status<input name="status"></label><label><span class="footer-note">Pinned</span><input type="checkbox" name="pinned" value="1"></label></div>
+        <div class="row-4"><label><span class="footer-note">Enable alerts</span><input type="checkbox" name="alerts_enabled" value="1"></label><label><span class="footer-note">Pause alerts</span><input type="checkbox" name="alert_paused" value="1"></label><label>Frequency<select name="alert_frequency"><option value="immediate">Immediate</option><option value="digest">Scheduled digest</option><option value="daily">Daily summary</option><option value="weekly">Weekly summary</option></select></label><div class="actions"><button type="submit">Save view</button></div></div>
+        <div class="row-4"><label><input type="checkbox" name="channel_type" value="email"> Email<input name="email_destination" placeholder="alerts@example.org"></label><label><input type="checkbox" name="channel_type" value="whatsapp"> WhatsApp<input name="whatsapp_destination" placeholder="+27123456789"></label><label><input type="checkbox" name="channel_type" value="webhook"> Webhook<input name="webhook_destination" placeholder="https://example.org/hook"></label><label><input type="checkbox" name="channel_type" value="in_app"> In-app<input name="in_app_destination" placeholder="OpenBid"></label></div>
+      </form>
+      <div class="table-wrap" style="margin-top:14px"><table>
+        <tr><th>Name</th><th>Filters</th><th>Alerts</th><th>Actions</th></tr>
+        {{range .Views}}<tr><td>{{if .Pinned}}<span class="badge success">Pinned</span> {{end}}{{.Name}}</td><td class="small mono">{{.FiltersJSON}}</td><td>{{if .AlertsEnabled}}Enabled{{else}}Off{{end}} · {{.AlertFrequency}}</td><td class="actions compact-actions"><a class="button secondary" href="{{smartOpenURL .}}">Open</a><form method="post" action="/smart-keywords/views/test-alert"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button type="submit">Test alert</button></form><form method="post" action="/smart-keywords/views/delete"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button type="submit">Delete</button></form></td></tr>{{else}}<tr><td colspan="4">{{template "empty_state" "No Saved Smart Views yet."}}</td></tr>{{end}}
+      </table></div>
+      <div class="table-wrap" style="margin-top:14px"><table><tr><th>Alert history</th><th>Channel</th><th>Status</th><th>Message</th></tr>{{range .Deliveries}}<tr><td>{{.CreatedAt}}</td><td>{{.ChannelType}} · {{.Destination}}</td><td>{{.Status}}</td><td>{{.Message}}</td></tr>{{else}}<tr><td colspan="4">{{template "empty_state" "No alert deliveries recorded yet."}}</td></tr>{{end}}</table></div>
+    </div>
+  </details>
+</div>
+{{end}}
