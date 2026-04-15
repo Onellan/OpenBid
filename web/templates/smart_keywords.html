@@ -65,34 +65,39 @@
         </div>
       </form>
 
-      {{range .Groups}}
-      <section class="card-soft" style="margin-top:14px">
-        <form method="post" action="/smart-keywords/groups" class="form-grid">
-          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.Group.ID}}">
-          <div class="row-4">
-            <label>Name<input name="name" value="{{.Group.Name}}"></label>
-            <label>Group Tag<input name="tag_name" value="{{.Group.TagName}}"></label>
-            <label>Match mode<select name="match_mode"><option value="ANY" {{if eq .Group.MatchMode "ANY"}}selected{{end}}>ANY</option><option value="ALL" {{if eq .Group.MatchMode "ALL"}}selected{{end}}>ALL</option></select></label>
-            <label><span class="footer-note">Enabled</span><input type="checkbox" name="enabled" value="1" {{if .Group.Enabled}}checked{{end}}></label>
-          </div>
-          <label>Description<textarea name="description">{{.Group.Description}}</textarea></label>
-          <div class="row-4">
-            <label>Exclude terms<input name="exclude_terms" value="{{range .Group.ExcludeTerms}}{{.}}, {{end}}"></label>
-            <label>Minimum matches<input name="min_match_count" value="{{.Group.MinMatchCount}}"></label>
-            <label>Priority<input name="priority" value="{{.Group.Priority}}"></label>
-            <div class="actions compact-actions"><button type="submit">Save group</button></div>
-          </div>
-        </form>
-        <form method="post" action="/smart-keywords/groups/delete" data-confirm="Delete group '{{.Group.Name}}' and its keywords?" style="margin-top:8px"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.Group.ID}}"><button type="submit">Delete group</button></form>
-        <div class="table-wrap" style="margin-top:12px"><table>
-          <tr><th>Keyword</th><th>Enabled</th><th>Actions</th></tr>
-          {{range .Keywords}}
-          <tr><td><input form="smart-keyword-{{.ID}}" name="value" value="{{.Value}}"></td><td><input form="smart-keyword-{{.ID}}" type="checkbox" name="enabled" value="1" {{if .Enabled}}checked{{end}}></td><td class="actions compact-actions"><form id="smart-keyword-{{.ID}}" method="post" action="/smart-keywords/keywords"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><input type="hidden" name="group_id" value="{{.GroupID}}"><button type="submit">Save</button></form><form method="post" action="/smart-keywords/keywords/delete"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button type="submit">Delete</button></form></td></tr>
-          {{else}}<tr><td colspan="3">{{template "empty_state" "This group is empty and will not affect extraction until keywords are added."}}</td></tr>{{end}}
-        </table></div>
-        <form method="post" action="/smart-keywords/keywords" class="form-grid" style="margin-top:10px"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="group_id" value="{{.Group.ID}}"><input type="hidden" name="enabled" value="1"><label>Add keyword<input name="value"></label><div class="actions"><button type="submit">Add to group</button></div></form>
-      </section>
-      {{end}}
+      <div class="table-wrap" style="margin-top:14px"><table>
+        <tr><th>Group</th><th>Description</th><th>Rules</th><th>Keywords</th><th>Status</th><th>Action</th></tr>
+        {{range .Groups}}
+        <tr>
+          <td><a href="/smart-keywords/groups/{{.Group.ID}}">{{.Group.Name}}</a><div class="footer-note">Group Tag: {{.Group.TagName}}</div></td>
+          <td>{{if .Group.Description}}{{.Group.Description}}{{else}}<span class="footer-note">No description yet.</span>{{end}}</td>
+          <td>{{.Group.MatchMode}} · minimum {{.Group.MinMatchCount}} · priority {{.Group.Priority}}</td>
+          <td>{{len .Keywords}}</td>
+          <td>{{if .Group.Enabled}}<span class="badge success">Enabled</span>{{else}}<span class="badge">Disabled</span>{{end}}</td>
+          <td>
+            <form method="post" action="/smart-keywords/groups" class="compact-actions">
+              <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+              <input type="hidden" name="return_to" value="/smart-keywords">
+              <input type="hidden" name="id" value="{{.Group.ID}}">
+              <input type="hidden" name="name" value="{{.Group.Name}}">
+              <input type="hidden" name="tag_name" value="{{.Group.TagName}}">
+              <input type="hidden" name="description" value="{{.Group.Description}}">
+              <input type="hidden" name="match_mode" value="{{.Group.MatchMode}}">
+              <input type="hidden" name="exclude_terms" value="{{range .Group.ExcludeTerms}}{{.}}, {{end}}">
+              <input type="hidden" name="min_match_count" value="{{.Group.MinMatchCount}}">
+              <input type="hidden" name="priority" value="{{.Group.Priority}}">
+              {{if .Group.Enabled}}
+              <input type="hidden" name="enabled" value="0">
+              <button type="submit">Disable</button>
+              {{else}}
+              <input type="hidden" name="enabled" value="1">
+              <button type="submit">Enable</button>
+              {{end}}
+            </form>
+          </td>
+        </tr>
+        {{else}}<tr><td colspan="6">{{template "empty_state" "No keyword groups configured."}}</td></tr>{{end}}
+      </table></div>
     </div>
   </details>
 

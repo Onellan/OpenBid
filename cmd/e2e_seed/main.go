@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -46,12 +49,14 @@ func main() {
 		password = e2ePassword
 	}
 	e2eUser := ensureE2EAdminUser(ctx, s, password)
+	cleanupE2ESmartArtifacts(ctx, s, e2eUser.ID, dataPath)
 
 	secondaryTenant := ensureTenant(ctx, s, e2eTenantName, e2eTenantSlug)
 	ensureMembership(ctx, s, e2eUser.ID, primaryTenantID, models.TenantRoleOwner)
 	ensureMembership(ctx, s, e2eUser.ID, secondaryTenant.ID, models.TenantRoleOwner)
 	ensureE2ESchedulesPaused(ctx, s)
 	ensureFailedQueueFixture(ctx, s, primaryTenantID)
+	cleanupE2ESmartArtifacts(ctx, s, e2eUser.ID, dataPath)
 
 	log.Printf("seeded e2e user=%s tenant=%s tender=%s", e2eUser.Username, secondaryTenant.ID, e2eFailedTender)
 }
@@ -178,6 +183,58 @@ func ensureE2ESchedulesPaused(ctx context.Context, s store.Store) {
 	settings.Paused = true
 	if err := s.UpsertSourceScheduleSettings(ctx, settings); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func cleanupE2ESmartArtifacts(ctx context.Context, s store.Store, userID, dataPath string) {
+	tenants, err := s.ListTenants(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, tenant := range tenants {
+		groups, err := s.ListSmartKeywordGroups(ctx, tenant.ID)
+		if err != nil {
+			log.Fatal(err)
+		}
+		for _, group := range groups {
+			if strings.HasPrefix(group.Name, "E2E Smart ") {
+				if err := s.DeleteSmartKeywordGroup(ctx, tenant.ID, group.ID); err != nil {
+					log.Fatal(err)
+				}
+			}
+		}
+		views, err := s.ListSavedSmartViews(ctx, tenant.ID, userID)
+		if err != nil {
+			log.Fatal(err)
+		}
+		for _, view := range views {
+			if strings.HasPrefix(view.Name, "E2E Smart ") || strings.Contains(view.FiltersJSON, "E2E Smart ") || strings.Contains(fmt.Sprint(view.AlertChannels), "smart-alerts@example.org") {
+				if err := s.DeleteSavedSmartView(ctx, tenant.ID, userID, view.ID); err != nil {
+					log.Fatal(err)
+				}
+			}
+		}
+	}
+	purgeE2ESmartRows(ctx, dataPath)
+}
+
+func purgeE2ESmartRows(ctx context.Context, dataPath string) {
+	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s?_pragma=busy_timeout(30000)&_pragma=foreign_keys(ON)", filepath.ToSlash(dataPath)))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+	statements := []string{
+		`delete from smart_keyword_records where group_id in (select id from smart_keyword_groups where name like 'E2E Smart %')`,
+		`delete from smart_keyword_groups where name like 'E2E Smart %'`,
+		`delete from smart_alert_deliveries where message like '%E2E Smart %' or destination = 'smart-alerts@example.org'`,
+		`delete from saved_smart_views where name like 'E2E Smart %' or filters_json like '%E2E Smart %' or alert_channels like '%smart-alerts@example.org%'`,
+		`delete from smart_tender_matches where group_tags like '%E2E Smart %' or matched_keywords like '%E2E Smart %' or reasons like '%E2E Smart %'`,
+	}
+	for _, statement := range statements {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			log.Fatal(err)
+		}
 	}
 }
 

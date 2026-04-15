@@ -64,6 +64,35 @@ func (a *App) SmartKeywordsPage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (a *App) SmartKeywordGroupPage(w http.ResponseWriter, r *http.Request) {
+	u, t, _, ok := a.currentUserTenant(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	groupID := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/smart-keywords/groups/"))
+	if groupID == "" || strings.Contains(groupID, "/") {
+		http.NotFound(w, r)
+		return
+	}
+	groups, _ := a.Store.ListSmartKeywordGroups(r.Context(), t.ID)
+	keywords, _ := a.Store.ListSmartKeywords(r.Context(), t.ID)
+	for _, groupView := range smartKeywordGroupViews(groups, keywords) {
+		if groupView.Group.ID == groupID {
+			a.render(w, r, "smart_keyword_group.html", map[string]any{
+				"Title":    "Smart Keyword Group",
+				"User":     u,
+				"Tenant":   t,
+				"Group":    groupView.Group,
+				"Keywords": groupView.Keywords,
+				"ReturnTo": "/smart-keywords/groups/" + groupID,
+			})
+			return
+		}
+	}
+	http.NotFound(w, r)
+}
+
 func smartKeywordGroupViews(groups []models.SmartKeywordGroup, keywords []models.SmartKeyword) []SmartKeywordGroupView {
 	out := make([]SmartKeywordGroupView, 0, len(groups))
 	for _, group := range groups {
@@ -112,7 +141,7 @@ func (a *App) SaveSmartKeywordGroup(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
-	_, err := a.Store.UpsertSmartKeywordGroup(r.Context(), models.SmartKeywordGroup{
+	group, err := a.Store.UpsertSmartKeywordGroup(r.Context(), models.SmartKeywordGroup{
 		ID:            r.FormValue("id"),
 		TenantID:      t.ID,
 		Name:          r.FormValue("name"),
@@ -128,7 +157,7 @@ func (a *App) SaveSmartKeywordGroup(w http.ResponseWriter, r *http.Request) {
 		a.redirectAfterAction(w, r, "/smart-keywords", "error", "Keyword group could not be saved")
 		return
 	}
-	a.redirectAfterAction(w, r, "/smart-keywords", "success", "Keyword group saved")
+	a.redirectAfterAction(w, r, smartKeywordReturnPath(r, "/smart-keywords/groups/"+group.ID), "success", "Keyword group saved")
 }
 
 func (a *App) DeleteSmartKeywordGroup(w http.ResponseWriter, r *http.Request) {
@@ -173,7 +202,7 @@ func (a *App) SaveSmartKeyword(w http.ResponseWriter, r *http.Request) {
 		a.redirectAfterAction(w, r, "/smart-keywords", "error", "Keyword could not be saved")
 		return
 	}
-	a.redirectAfterAction(w, r, "/smart-keywords", "success", "Keyword saved")
+	a.redirectAfterAction(w, r, smartKeywordReturnPath(r, "/smart-keywords"), "success", "Keyword saved")
 }
 
 func (a *App) DeleteSmartKeyword(w http.ResponseWriter, r *http.Request) {
@@ -190,7 +219,15 @@ func (a *App) DeleteSmartKeyword(w http.ResponseWriter, r *http.Request) {
 		a.redirectAfterAction(w, r, "/smart-keywords", "error", "Keyword could not be deleted")
 		return
 	}
-	a.redirectAfterAction(w, r, "/smart-keywords", "success", "Keyword deleted")
+	a.redirectAfterAction(w, r, smartKeywordReturnPath(r, "/smart-keywords"), "success", "Keyword deleted")
+}
+
+func smartKeywordReturnPath(r *http.Request, fallback string) string {
+	returnTo := strings.TrimSpace(r.FormValue("return_to"))
+	if returnTo == "/smart-keywords" || strings.HasPrefix(returnTo, "/smart-keywords/groups/") {
+		return returnTo
+	}
+	return fallback
 }
 
 func (a *App) ReprocessSmartKeywords(w http.ResponseWriter, r *http.Request) {

@@ -226,6 +226,7 @@ func routes(a *App) http.Handler {
 	registerProtected(mux, a, a.SmartKeywordsPage, "/smart-keywords")
 	registerProtected(mux, a, a.SaveSmartKeywordSettings, "/smart-keywords/settings")
 	registerProtected(mux, a, a.SaveSmartKeywordGroup, "/smart-keywords/groups")
+	registerProtected(mux, a, a.SmartKeywordGroupPage, "/smart-keywords/groups/")
 	registerProtected(mux, a, a.DeleteSmartKeywordGroup, "/smart-keywords/groups/delete")
 	registerProtected(mux, a, a.SaveSmartKeyword, "/smart-keywords/keywords")
 	registerProtected(mux, a, a.DeleteSmartKeyword, "/smart-keywords/keywords/delete")
