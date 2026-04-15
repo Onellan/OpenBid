@@ -62,7 +62,8 @@ for keep in runtime/.gitkeep runtime/data/.gitkeep runtime/backups/.gitkeep runt
 done
 
 if command -v chmod >/dev/null 2>&1; then
-  chmod 755 runtime runtime/data runtime/backups || fail "failed to set runtime directory permissions"
+  chmod 755 runtime || fail "failed to set runtime directory permissions"
+  chmod 777 runtime/data runtime/backups || fail "failed to set runtime/data and runtime/backups directory permissions"
   chmod 700 runtime/secrets || fail "failed to set runtime/secrets permissions"
 fi
 
