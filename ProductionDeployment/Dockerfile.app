@@ -35,6 +35,7 @@ COPY --from=build /out/openbid-worker /usr/local/bin/openbid-worker
 COPY --from=build /out/openbid-sqlite-check /usr/local/bin/openbid-sqlite-check
 COPY --from=build /out/openbid-sqlite-backup /usr/local/bin/openbid-sqlite-backup
 COPY --from=build /out/openbid-worker-health /usr/local/bin/openbid-worker-health
+COPY internal/seeddata ./internal/seeddata
 COPY web ./web
 RUN mkdir -p /app/data && chown -R app:app /app
 USER app

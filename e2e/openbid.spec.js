@@ -183,7 +183,7 @@ test.describe.serial("OpenBid critical browser journeys", () => {
     await expect(
       page.locator('[role="status"]').getByText(/Reprocessed \d+ tenders/),
     ).toBeVisible();
-    await expect(page.getByText("smart-alerts@example.org")).toBeVisible();
+    await expect(page.getByText("smart-alerts@example.org").first()).toBeVisible();
     await expect(page.getByText("sent").first()).toBeVisible();
   });
 

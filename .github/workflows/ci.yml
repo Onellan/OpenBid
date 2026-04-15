@@ -28,7 +28,7 @@ jobs:
       compose_stack: ${{ steps.filter.outputs.compose_stack }}
       browser_e2e: ${{ steps.filter.outputs.browser_e2e }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -59,7 +59,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: changes
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26.2"
@@ -78,24 +78,30 @@ jobs:
     timeout-minutes: 15
     if: needs.changes.outputs.docker_app == 'true' || needs.changes.outputs.docker_extractor == 'true' || needs.changes.outputs.compose_stack == 'true' || needs.changes.outputs.browser_e2e == 'true'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
       - name: Prepare runtime directories
         run: cd ProductionDeployment && sh ./setup.sh
       - name: Boot compose stack
+        env:
+          APP_ENV: development
+          SECURE_COOKIES: "false"
+          SECRET_KEY: ci-smoke-secret-change-me-2026
+          SECRET_KEY_FILE: ""
+          BOOTSTRAP_ADMIN_PASSWORD: OpenBid!2026-SmokeTest123
+          BOOTSTRAP_ADMIN_PASSWORD_FILE: ""
         run: |
           # CI uses env-based secrets because setup.sh creates 600 bind-mounted secret files,
           # which are not readable by the non-root app user; this is acceptable for ephemeral smoke tests.
-          APP_ENV=development \
-          SECURE_COOKIES=false \
-          SECRET_KEY=ci-smoke-secret-change-me-2026 \
-          SECRET_KEY_FILE= \
-          BOOTSTRAP_ADMIN_PASSWORD=OpenBid!2026-SmokeTest123 \
-          BOOTSTRAP_ADMIN_PASSWORD_FILE= \
-          docker compose -f ProductionDeployment/docker-compose.yml up --build -d
+          docker compose --ansi never -f ProductionDeployment/docker-compose.yml config --quiet
+          resolved_config="$(docker compose --ansi never -f ProductionDeployment/docker-compose.yml config)"
+          printf '%s\n' "$resolved_config" | grep -q 'SECRET_KEY_FILE: ""'
+          printf '%s\n' "$resolved_config" | grep -q 'BOOTSTRAP_ADMIN_PASSWORD_FILE: ""'
+          docker compose --ansi never -f ProductionDeployment/docker-compose.yml up --build -d
+          docker compose --ansi never -f ProductionDeployment/docker-compose.yml ps
       - name: Wait for healthz
         run: |
           echo "Waiting for app healthz endpoint..."
@@ -109,24 +115,39 @@ jobs:
           done
           echo "healthz did not become ready in time (150s timeout exceeded)" >&2
           exit 1
-      - name: Diagnose compose stack on healthz timeout
+      - name: Diagnose compose stack failure
         if: failure()
+        env:
+          APP_ENV: development
+          SECURE_COOKIES: "false"
+          SECRET_KEY: ci-smoke-secret-change-me-2026
+          SECRET_KEY_FILE: ""
+          BOOTSTRAP_ADMIN_PASSWORD: OpenBid!2026-SmokeTest123
+          BOOTSTRAP_ADMIN_PASSWORD_FILE: ""
         run: |
           echo "=== Docker Compose Status ==="
-          docker compose -f ProductionDeployment/docker-compose.yml ps
+          docker compose --ansi never -f ProductionDeployment/docker-compose.yml ps || true
           echo ""
-          echo "=== App Container Logs (last 100 lines) ==="
-          docker compose -f ProductionDeployment/docker-compose.yml logs --tail=100 app
+          echo "=== Docker Compose Resolved Config (secrets redacted) ==="
+          docker compose --ansi never -f ProductionDeployment/docker-compose.yml config | sed -E 's/(SECRET_KEY|BOOTSTRAP_ADMIN_PASSWORD): .*/\1: <redacted>/g; s/(SECRET_KEY_FILE|BOOTSTRAP_ADMIN_PASSWORD_FILE): .*/\1: <redacted>/g' || true
           echo ""
-          echo "=== Extractor Container Logs (last 50 lines) ==="
-          docker compose -f ProductionDeployment/docker-compose.yml logs --tail=50 extractor
+          echo "=== App Container Logs (last 150 lines) ==="
+          docker compose --ansi never -f ProductionDeployment/docker-compose.yml logs --tail=150 app || true
           echo ""
-          echo "=== Proxy Container Logs (last 50 lines) ==="
-          docker compose -f ProductionDeployment/docker-compose.yml logs --tail=50 proxy
+          echo "=== Worker Container Logs (last 100 lines) ==="
+          docker compose --ansi never -f ProductionDeployment/docker-compose.yml logs --tail=100 worker || true
+          echo ""
+          echo "=== Extractor Container Logs (last 100 lines) ==="
+          docker compose --ansi never -f ProductionDeployment/docker-compose.yml logs --tail=100 extractor || true
+          echo ""
+          echo "=== Proxy Container Logs (last 100 lines) ==="
+          docker compose --ansi never -f ProductionDeployment/docker-compose.yml logs --tail=100 proxy || true
           echo ""
           echo "=== Container Health Status ==="
-          docker inspect openbid-app-1 --format '{{json .State.Health}}' 2>/dev/null | jq . || docker inspect openbid-app-1 --format '{{json .State.Health}}'
-          exit 1
+          for container in openbid-app-1 openbid-worker-1 openbid-extractor-1 openbid-proxy-1; do
+            echo "--- ${container} ---"
+            docker inspect "${container}" --format '{{json .State.Health}}' 2>/dev/null | jq . || true
+          done
       - name: Seed deterministic E2E data
         run: DATA_PATH=ProductionDeployment/runtime/data/store.db go run ./cmd/e2e_seed
       - name: Install browser test dependencies
@@ -138,8 +159,8 @@ jobs:
       - name: Show compose status on failure
         if: failure()
         run: |
-          docker compose -f ProductionDeployment/docker-compose.yml ps
-          docker compose -f ProductionDeployment/docker-compose.yml logs --tail=200
+          docker compose --ansi never -f ProductionDeployment/docker-compose.yml ps || true
+          docker compose --ansi never -f ProductionDeployment/docker-compose.yml logs --tail=200 || true
       - name: Tear down compose stack
         if: always()
-        run: docker compose -f ProductionDeployment/docker-compose.yml down -v --remove-orphans
+        run: docker compose --ansi never -f ProductionDeployment/docker-compose.yml down -v --remove-orphans

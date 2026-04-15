@@ -34,7 +34,7 @@ The compose files expose those files to only the `app` and `worker` services thr
 /run/secrets/openbid_bootstrap_admin_password
 ```
 
-OpenBid reads those paths through `SECRET_KEY_FILE` and `BOOTSTRAP_ADMIN_PASSWORD_FILE`. GitHub Actions smoke tests are the exception: CI uses fixed environment-based test secrets so the ephemeral smoke stack does not depend on host secret file ownership.
+OpenBid reads those paths through `SECRET_KEY_FILE` and `BOOTSTRAP_ADMIN_PASSWORD_FILE`. GitHub Actions smoke tests are the exception: CI uses fixed environment-based test secrets so the ephemeral smoke stack does not depend on host secret file ownership. The Compose files use the file-secret defaults only when the `*_FILE` variables are unset; setting a `*_FILE` variable to an empty value intentionally disables that file path for CI and other non-production smoke tests.
 
 ## Source Build
 

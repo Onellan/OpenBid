@@ -491,9 +491,27 @@ func (s *SQLiteStore) refreshSmartMatchForTenant(ctx context.Context, tenantID s
 	if err != nil {
 		return models.SmartKeywordEvaluation{}, err
 	}
+	return s.refreshSmartMatchWithConfig(ctx, tenantID, tender, settings, groups, keywords, triggerAlerts)
+}
+
+func (s *SQLiteStore) refreshSmartMatchWithConfig(ctx context.Context, tenantID string, tender models.Tender, settings models.SmartExtractionSettings, groups []models.SmartKeywordGroup, keywords []models.SmartKeyword, triggerAlerts bool) (models.SmartKeywordEvaluation, error) {
+	evaluation, err := writeSmartTenderMatch(ctx, s.db, tenantID, tender, settings, groups, keywords)
+	if err != nil {
+		return models.SmartKeywordEvaluation{}, err
+	}
+	log.Printf("smart keyword evaluation tenant=%s tender=%s accepted=%t group_tags=%s reasons=%s", tenantID, tender.ID, evaluation.Accepted, strings.Join(evaluation.GroupTags, ","), strings.Join(evaluation.Reasons, "; "))
+	if triggerAlerts && evaluation.Accepted {
+		if err := s.triggerSmartViewAlertsForTender(ctx, tenantID, tender, "tender_change"); err != nil {
+			log.Printf("smart alert trigger failed tenant=%s tender=%s error=%v", tenantID, tender.ID, err)
+		}
+	}
+	return evaluation, nil
+}
+
+func writeSmartTenderMatch(ctx context.Context, exec sqlExecer, tenantID string, tender models.Tender, settings models.SmartExtractionSettings, groups []models.SmartKeywordGroup, keywords []models.SmartKeyword) (models.SmartKeywordEvaluation, error) {
 	evaluation := smartkeywords.Evaluate(tender, settings.Enabled, groups, keywords)
 	now := time.Now().UTC()
-	_, err = s.db.ExecContext(ctx, `
+	_, err := exec.ExecContext(ctx, `
 		insert into smart_tender_matches(tenant_id, tender_id, accepted, group_tags, matched_keywords, standalone_keywords, reasons, updated_at)
 		values(?,?,?,?,?,?,?,?)
 		on conflict(tenant_id, tender_id) do update set
@@ -506,12 +524,6 @@ func (s *SQLiteStore) refreshSmartMatchForTenant(ctx context.Context, tenantID s
 	`, tenantID, tender.ID, boolToInt(evaluation.Accepted), encodeStringSlice(evaluation.GroupTags), encodeStringSlice(evaluation.MatchedKeywords), encodeStringSlice(evaluation.StandaloneMatches), encodeStringSlice(evaluation.Reasons), sqliteTimeString(now))
 	if err != nil {
 		return models.SmartKeywordEvaluation{}, err
-	}
-	log.Printf("smart keyword evaluation tenant=%s tender=%s accepted=%t group_tags=%s reasons=%s", tenantID, tender.ID, evaluation.Accepted, strings.Join(evaluation.GroupTags, ","), strings.Join(evaluation.Reasons, "; "))
-	if triggerAlerts && evaluation.Accepted {
-		if err := s.triggerSmartViewAlertsForTender(ctx, tenantID, tender, "tender_change"); err != nil {
-			log.Printf("smart alert trigger failed tenant=%s tender=%s error=%v", tenantID, tender.ID, err)
-		}
 	}
 	return evaluation, nil
 }
@@ -574,40 +586,72 @@ func (s *SQLiteStore) ReprocessSmartKeywords(ctx context.Context, tenantID strin
 	if tenantID == "" {
 		return models.SmartReprocessResult{}, fmt.Errorf("tenant_id is required")
 	}
+	settings, groups, keywords, err := s.smartConfig(ctx, tenantID)
+	if err != nil {
+		return models.SmartReprocessResult{}, err
+	}
 	tenders, err := s.listAllTenders(ctx)
 	if err != nil {
 		return models.SmartReprocessResult{}, err
 	}
 	result := models.SmartReprocessResult{TenantID: tenantID, UpdatedAt: time.Now().UTC()}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return models.SmartReprocessResult{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	acceptedForAlerts := []models.Tender{}
 	for _, tender := range tenders {
 		if tenderArchived(tender) {
 			continue
 		}
-		evaluation, err := s.refreshSmartMatchForTenant(ctx, tenantID, tender, true)
+		evaluation, err := writeSmartTenderMatch(ctx, tx, tenantID, tender, settings, groups, keywords)
 		if err != nil {
 			return models.SmartReprocessResult{}, err
 		}
 		result.Processed++
+		originalGroupTags := strings.Join(tender.GroupTags, "\x00")
 		if evaluation.Accepted {
 			result.Accepted++
 			tender.GroupTags = evaluation.GroupTags
+			acceptedForAlerts = append(acceptedForAlerts, tender)
 		} else {
 			result.Excluded++
 			tender.GroupTags = nil
 		}
-		if err := sqliteUpsertJSON(ctx, s.db, "tenders", tender.ID, tender); err != nil {
-			return models.SmartReprocessResult{}, err
-		}
-		if err := upsertTenderDashboardIndex(ctx, s.db, tender); err != nil {
-			return models.SmartReprocessResult{}, err
+		if originalGroupTags != strings.Join(tender.GroupTags, "\x00") {
+			if err := sqliteUpsertJSONExec(ctx, tx, "tenders", tender.ID, tender); err != nil {
+				return models.SmartReprocessResult{}, err
+			}
+			if err := upsertTenderDashboardIndex(ctx, tx, tender); err != nil {
+				return models.SmartReprocessResult{}, err
+			}
 		}
 	}
-	_, err = s.db.ExecContext(ctx, `
+	_, err = tx.ExecContext(ctx, `
 		update smart_extraction_settings
 		set refresh_status = ?, refresh_message = ?, last_reprocessed_at = ?, updated_at = ?
 		where tenant_id = ?
 	`, "success", fmt.Sprintf("Reprocessed %d tenders.", result.Processed), sqliteTimeString(result.UpdatedAt), sqliteTimeString(result.UpdatedAt), tenantID)
-	return result, err
+	if err != nil {
+		return models.SmartReprocessResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return models.SmartReprocessResult{}, err
+	}
+	committed = true
+	log.Printf("smart keyword reprocess tenant=%s processed=%d accepted=%d excluded=%d", tenantID, result.Processed, result.Accepted, result.Excluded)
+	for _, tender := range acceptedForAlerts {
+		if err := s.triggerSmartViewAlertsForTender(ctx, tenantID, tender, "smart_reprocess"); err != nil {
+			log.Printf("smart alert trigger failed tenant=%s tender=%s error=%v", tenantID, tender.ID, err)
+		}
+	}
+	return result, nil
 }
 
 func (s *SQLiteStore) SeedSmartKeywordsFromCSV(ctx context.Context, tenantID, path string) error {
