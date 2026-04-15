@@ -31,7 +31,7 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	}
 
 	// Use a longer busy timeout and WAL mode to allow concurrent access (needed for e2e_seed in CI)
-	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)", filepath.ToSlash(path))
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)&_pragma=temp_store(MEMORY)&_pragma=locking_mode(NORMAL)", filepath.ToSlash(path))
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
@@ -39,6 +39,19 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(0)
+
+	// Ensure WAL mode is properly initialized
+	var journalMode string
+	if err := db.QueryRow("PRAGMA journal_mode;").Scan(&journalMode); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to check journal mode: %w", err)
+	}
+	if journalMode != "wal" {
+		if err := db.QueryRow("PRAGMA journal_mode=WAL;").Scan(&journalMode); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
+		}
+	}
 
 	s := &SQLiteStore{db: db, path: path}
 	if err := s.migrate(context.Background()); err != nil {
