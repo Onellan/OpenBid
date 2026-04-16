@@ -29,6 +29,8 @@ http://localhost:8088
 
 ## First Start From GHCR
 
+GHCR images are published by `.github/workflows/release-images.yml` after the `ci` workflow succeeds for a push to `main`.
+
 ```bash
 cd ProductionDeployment
 ./setup.sh
@@ -151,6 +153,8 @@ docker compose up -d --build
 ```
 
 Update GHCR images:
+
+The `latest` tag follows successful `main` builds. For a pinned deploy, set `APP_IMAGE_TAG` and `EXTRACTOR_IMAGE_TAG` to the matching `sha-FULL_COMMIT_SHA` tag before pulling.
 
 ```bash
 cd ProductionDeployment
