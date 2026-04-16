@@ -1,7 +1,10 @@
 package store
 
 import (
+	"encoding/csv"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"openbid/internal/models"
@@ -145,6 +148,7 @@ func TestSmartSeedIsDefaultTenantScopedAndIdempotent(t *testing.T) {
 	s := newSmartTestStore(t)
 	ctx := t.Context()
 	seed := filepath.Join("..", "..", "internal", "seeddata", "africa_water_wastewater_tender_keywords.csv")
+	expectedPurposes, expectedKeywords := readSmartSeedCSV(t, seed)
 	if err := s.SeedSmartKeywordsFromCSV(ctx, "default-tenant", seed); err != nil {
 		t.Fatal(err)
 	}
@@ -161,6 +165,33 @@ func TestSmartSeedIsDefaultTenantScopedAndIdempotent(t *testing.T) {
 	}
 	if len(groups) != 19 || len(keywords) != 471 {
 		t.Fatalf("expected seeded 19 groups and 471 keywords without duplicates, got groups=%d keywords=%d", len(groups), len(keywords))
+	}
+	groupsByName := map[string]models.SmartKeywordGroup{}
+	for _, group := range groups {
+		groupsByName[group.Name] = group
+		if want := expectedPurposes[group.Name]; group.Description != want {
+			t.Fatalf("seeded group %q description mismatch: got %q want %q", group.Name, group.Description, want)
+		}
+	}
+	for groupName := range expectedPurposes {
+		if _, ok := groupsByName[groupName]; !ok {
+			t.Fatalf("seeded group missing from csv: %s", groupName)
+		}
+	}
+	actualKeywords := map[string]map[string]bool{}
+	for _, keyword := range keywords {
+		group := groupNameForSeedKeyword(t, groups, keyword)
+		if actualKeywords[group] == nil {
+			actualKeywords[group] = map[string]bool{}
+		}
+		actualKeywords[group][keyword.Value] = true
+	}
+	for groupName, expectedGroupKeywords := range expectedKeywords {
+		for keyword := range expectedGroupKeywords {
+			if !actualKeywords[groupName][keyword] {
+				t.Fatalf("seeded keyword missing from csv mapping: group=%q keyword=%q", groupName, keyword)
+			}
+		}
 	}
 	keywords[0].Enabled = false
 	if _, err := s.UpsertSmartKeyword(ctx, keywords[0]); err != nil {
@@ -188,4 +219,50 @@ func TestSmartSeedIsDefaultTenantScopedAndIdempotent(t *testing.T) {
 	if len(otherGroups) != 0 {
 		t.Fatalf("seed leaked into non-default tenant: %#v", otherGroups)
 	}
+}
+
+func readSmartSeedCSV(t *testing.T, path string) (map[string]string, map[string]map[string]bool) {
+	t.Helper()
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	reader := csv.NewReader(file)
+	rows, err := reader.ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	purposes := map[string]string{}
+	keywords := map[string]map[string]bool{}
+	for _, row := range rows[1:] {
+		if len(row) < 3 {
+			continue
+		}
+		groupName := strings.Join(strings.Fields(strings.TrimSpace(row[0])), " ")
+		purpose := strings.TrimSpace(row[1])
+		keyword := strings.TrimSpace(row[2])
+		if groupName == "" || keyword == "" {
+			continue
+		}
+		if _, ok := purposes[groupName]; !ok {
+			purposes[groupName] = purpose
+		}
+		if keywords[groupName] == nil {
+			keywords[groupName] = map[string]bool{}
+		}
+		keywords[groupName][keyword] = true
+	}
+	return purposes, keywords
+}
+
+func groupNameForSeedKeyword(t *testing.T, groups []models.SmartKeywordGroup, keyword models.SmartKeyword) string {
+	t.Helper()
+	for _, group := range groups {
+		if keyword.GroupID == group.ID {
+			return group.Name
+		}
+	}
+	t.Fatalf("keyword %q has no seeded group", keyword.Value)
+	return ""
 }

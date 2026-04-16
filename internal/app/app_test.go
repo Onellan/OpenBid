@@ -1466,7 +1466,7 @@ func TestTenderDetailHidesRerunExtractionForCompletedDocuments(t *testing.T) {
 	}
 }
 
-func TestQueuePagePrunesOrphanJobsAndRendersTypedStates(t *testing.T) {
+func TestQueuePageHidesOrphanJobsAndRendersTypedStates(t *testing.T) {
 	a := newTestApp(t)
 	_, _, cookie, _ := adminSession(t, a)
 	_ = a.Store.UpsertTender(t.Context(), models.Tender{
@@ -1502,27 +1502,11 @@ func TestQueuePagePrunesOrphanJobsAndRendersTypedStates(t *testing.T) {
 	if !strings.Contains(body, "Queue Tender") {
 		t.Fatalf("expected valid queue item to render, got %s", body)
 	}
+	if strings.Contains(body, "missing-tender") {
+		t.Fatalf("expected orphan queue item to be hidden, got %s", body)
+	}
 	if strings.Contains(body, "template:") {
 		t.Fatalf("unexpected template execution error: %s", body)
-	}
-	jobs, err := a.Store.ListJobs(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	var sawValid, sawOrphan bool
-	for _, job := range jobs {
-		if job.ID == "job-valid" {
-			sawValid = true
-		}
-		if job.ID == "job-orphan" || job.TenderID == "missing-tender" {
-			sawOrphan = true
-		}
-	}
-	if !sawValid {
-		t.Fatalf("expected valid queue job to remain, got %#v", jobs)
-	}
-	if sawOrphan {
-		t.Fatalf("expected orphan job to be pruned, got %#v", jobs)
 	}
 }
 

@@ -12,7 +12,10 @@ async function login(page, overrides = {}) {
   if (overrides.mfaCode) {
     await page.getByLabel("MFA or recovery code").fill(overrides.mfaCode);
   }
-  await page.getByRole("button", { name: "Sign in to OpenBid" }).click();
+  await Promise.all([
+    page.waitForURL(/\/$/, { waitUntil: "domcontentloaded" }),
+    page.getByRole("button", { name: "Sign in to OpenBid" }).click(),
+  ]);
 }
 
 async function expectHome(page) {
@@ -24,6 +27,9 @@ async function expectHome(page) {
   ).toBeVisible();
   await expect(
     page.getByRole("link", { name: "Browse tenders" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: /Smart Keyword Extraction/ }),
   ).toBeVisible();
 }
 
@@ -125,20 +131,14 @@ test.describe.serial("OpenBid critical browser journeys", () => {
     await createGroupForm.getByLabel("Priority").fill("7");
     await createGroupForm.getByRole("button", { name: "Create group" }).click();
     await expect(page.getByText("Keyword group saved")).toBeVisible();
+    await expect(page).toHaveURL(/\/smart-keywords\/groups\//);
 
-    const groupSection = page
-      .locator(`input[name="name"][value="${groupName}"]`)
-      .locator(
-        'xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " card-soft ")][1]',
-      );
-    await expect(groupSection).toBeVisible();
-    const addKeywordForm = groupSection
-      .locator('form[action="/smart-keywords/keywords"]')
-      .last();
+    const addKeywordForm = page.locator('form[action="/smart-keywords/keywords"]').last();
     await addKeywordForm.getByLabel("Add keyword").fill("Queue");
     await addKeywordForm.getByRole("button", { name: "Add to group" }).click();
     await expect(page.getByText("Keyword saved")).toBeVisible();
 
+    await page.goto("/smart-keywords");
     const settingsForm = page.locator('form[action="/smart-keywords/settings"]');
     await settingsForm.getByLabel("Smart Keyword Extraction").check();
     await settingsForm.getByLabel("Global smart alerts").check();

@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"sync"
 
 	"openbid/internal/auth"
 	"openbid/internal/extract"
@@ -43,6 +44,20 @@ type App struct {
 	StartedAt        time.Time
 	LoginRateLimiter *LoginRateLimiter
 	AlertNotifier    *AlertNotifier
+	sourceAdminCache sourceAdminCache
+}
+
+type sourceAdminSnapshot struct {
+	Configs  []models.SourceConfig
+	Health   []models.SourceHealth
+	SyncRuns []models.SyncRun
+	Settings models.SourceScheduleSettings
+}
+
+type sourceAdminCache struct {
+	mu        sync.Mutex
+	expiresAt time.Time
+	snapshot  sourceAdminSnapshot
 }
 
 type authContextKey struct{}
@@ -171,6 +186,13 @@ func New() (*App, error) {
 	if err := a.seed(context.Background()); err != nil {
 		_ = st.Close()
 		return nil, err
+	}
+	if cfg.AppEnv == "production" {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = a.cachedSourceAdminSnapshot(ctx)
+		}()
 	}
 	a.Server = &http.Server{
 		Addr:              cfg.AppAddr,

@@ -124,7 +124,7 @@ func TestKeywordSearchFlowHomepageAndNavigation(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected home 200 got %d", w.Code)
 	}
-	if !strings.Contains(body, "Keyword Search") || !strings.Contains(body, "href=\"/keyword-search\"") || !strings.Contains(body, "0 matched") {
+	if !strings.Contains(body, "Keyword Search") || !strings.Contains(body, "href=\"/keyword-search\"") || !strings.Contains(body, "Smart Keyword Extraction") || !strings.Contains(body, "href=\"/smart-keywords\"") || !strings.Contains(body, "0 matched") {
 		t.Fatalf("home/nav missing keyword search empty state: %s", body)
 	}
 
@@ -204,6 +204,42 @@ func TestKeywordSearchFlowHomepageAndNavigation(t *testing.T) {
 	}
 	if summary.MatchedTenderCount != 0 || summary.TotalKeywordCount != 0 {
 		t.Fatalf("expected delete to clear matches, got %#v", summary)
+	}
+}
+
+func TestSmartKeywordsPageShowsGroupToggleControls(t *testing.T) {
+	a := newTestApp(t)
+	_, tenant, cookie, _ := sessionForRole(t, a, models.TenantRoleAdmin)
+	if _, err := a.Store.UpsertSmartKeywordGroup(t.Context(), models.SmartKeywordGroup{
+		TenantID:      tenant.ID,
+		Name:          "Water Services",
+		TagName:       "Water Services",
+		Description:   "Water services opportunities",
+		Enabled:       false,
+		MatchMode:     models.SmartMatchModeAny,
+		MinMatchCount: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/smart-keywords", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected smart keywords page 200 got %d", w.Code)
+	}
+	for _, marker := range []string{
+		"Water Services",
+		"href=\"/smart-keywords/groups/",
+		"<th>Action</th>",
+		"<button type=\"submit\">Enable</button>",
+		"name=\"return_to\" value=\"/smart-keywords\"",
+	} {
+		if !strings.Contains(body, marker) {
+			t.Fatalf("smart keywords page missing %q: %s", marker, body)
+		}
 	}
 }
 

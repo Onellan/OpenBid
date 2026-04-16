@@ -561,22 +561,16 @@ func (s *SQLiteStore) PreviewSmartKeywords(ctx context.Context, tenantID string,
 	if err != nil {
 		return nil, err
 	}
-	tenders, err := s.listAllTenders(ctx)
+	tenders, err := s.listRecentActiveTenders(ctx, limit)
 	if err != nil {
 		return nil, err
 	}
 	out := []models.SmartTenderPreview{}
 	for _, tender := range tenders {
-		if tenderArchived(tender) {
-			continue
-		}
 		out = append(out, models.SmartTenderPreview{
 			Tender:     tender,
 			Evaluation: smartkeywords.Evaluate(tender, settings.Enabled, groups, keywords),
 		})
-		if len(out) >= limit {
-			break
-		}
 	}
 	return out, nil
 }
@@ -629,6 +623,9 @@ func (s *SQLiteStore) ReprocessSmartKeywords(ctx context.Context, tenantID strin
 				return models.SmartReprocessResult{}, err
 			}
 			if err := upsertTenderDashboardIndex(ctx, tx, tender); err != nil {
+				return models.SmartReprocessResult{}, err
+			}
+			if err := upsertTenderFilterIndex(ctx, tx, tender); err != nil {
 				return models.SmartReprocessResult{}, err
 			}
 		}

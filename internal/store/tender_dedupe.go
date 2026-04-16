@@ -117,6 +117,9 @@ func (s *SQLiteStore) DeduplicateTenders(ctx context.Context) (int, error) {
 		if err = upsertTenderDashboardIndex(ctx, tx, tender); err != nil {
 			return 0, err
 		}
+		if err = upsertTenderFilterIndex(ctx, tx, tender); err != nil {
+			return 0, err
+		}
 	}
 
 	if len(impactedIDs) > 0 {
@@ -272,7 +275,10 @@ func sqliteDeleteTx(ctx context.Context, tx *sql.Tx, table, id string) error {
 		return err
 	}
 	if table == "tenders" {
-		_, err := tx.ExecContext(ctx, "delete from tender_dashboard_index where tender_id = ?", id)
+		if _, err := tx.ExecContext(ctx, "delete from tender_dashboard_index where tender_id = ?", id); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, "delete from tender_filter_index where tender_id = ?", id)
 		return err
 	}
 	return nil
