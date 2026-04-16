@@ -1,80 +1,183 @@
 name: release-images
 
 on:
-  push:
+  workflow_run:
+    workflows: ["ci"]
+    types: [completed]
     branches: ["main"]
+  push:
     tags: ["v*"]
   workflow_dispatch:
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-images-${{ github.event.workflow_run.head_sha || github.sha }}
   cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
+  context:
+    runs-on: ubuntu-latest
+    outputs:
+      should_publish: ${{ steps.release.outputs.should_publish }}
+      require_local_verify: ${{ steps.release.outputs.require_local_verify }}
+      checkout_ref: ${{ steps.release.outputs.checkout_ref }}
+      image_sha: ${{ steps.release.outputs.image_sha }}
+      image_version: ${{ steps.release.outputs.image_version }}
+      app_tags: ${{ steps.release.outputs.app_tags }}
+      extractor_tags: ${{ steps.release.outputs.extractor_tags }}
+    steps:
+      - name: Resolve publish context
+        id: release
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF_VALUE: ${{ github.ref }}
+          GITHUB_REF_NAME_VALUE: ${{ github.ref_name }}
+          GITHUB_SHA_VALUE: ${{ github.sha }}
+          WORKFLOW_RUN_EVENT: ${{ github.event.workflow_run.event }}
+          WORKFLOW_RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          WORKFLOW_RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          should_publish=false
+          require_local_verify=true
+          checkout_ref="$GITHUB_REF_VALUE"
+          image_sha="$GITHUB_SHA_VALUE"
+          image_version="$GITHUB_REF_NAME_VALUE"
+          publish_latest=false
+          version_tag=false
+
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
+            require_local_verify=false
+            checkout_ref="$WORKFLOW_RUN_HEAD_SHA"
+            image_sha="$WORKFLOW_RUN_HEAD_SHA"
+            image_version="$WORKFLOW_RUN_HEAD_BRANCH"
+
+            if [ "$WORKFLOW_RUN_EVENT" = "push" ] &&
+              [ "$WORKFLOW_RUN_CONCLUSION" = "success" ] &&
+              [ "$WORKFLOW_RUN_HEAD_BRANCH" = "main" ]; then
+              should_publish=true
+              publish_latest=true
+            fi
+          elif [ "$EVENT_NAME" = "push" ]; then
+            case "$GITHUB_REF_VALUE" in
+              refs/tags/v*)
+                should_publish=true
+                version_tag=true
+                ;;
+            esac
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            should_publish=true
+
+            if [ "$GITHUB_REF_VALUE" = "refs/heads/main" ]; then
+              publish_latest=true
+            fi
+
+            case "$GITHUB_REF_VALUE" in
+              refs/tags/v*)
+                version_tag=true
+                ;;
+            esac
+          fi
+
+          app_tags="ghcr.io/onellan/openbid/app:sha-${image_sha}"
+          extractor_tags="ghcr.io/onellan/openbid/extractor:sha-${image_sha}"
+
+          if [ "$publish_latest" = "true" ]; then
+            app_tags="${app_tags}"$'\n'"ghcr.io/onellan/openbid/app:latest"
+            extractor_tags="${extractor_tags}"$'\n'"ghcr.io/onellan/openbid/extractor:latest"
+          fi
+
+          if [ "$version_tag" = "true" ]; then
+            semver="${GITHUB_REF_NAME_VALUE#v}"
+            app_tags="${app_tags}"$'\n'"ghcr.io/onellan/openbid/app:${semver}"$'\n'"ghcr.io/onellan/openbid/app:${GITHUB_REF_NAME_VALUE}"
+            extractor_tags="${extractor_tags}"$'\n'"ghcr.io/onellan/openbid/extractor:${semver}"$'\n'"ghcr.io/onellan/openbid/extractor:${GITHUB_REF_NAME_VALUE}"
+          fi
+
+          {
+            echo "should_publish=${should_publish}"
+            echo "require_local_verify=${require_local_verify}"
+            echo "checkout_ref=${checkout_ref}"
+            echo "image_sha=${image_sha}"
+            echo "image_version=${image_version}"
+            echo "app_tags<<EOF"
+            printf '%s\n' "$app_tags"
+            echo "EOF"
+            echo "extractor_tags<<EOF"
+            printf '%s\n' "$extractor_tags"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
   verify:
     runs-on: ubuntu-latest
+    needs: context
+    if: needs.context.outputs.should_publish == 'true' && needs.context.outputs.require_local_verify == 'true'
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.context.outputs.checkout_ref }}
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26.1"
+          go-version: "1.26.2"
           cache: true
       - name: Run tests
         run: go test ./...
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: Go vulnerability check
+        run: |
+          "$(go env GOPATH)/bin/govulncheck" ./...
 
   publish:
     runs-on: ubuntu-latest
-    needs: verify
+    needs: [context, verify]
+    if: |
+      always() &&
+      needs.context.outputs.should_publish == 'true' &&
+      (
+        needs.context.outputs.require_local_verify != 'true' ||
+        needs.verify.result == 'success'
+      )
     permissions:
       contents: read
       packages: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.context.outputs.checkout_ref }}
       - uses: docker/setup-buildx-action@v3
-      - name: Set build metadata
-        id: build_metadata
-        run: echo "created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
-      - uses: docker/metadata-action@v5
-        id: app_meta
-        with:
-          images: ghcr.io/onellan/openbid/app
-          flavor: |
-            latest=false
-          tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=sha,prefix=sha-,format=long
-            type=semver,pattern={{version}},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-            type=ref,event=tag
-      - uses: docker/metadata-action@v5
-        id: extractor_meta
-        with:
-          images: ghcr.io/onellan/openbid/extractor
-          flavor: |
-            latest=false
-          tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=sha,prefix=sha-,format=long
-            type=semver,pattern={{version}},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-            type=ref,event=tag
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set build metadata
+        id: build_metadata
+        run: |
+          created="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          {
+            echo "created=${created}"
+            echo "labels<<EOF"
+            echo "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
+            echo "org.opencontainers.image.revision=${{ needs.context.outputs.image_sha }}"
+            echo "org.opencontainers.image.created=${created}"
+            echo "org.opencontainers.image.version=${{ needs.context.outputs.image_version }}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
       - name: Build and push app
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ProductionDeployment/Dockerfile.app
           push: true
-          tags: ${{ steps.app_meta.outputs.tags }}
-          labels: ${{ steps.app_meta.outputs.labels }}
+          tags: ${{ needs.context.outputs.app_tags }}
+          labels: ${{ steps.build_metadata.outputs.labels }}
           build-args: |
-            VERSION=${{ github.ref_name }}
-            VCS_REF=${{ github.sha }}
+            VERSION=${{ needs.context.outputs.image_version }}
+            VCS_REF=${{ needs.context.outputs.image_sha }}
             BUILD_DATE=${{ steps.build_metadata.outputs.created }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -84,7 +187,7 @@ jobs:
           context: .
           file: ProductionDeployment/Dockerfile.extractor
           push: true
-          tags: ${{ steps.extractor_meta.outputs.tags }}
-          labels: ${{ steps.extractor_meta.outputs.labels }}
+          tags: ${{ needs.context.outputs.extractor_tags }}
+          labels: ${{ steps.build_metadata.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

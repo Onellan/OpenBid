@@ -47,6 +47,8 @@ curl http://localhost:8088/healthz
 
 ## GHCR Images
 
+Images are published to GHCR by `.github/workflows/release-images.yml`. A merge to `main` triggers `ci`; when that `main` push succeeds, the publish workflow builds and pushes the app and extractor images.
+
 ```bash
 ./setup.sh
 docker compose -f docker-compose.ghcr.yml pull
@@ -54,6 +56,12 @@ docker compose -f docker-compose.ghcr.yml up -d
 docker compose -f docker-compose.ghcr.yml ps
 curl http://localhost:8088/healthz
 ```
+
+Published image tags:
+
+- `latest`: successful `main` build
+- `sha-FULL_COMMIT_SHA`: immutable commit build
+- `X.Y.Z` and `vX.Y.Z`: version tags created from `v*` Git tags
 
 ## Logs
 
