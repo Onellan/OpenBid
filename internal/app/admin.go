@@ -457,6 +457,13 @@ func (a *App) AdminCreateSource(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, r, "unable to initialize source health", err)
 		return
 	}
+	if err := a.Store.UpsertSourceAssignment(r.Context(), models.TenantSourceAssignment{
+		TenantID:  t.ID,
+		SourceKey: key,
+	}); err != nil {
+		a.serverError(w, r, "unable to assign source to tenant", err)
+		return
+	}
 	a.clearSourceAdminCache()
 	a.auditAction(r.Context(), actionContext{User: u, Tenant: t, Member: m}, "create", "source", key, "Source added", map[string]string{"name": name, "type": sourceType})
 	a.redirectAfterAction(w, r, "/sources", "success", "Source added")

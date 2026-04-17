@@ -9,7 +9,7 @@ services:
     environment:
       APP_ENV: "${APP_ENV:-production}"
       APP_ADDR: ":8080"
-      DATA_PATH: "/app/data/store.db"
+      DATA_PATH: "${DATA_PATH:-/app/data/store.db}"
       SECRET_KEY: "${SECRET_KEY:-}"
       SECRET_KEY_FILE: "${SECRET_KEY_FILE-/run/secrets/openbid_secret_key}"
       SECURE_COOKIES: "${SECURE_COOKIES:-true}"
@@ -66,7 +66,7 @@ services:
     command: ["openbid-worker"]
     environment:
       APP_ENV: "${APP_ENV:-production}"
-      DATA_PATH: "/app/data/store.db"
+      DATA_PATH: "${DATA_PATH:-/app/data/store.db}"
       SECRET_KEY: "${SECRET_KEY:-}"
       SECRET_KEY_FILE: "${SECRET_KEY_FILE-/run/secrets/openbid_secret_key}"
       SECURE_COOKIES: "${SECURE_COOKIES:-true}"

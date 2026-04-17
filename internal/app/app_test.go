@@ -368,7 +368,7 @@ func TestStartupSourceSyncSkipsExpiredTenderExtraction(t *testing.T) {
 
 func TestAdminCreateSourceStoresConfig(t *testing.T) {
 	a := newTestApp(t)
-	_, _, cookie, csrf := adminSession(t, a)
+	_, tenant, cookie, csrf := adminSession(t, a)
 	form := url.Values{
 		"csrf_token": {csrf},
 		"name":       {"Municipal Feed"},
@@ -394,6 +394,20 @@ func TestAdminCreateSourceStoresConfig(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected stored source config, got %#v", configs)
+	}
+	assignments, err := a.Store.ListSourceAssignments(t.Context(), tenant.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assigned := false
+	for _, assignment := range assignments {
+		if assignment.SourceKey == "municipal-feed" {
+			assigned = true
+			break
+		}
+	}
+	if !assigned {
+		t.Fatalf("expected created source assigned to current tenant, got %#v", assignments)
 	}
 }
 

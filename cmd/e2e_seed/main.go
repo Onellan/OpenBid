@@ -29,10 +29,7 @@ const (
 
 func main() {
 	ctx := context.Background()
-	dataPath := strings.TrimSpace(os.Getenv("DATA_PATH"))
-	if dataPath == "" {
-		dataPath = "./data/store.db"
-	}
+	dataPath := resolveDataPath()
 	s, err := store.NewSQLiteStore(dataPath)
 	if err != nil {
 		log.Fatal(err)
@@ -59,6 +56,22 @@ func main() {
 	cleanupE2ESmartArtifacts(ctx, s, e2eUser.ID, dataPath)
 
 	log.Printf("seeded e2e user=%s tenant=%s tender=%s", e2eUser.Username, secondaryTenant.ID, e2eFailedTender)
+}
+
+func resolveDataPath() string {
+	if dataPath := strings.TrimSpace(os.Getenv("DATA_PATH")); dataPath != "" {
+		return dataPath
+	}
+	candidates := []string{
+		"./ProductionDeployment/runtime/data/store.db",
+		"./data/store.db",
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return candidates[0]
 }
 
 func firstTenantID(ctx context.Context, s store.Store) (string, error) {
