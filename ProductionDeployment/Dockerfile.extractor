@@ -1,4 +1,4 @@
-FROM python:3.13-alpine
+FROM python:3.14.4-alpine3.23
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 # hadolint ignore=DL3018

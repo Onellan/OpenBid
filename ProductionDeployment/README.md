@@ -114,7 +114,7 @@ Both compose files define the same services:
 
 | Service | Image/build source | Purpose | Exposed to host |
 | --- | --- | --- | --- |
-| `proxy` | `nginx:1.27-alpine` | Public HTTP entry point, reverse proxy, rate limiting, forwarding headers | Yes, default host port `8088` |
+| `proxy` | `nginx:stable-alpine3.23` | Public HTTP entry point, reverse proxy, rate limiting, forwarding headers | Yes, default host port `8088` |
 | `app` | `Dockerfile.app` or `ghcr.io/onellan/openbid/app` | Go web application, login, pages, API-like health endpoints, automatic database migration/seed | No |
 | `worker` | `Dockerfile.app` or `ghcr.io/onellan/openbid/app` | Background source sync, document extraction queue, worker heartbeat | No |
 | `extractor` | `Dockerfile.extractor` or `ghcr.io/onellan/openbid/extractor` | Python document text extraction service using Poppler tools | No |

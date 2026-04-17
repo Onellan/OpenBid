@@ -58,7 +58,7 @@ func subtleConstantStringCompare(left, right string) bool {
 }
 
 func NewTOTPSecret() string {
-	b := make([]byte, 10)
+	b := make([]byte, 20)
 	fillRandomBytes(b)
 	return strings.TrimRight(base32.StdEncoding.EncodeToString(b), "=")
 }
