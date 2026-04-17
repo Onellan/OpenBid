@@ -15,14 +15,16 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"openbid/internal/mail"
 	"openbid/internal/models"
 )
 
-const currentSchemaVersion = 9
+const currentSchemaVersion = 10
 
 type SQLiteStore struct {
-	db   *sql.DB
-	path string
+	db          *sql.DB
+	path        string
+	emailSender mail.Sender
 }
 
 func NewSQLiteStore(path string) (*SQLiteStore, error) {
@@ -64,6 +66,10 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 func (s *SQLiteStore) Close() error { return s.db.Close() }
 func (s *SQLiteStore) Path() string { return s.path }
 
+func (s *SQLiteStore) SetEmailSender(sender mail.Sender) {
+	s.emailSender = sender
+}
+
 func (s *SQLiteStore) BackupTo(ctx context.Context, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
@@ -86,7 +92,7 @@ func (s *SQLiteStore) ValidateRuntime(ctx context.Context) error {
 	if userVersion != currentSchemaVersion {
 		return fmt.Errorf("unexpected schema version: got %d want %d", userVersion, currentSchemaVersion)
 	}
-	for _, table := range []string{"tenders", "tender_dashboard_index", "tender_filter_index", "tenants", "sync_runs", "source_configs", "source_schedule_settings", "jobs", "source_health", "audit_entries", "workflow_events", "user_records", "membership_records", "workflow_records", "bookmark_records", "saved_search_records", "keyword_profiles", "keyword_records", "keyword_match_records", "sessions", "tenant_source_assignments", "smart_extraction_settings", "smart_keyword_groups", "smart_keyword_records", "smart_tender_matches", "saved_smart_views", "smart_alert_deliveries"} {
+	for _, table := range []string{"tenders", "tender_dashboard_index", "tender_filter_index", "tenants", "sync_runs", "source_configs", "source_schedule_settings", "jobs", "source_health", "audit_entries", "workflow_events", "user_records", "membership_records", "workflow_records", "bookmark_records", "saved_search_records", "keyword_profiles", "keyword_records", "keyword_match_records", "sessions", "tenant_source_assignments", "smart_extraction_settings", "smart_keyword_groups", "smart_keyword_records", "smart_tender_matches", "saved_smart_views", "smart_alert_deliveries", "email_settings"} {
 		var count int
 		if err := s.db.QueryRowContext(ctx, "select count(*) from sqlite_master where type='table' and name=?", table).Scan(&count); err != nil {
 			return err
@@ -129,6 +135,7 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		`create table if not exists sync_runs (id text primary key, payload text not null);`,
 		`create table if not exists source_configs (id text primary key, payload text not null);`,
 		`create table if not exists source_schedule_settings (id text primary key, payload text not null);`,
+		`create table if not exists email_settings (id text primary key, payload text not null);`,
 		`create table if not exists jobs (id text primary key, payload text not null);`,
 		`create table if not exists tender_dashboard_index (
 			tender_id text primary key,

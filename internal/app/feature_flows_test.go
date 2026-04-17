@@ -207,6 +207,85 @@ func TestKeywordSearchFlowHomepageAndNavigation(t *testing.T) {
 	}
 }
 
+func TestMobileNavigationRendersRoleAwareLinksAndRoutes(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := adminSession(t, a)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected home 200 got %d", w.Code)
+	}
+	for _, marker := range []string{
+		"data-mobile-menu",
+		"aria-label=\"Open navigation menu\"",
+		"<summary>Find Work</summary>",
+		"data-mobile-menu-link href=\"/tenders\"",
+		"data-mobile-menu-link href=\"/keyword-search\"",
+		"data-mobile-menu-link href=\"/smart-keywords\"",
+		"data-mobile-menu-link href=\"/queue\"",
+		"data-mobile-menu-link href=\"/sources\"",
+		"data-mobile-menu-link href=\"/admin/users\"",
+		"data-mobile-menu-link href=\"/admin/tenants\"",
+		"data-mobile-menu-link href=\"/admin/email\"",
+		"data-mobile-menu-link href=\"/audit-log/security\"",
+		"data-mobile-menu-link href=\"/health\"",
+	} {
+		if !strings.Contains(body, marker) {
+			t.Fatalf("mobile navigation missing %q: %s", marker, body)
+		}
+	}
+	for _, path := range []string{"/tenders", "/keyword-search", "/smart-keywords", "/queue", "/sources", "/settings", "/admin/users", "/admin/tenants", "/admin/email", "/audit-log", "/audit-log/security", "/health"} {
+		req = httptest.NewRequest(http.MethodGet, path, nil)
+		req.AddCookie(cookie)
+		w = httptest.NewRecorder()
+		a.Server.Handler.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected mobile nav route %s to return 200, got %d", path, w.Code)
+		}
+	}
+}
+
+func TestMobileNavigationHidesPrivilegedLinksForViewer(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := sessionForRole(t, a, models.TenantRoleViewer)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected home 200 got %d", w.Code)
+	}
+	for _, marker := range []string{
+		"data-mobile-menu",
+		"data-mobile-menu-link href=\"/tenders\"",
+		"data-mobile-menu-link href=\"/keyword-search\"",
+		"data-mobile-menu-link href=\"/smart-keywords\"",
+		"data-mobile-menu-link href=\"/queue\"",
+		"data-mobile-menu-link href=\"/settings\"",
+	} {
+		if !strings.Contains(body, marker) {
+			t.Fatalf("viewer mobile navigation missing %q: %s", marker, body)
+		}
+	}
+	for _, forbidden := range []string{
+		"data-mobile-menu-link href=\"/sources\"",
+		"data-mobile-menu-link href=\"/admin/users\"",
+		"data-mobile-menu-link href=\"/admin/tenants\"",
+		"data-mobile-menu-link href=\"/admin/email\"",
+		"data-mobile-menu-link href=\"/audit-log/security\"",
+		"data-mobile-menu-link href=\"/health\"",
+		"data-mobile-menu-link href=\"/queue#expired-tender-cleanup\"",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("viewer mobile navigation should not include %q: %s", forbidden, body)
+		}
+	}
+}
+
 func TestSmartKeywordsPageShowsGroupToggleControls(t *testing.T) {
 	a := newTestApp(t)
 	_, tenant, cookie, _ := sessionForRole(t, a, models.TenantRoleAdmin)
@@ -231,14 +310,152 @@ func TestSmartKeywordsPageShowsGroupToggleControls(t *testing.T) {
 		t.Fatalf("expected smart keywords page 200 got %d", w.Code)
 	}
 	for _, marker := range []string{
+		"data-smart-keywords-screen",
+		"id=\"smart-overview\"",
+		"id=\"smart-keyword-manager\"",
+		"id=\"smart-groups-panel\"",
+		"data-compact-panel",
 		"Water Services",
 		"href=\"/smart-keywords/groups/",
-		"<th>Action</th>",
 		"<button type=\"submit\">Enable</button>",
 		"name=\"return_to\" value=\"/smart-keywords\"",
 	} {
 		if !strings.Contains(body, marker) {
 			t.Fatalf("smart keywords page missing %q: %s", marker, body)
+		}
+	}
+}
+
+func TestSmartKeywordsOptimizedScreenSectionsPreviewAndActions(t *testing.T) {
+	a := newTestApp(t)
+	_, tenant, cookie, csrf := sessionForRole(t, a, models.TenantRoleAdmin)
+	group, err := a.Store.UpsertSmartKeywordGroup(t.Context(), models.SmartKeywordGroup{
+		TenantID:      tenant.ID,
+		Name:          "Water",
+		TagName:       "Water",
+		Enabled:       true,
+		MatchMode:     models.SmartMatchModeAny,
+		MinMatchCount: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Store.UpsertSmartKeyword(t.Context(), models.SmartKeyword{TenantID: tenant.ID, GroupID: group.ID, Value: "water services", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Store.UpsertSmartKeyword(t.Context(), models.SmartKeyword{TenantID: tenant.ID, Value: "pump station", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store.UpsertSmartExtractionSettings(t.Context(), models.SmartExtractionSettings{TenantID: tenant.ID, Enabled: true, AlertsEnabled: true, EmailAlertsEnabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:          "smart-match",
+		Title:       "Water services upgrade",
+		Issuer:      "Metro Water",
+		SourceKey:   "treasury",
+		Status:      "open",
+		ClosingDate: "2026-07-01",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store.UpsertTender(t.Context(), models.Tender{
+		ID:        "smart-nomatch",
+		Title:     "Road resurfacing",
+		Issuer:    "Roads Agency",
+		SourceKey: "cidb",
+		Status:    "open",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/smart-keywords", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected smart keywords page 200 got %d", w.Code)
+	}
+	for _, marker := range []string{
+		"Smart Keyword Extraction",
+		"summary-stat",
+		"Active keywords",
+		"Preview matches",
+		"Reprocess matches",
+		"Send email alerts",
+		"name=\"email_alerts_enabled\"",
+		"id=\"smart-preview-panel\"",
+		"id=\"smart-views-panel\"",
+		"id=\"smart-alert-history\"",
+		"data-mobile-stack",
+		"data-compact-panel",
+		"Water services upgrade",
+		"href=\"/tenders/smart-match\"",
+		"<span class=\"badge success\">Matched</span>",
+	} {
+		if !strings.Contains(body, marker) {
+			t.Fatalf("optimized smart keywords page missing %q: %s", marker, body)
+		}
+	}
+
+	addForm := url.Values{"csrf_token": {csrf}, "value": {"treatment plant"}, "enabled": {"1"}}
+	req = httptest.NewRequest(http.MethodPost, "/smart-keywords/keywords", strings.NewReader(addForm.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after smart keyword add, got %d", w.Code)
+	}
+	keywords, err := a.Store.ListSmartKeywords(t.Context(), tenant.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundAdded := false
+	for _, keyword := range keywords {
+		if keyword.Value == "treatment plant" && keyword.Enabled {
+			foundAdded = true
+			break
+		}
+	}
+	if !foundAdded {
+		t.Fatalf("expected added smart keyword to persist, got %#v", keywords)
+	}
+
+	reprocessForm := url.Values{"csrf_token": {csrf}}
+	req = httptest.NewRequest(http.MethodPost, "/smart-keywords/reprocess", strings.NewReader(reprocessForm.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after smart reprocess, got %d", w.Code)
+	}
+	if location := w.Header().Get("Location"); !strings.Contains(location, "Reprocessed") {
+		t.Fatalf("expected reprocess success message, got %q", location)
+	}
+}
+
+func TestSmartKeywordsOptimizedEmptyState(t *testing.T) {
+	a := newTestApp(t)
+	_, _, cookie, _ := sessionForRole(t, a, models.TenantRoleAdmin)
+	req := httptest.NewRequest(http.MethodGet, "/smart-keywords", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected smart keywords page 200 got %d", w.Code)
+	}
+	for _, marker := range []string{
+		"No standalone keywords yet",
+		"No tenders are available to preview yet.",
+		"id=\"smart-overview\"",
+		"id=\"smart-keyword-manager\"",
+	} {
+		if !strings.Contains(body, marker) {
+			t.Fatalf("smart keywords empty state missing %q: %s", marker, body)
 		}
 	}
 }

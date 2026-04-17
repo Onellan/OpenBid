@@ -13,6 +13,7 @@ import (
 
 	"openbid/internal/auth"
 	"openbid/internal/extract"
+	"openbid/internal/mail"
 	"openbid/internal/models"
 	"openbid/internal/source"
 	"openbid/internal/store"
@@ -39,6 +40,7 @@ type App struct {
 	Store            store.Store
 	Templates        map[string]*template.Template
 	Server           *http.Server
+	Email            *mail.Service
 	Sources          source.Registry
 	Extractor        *extract.Client
 	StartedAt        time.Time
@@ -183,6 +185,8 @@ func New() (*App, error) {
 		LoginRateLimiter: NewLoginRateLimiter(time.Duration(cfg.LoginRateLimitWindowSeconds)*time.Second, cfg.LoginRateLimitMaxAttempts),
 		AlertNotifier:    NewAlertNotifier(cfg.AlertWebhookURL),
 	}
+	a.Email = mail.NewService(st, mail.SMTPTransport{})
+	st.SetEmailSender(a.Email)
 	if err := a.seed(context.Background()); err != nil {
 		_ = st.Close()
 		return nil, err
@@ -808,6 +812,9 @@ func (a *App) renderStatus(w http.ResponseWriter, r *http.Request, status int, n
 		}
 		if _, exists := data["CanManageSources"]; !exists {
 			data["CanManageSources"] = canManageSources(u, m)
+		}
+		if _, exists := data["CanManagePlatform"]; !exists {
+			data["CanManagePlatform"] = canManagePlatform(u)
 		}
 		if _, exists := data["CanViewPlatformHealth"]; !exists {
 			data["CanViewPlatformHealth"] = canViewPlatformHealth(u, m)

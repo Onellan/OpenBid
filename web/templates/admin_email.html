@@ -1,0 +1,99 @@
+{{define "admin_email.html"}}{{template "base" .}}{{end}}{{define "content"}}
+{{template "page_hero" (dict
+  "eyebrow" "Admin"
+  "title" "Email settings"
+  "copy" "Configure outbound email once so alerts and notifications can send through your SMTP provider."
+)}}
+<div style="margin:14px 0">{{template "flash_messages" .}}</div>
+
+<div class="stack" style="margin-top:18px">
+  <section class="card admin-email-status">
+    <div class="toolbar">
+      <div>
+        <h2 class="card-title">Readiness</h2>
+        <p class="card-subtitle">OpenBid sends outbound mail only when global email is enabled and all required SMTP settings are valid.</p>
+      </div>
+      <span class="badge {{.EmailAdmin.Readiness.StatusTone}}">{{.EmailAdmin.Readiness.StatusLabel}}</span>
+    </div>
+    <p>{{.EmailAdmin.Readiness.Summary}}</p>
+    <div class="status-grid">
+      <div><span class="footer-note">Global email</span><strong>{{if .EmailAdmin.Settings.Enabled}}Enabled{{else}}Disabled{{end}}</strong></div>
+      <div><span class="footer-note">SMTP host</span><strong>{{if .EmailAdmin.Settings.SMTPHost}}{{.EmailAdmin.Settings.SMTPHost}}{{else}}Not set{{end}}</strong></div>
+      <div><span class="footer-note">Security mode</span><strong>{{.EmailAdmin.Settings.SMTPSecurityMode}}</strong></div>
+      <div><span class="footer-note">Password stored</span><strong>{{if .EmailAdmin.HasPassword}}Yes{{else}}No{{end}}</strong></div>
+    </div>
+    {{if .EmailAdmin.Readiness.MissingFields}}
+    <div class="notice" role="alert" style="margin-top:12px">
+      <span class="badge warning">Missing</span>
+      <span style="margin-left:8px">{{range $i, $field := .EmailAdmin.Readiness.MissingFields}}{{if $i}}, {{end}}{{$field}}{{end}}</span>
+    </div>
+    {{end}}
+    {{if .EmailAdmin.Readiness.InvalidFields}}
+    <div class="notice" role="alert" style="margin-top:12px">
+      <span class="badge danger">Invalid</span>
+      <span style="margin-left:8px">{{range $i, $field := .EmailAdmin.Readiness.InvalidFields}}{{if $i}}, {{end}}{{$field}}{{end}}</span>
+    </div>
+    {{end}}
+  </section>
+
+  <section class="card">
+    <form method="post" action="/admin/email/save" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <div class="toolbar">
+        <div>
+          <h2 class="card-title">Required settings</h2>
+          <p class="card-subtitle">These values are the minimum OpenBid needs before it can send email through an SMTP provider.</p>
+        </div>
+        <label class="inline-checkbox"><input type="checkbox" name="enabled" value="1" {{if .EmailAdmin.Settings.Enabled}}checked{{end}}> Enable outbound email globally</label>
+      </div>
+      <div class="row-4">
+        <label>SMTP host <span class="required-label">required</span><input name="smtp_host" value="{{.EmailAdmin.Settings.SMTPHost}}" placeholder="smtp.sendgrid.net" autocomplete="off"></label>
+        <label>SMTP port <span class="required-label">required</span><input name="smtp_port" value="{{.EmailAdmin.Settings.SMTPPort}}" inputmode="numeric" placeholder="587"></label>
+        <label>Security mode <span class="required-label">required</span>
+          <select name="smtp_security_mode">
+            {{range .EmailAdmin.SecurityModes}}<option value="{{.}}" {{if eq $.EmailAdmin.Settings.SMTPSecurityMode .}}selected{{end}}>{{if eq . "starttls"}}STARTTLS{{else if eq . "tls"}}TLS{{else}}plain{{end}}</option>{{end}}
+          </select>
+        </label>
+        <label>From email <span class="required-label">required</span><input name="smtp_from_email" value="{{.EmailAdmin.Settings.SMTPFromEmail}}" placeholder="alerts@example.com" autocomplete="email"></label>
+      </div>
+      <div class="row-4">
+        <label class="inline-checkbox"><input type="checkbox" name="smtp_auth_required" value="1" {{if .EmailAdmin.Settings.SMTPAuthRequired}}checked{{end}}> SMTP authentication required</label>
+        <label>SMTP username <span class="required-label">required when auth is on</span><input name="smtp_username" value="{{.EmailAdmin.Settings.SMTPUsername}}" placeholder="apikey or account username" autocomplete="off"></label>
+        <label>SMTP password/app password <span class="required-label">required when auth is on</span><input type="password" name="smtp_password" placeholder="{{if .EmailAdmin.HasPassword}}Leave blank to keep stored password{{else}}Enter provider password or app password{{end}}" autocomplete="new-password"></label>
+        <label class="inline-checkbox"><input type="checkbox" name="clear_smtp_password" value="1"> Clear stored password</label>
+      </div>
+
+      <details class="section-disclosure compact-disclosure">
+        <summary><div><h2 class="card-title">Optional settings</h2><p class="section-disclosure-copy">These values improve sender identity, testing, and timeout behavior.</p></div></summary>
+        <div class="section-disclosure-body">
+          <div class="row-4">
+            <label>From display name<input name="smtp_from_name" value="{{.EmailAdmin.Settings.SMTPFromName}}" placeholder="OpenBid Alerts"></label>
+            <label>Reply-to address<input name="smtp_reply_to" value="{{.EmailAdmin.Settings.SMTPReplyTo}}" placeholder="support@example.com"></label>
+            <label>Timeout seconds<input name="email_timeout_seconds" value="{{.EmailAdmin.Settings.TimeoutSeconds}}" inputmode="numeric" placeholder="10"></label>
+            <label>Default test recipient<input name="test_recipient" value="{{.EmailAdmin.Settings.TestRecipient}}" placeholder="you@example.com"></label>
+          </div>
+        </div>
+      </details>
+      <div class="actions">
+        <button type="submit">Save email settings</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="card">
+    <form method="post" action="/admin/email/test" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <div>
+        <h2 class="card-title">Send a test email</h2>
+        <p class="card-subtitle">A test email is blocked until required settings are complete, valid, and global email is enabled.</p>
+      </div>
+      <div class="row-4">
+        <label>Test recipient <span class="required-label">required at send time</span><input name="test_recipient" value="{{.EmailAdmin.Settings.TestRecipient}}" placeholder="you@example.com" autocomplete="email"></label>
+        <div></div>
+        <div></div>
+        <div class="actions"><button type="submit" {{if not .EmailAdmin.Readiness.Ready}}disabled{{end}}>Send test email</button></div>
+      </div>
+    </form>
+  </section>
+</div>
+{{end}}

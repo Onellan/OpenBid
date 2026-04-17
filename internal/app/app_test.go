@@ -897,7 +897,7 @@ func TestAssetRouteServesSharedAppJS(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 got %d", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), "closeOtherMenus") {
+	if !strings.Contains(w.Body.String(), "desktopMenus") || !strings.Contains(w.Body.String(), "mobileDrawer") {
 		t.Fatalf("expected shared app script, got %s", w.Body.String())
 	}
 	if cacheControl := w.Header().Get("Cache-Control"); cacheControl != "public, max-age=3600" {

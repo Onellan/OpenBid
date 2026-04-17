@@ -116,7 +116,7 @@ test.describe.serial("OpenBid critical browser journeys", () => {
     await login(page);
     await page.goto("/smart-keywords");
     await expect(
-      page.getByRole("heading", { name: "Extract only the tenders that match your active keywords" }),
+      page.getByRole("heading", { name: "Smart Keyword Extraction" }),
     ).toBeVisible();
 
     const groupName = `E2E Smart ${Date.now()}`;
@@ -140,7 +140,7 @@ test.describe.serial("OpenBid critical browser journeys", () => {
 
     await page.goto("/smart-keywords");
     const settingsForm = page.locator('form[action="/smart-keywords/settings"]');
-    await settingsForm.getByLabel("Smart Keyword Extraction").check();
+    await settingsForm.getByLabel("Enable smart extraction").check();
     await settingsForm.getByLabel("Global smart alerts").check();
     await settingsForm.getByRole("button", { name: "Save settings" }).click();
     await expect(
@@ -150,7 +150,7 @@ test.describe.serial("OpenBid critical browser journeys", () => {
     page.once("dialog", (dialog) => dialog.accept());
     await page
       .locator('form[action="/smart-keywords/reprocess"]')
-      .getByRole("button", { name: "Reprocess existing tenders" })
+      .getByRole("button", { name: "Reprocess matches" })
       .click();
     await expect(
       page.locator('[role="status"]').getByText(/Reprocessed \d+ tenders/),
@@ -178,13 +178,49 @@ test.describe.serial("OpenBid critical browser journeys", () => {
     page.once("dialog", (dialog) => dialog.accept());
     await page
       .locator('form[action="/smart-keywords/reprocess"]')
-      .getByRole("button", { name: "Reprocess existing tenders" })
+      .getByRole("button", { name: "Reprocess matches" })
       .click();
     await expect(
       page.locator('[role="status"]').getByText(/Reprocessed \d+ tenders/),
     ).toBeVisible();
     await expect(page.getByText("smart-alerts@example.org").first()).toBeVisible();
-    await expect(page.getByText("sent").first()).toBeVisible();
+    await expect(page.getByText("skipped").first()).toBeVisible();
+  });
+
+  test("mobile navigation drawer keeps nested sections open and routes links", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await login(page);
+
+    const mobileMenu = page.locator("details.mobile-menu");
+    await page.getByLabel("Open navigation menu").click();
+    await expect(mobileMenu).toHaveAttribute("open", "");
+    await page.locator("details.mobile-menu summary", { hasText: "Find Work" }).click();
+    await expect(mobileMenu).toHaveAttribute("open", "");
+    await expect(mobileMenu.getByRole("link", { name: "Smart Keyword Extraction", exact: true })).toBeVisible();
+    await Promise.all([
+      page.waitForURL(/\/smart-keywords$/),
+      mobileMenu.getByRole("link", { name: "Smart Keyword Extraction", exact: true }).click(),
+    ]);
+    await expect(page.getByRole("heading", { name: "Smart Keyword Extraction" })).toBeVisible();
+
+    await page.getByLabel("Open navigation menu").click();
+    await page.locator("details.mobile-menu summary", { hasText: "Data Pipes" }).click();
+    await Promise.all([
+      page.waitForURL(/\/queue$/),
+      mobileMenu.getByRole("link", { name: "Queue", exact: true }).click(),
+    ]);
+    await expect(page.getByRole("heading", { name: "Queue and extraction monitoring" })).toBeVisible();
+
+    await page.getByLabel("Open navigation menu").click();
+    await page.locator("details.mobile-menu summary", { hasText: "Settings" }).click();
+    await expect(mobileMenu.getByRole("link", { name: "Email", exact: true })).toBeVisible();
+    await Promise.all([
+      page.waitForURL(/\/admin\/email$/),
+      mobileMenu.getByRole("link", { name: "Email", exact: true }).click(),
+    ]);
+    await expect(page.getByRole("heading", { name: "Email settings" })).toBeVisible();
   });
 
   test("MFA setup and MFA login flow work", async ({ page }) => {
