@@ -89,6 +89,8 @@ test.describe.serial("OpenBid critical browser journeys", () => {
       }),
     ).toBeVisible();
 
+    await openDisclosure(page, "#sources-setup-disclosure");
+
     await page.getByLabel("Display name").fill(`E2E Source ${sourceKey}`);
     await page.getByLabel("Source key").fill(sourceKey);
     await page.getByLabel("Feed URL").fill("https://example.org/e2e-feed.json");
@@ -96,14 +98,8 @@ test.describe.serial("OpenBid critical browser journeys", () => {
     await page.getByRole("button", { name: "Add source" }).click();
 
     await expect(page.getByText("Source added")).toBeVisible();
-    const operationsDisclosure = page.locator("details.sources-ops-disclosure");
-    if (
-      !(await operationsDisclosure.evaluate((node) =>
-        node.hasAttribute("open"),
-      ))
-    ) {
-      await operationsDisclosure.locator("summary").click();
-    }
+    await openDisclosure(page, "#sources-ops-disclosure");
+    const operationsDisclosure = page.locator("#sources-ops-disclosure");
     const row = operationsDisclosure
       .locator("tr")
       .filter({ hasText: sourceKey });

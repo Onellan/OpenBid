@@ -1803,14 +1803,14 @@ func TestSourcesPageReordersSetupAndCollapsesHistory(t *testing.T) {
 		t.Fatalf("expected 200 got %d", w.Code)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, "sources-setup-stack") || !strings.Contains(body, "sources-history-disclosure") {
+	if !strings.Contains(body, "id=\"sources-setup-disclosure\"") || !strings.Contains(body, "id=\"sources-history-disclosure\"") {
 		t.Fatalf("expected updated sources layout markers, got %s", body)
 	}
-	if !strings.Contains(body, "<details class=\"section-disclosure sources-add-disclosure\" open>") {
-		t.Fatalf("expected add source disclosure open by default, got %s", body)
+	if strings.Contains(body, "id=\"sources-setup-disclosure\" open") {
+		t.Fatalf("expected source setup disclosure collapsed by default, got %s", body)
 	}
-	if !strings.Contains(body, "<details class=\"section-disclosure sources-scheduling-disclosure\">") || strings.Contains(body, "<details class=\"section-disclosure sources-scheduling-disclosure\" open>") {
-		t.Fatalf("expected scheduling disclosure collapsed by default, got %s", body)
+	if !strings.Contains(body, "Add source") || !strings.Contains(body, "Scheduling") || !strings.Contains(body, "Source guide") {
+		t.Fatalf("expected source setup content in disclosure, got %s", body)
 	}
 	if !strings.Contains(body, "sources-ops-disclosure") || strings.Contains(body, "sources-ops-disclosure\" open") {
 		t.Fatalf("expected source operations disclosure collapsed by default, got %s", body)
@@ -1818,10 +1818,10 @@ func TestSourcesPageReordersSetupAndCollapsesHistory(t *testing.T) {
 	if strings.Index(body, "Add source") > strings.Index(body, "Scheduling") {
 		t.Fatalf("expected Add source above Scheduling, got %s", body)
 	}
-	if !strings.Contains(body, "<details class=\"section-disclosure sources-history-disclosure\"") {
+	if !strings.Contains(body, "sources-history-disclosure") {
 		t.Fatalf("expected collapsible history section, got %s", body)
 	}
-	if strings.Contains(body, "<details class=\"section-disclosure sources-history-disclosure\" open>") {
+	if strings.Contains(body, "sources-history-disclosure\" open") {
 		t.Fatalf("expected history section collapsed by default, got %s", body)
 	}
 	if !strings.Contains(body, "source-ops-table") || !strings.Contains(body, "source-inline-controls") {

@@ -22,69 +22,84 @@
   {{template "metric_card" (dict "label" "Recent runs" "value" (len .RecentRuns))}}
 </div>
 
-<div class="sources-workspace-grid" style="margin-top:18px">
-  <section class="card sources-form-panel">
-    {{template "card_header" (dict "title" "Add source" "subtitle" "Register a new feed-backed source without editing application code." )}}
-    <div style="margin-top:16px">
-      {{if .CanManageSources}}
-        {{template "create_source_form" .}}
-      {{else}}
-        {{template "empty_state" "You can view source health here, but source management controls are reserved for admin-capable roles."}}
-      {{end}}
+<details id="sources-setup-disclosure" class="section-disclosure smart-disclosure sources-setup-disclosure" style="margin-top:18px">
+  <summary>
+    <div>
+      <h2 class="card-title">Source setup</h2>
+      <p class="section-disclosure-copy">Add new sources, adjust scheduling defaults, and reference adapter guidance when you need it.</p>
     </div>
-  </section>
-
-  <div class="sources-side-stack">
-    <section class="card sources-schedule-panel">
-      {{template "card_header" (dict "title" "Scheduling" "subtitle" "Set the global default interval, pause scheduled checks when needed, and run every enabled source in one action." )}}
-      <div style="margin-top:16px">
-        {{if .CanManageSources}}
-          {{template "source_schedule_form" .}}
-          <form method="post" action="/sources/check-all" class="sources-check-all-form">
-            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-            <button type="submit" class="button secondary">Check all enabled sources now</button>
-          </form>
-        {{else}}
-          <div class="card-soft">
-            <strong>Current schedule</strong>
-            <div class="footer-note" style="margin-top:6px">Default interval: every {{.ScheduleSettings.DefaultIntervalMinutes}} minutes.</div>
-            <div class="footer-note" style="margin-top:6px">Scheduled checks: {{if .ScheduleSettings.Paused}}Paused{{else}}Active{{end}}.</div>
+  </summary>
+  <div class="section-disclosure-body">
+    <div class="sources-workspace-grid">
+      <div class="sources-side-stack">
+        <section class="card sources-form-panel">
+          {{template "card_header" (dict "title" "Add source" "subtitle" "Register a new feed-backed source without editing application code." )}}
+          <div style="margin-top:16px">
+            {{if .CanManageSources}}
+              {{template "create_source_form" .}}
+            {{else}}
+              {{template "empty_state" "You can view source health here, but source management controls are reserved for admin-capable roles."}}
+            {{end}}
           </div>
-        {{end}}
-      </div>
-    </section>
+        </section>
 
-    <section class="card sources-guide-panel">
-      {{template "card_header" (dict "title" "Source guide" "subtitle" "Pick the adapter that matches the public page you want OpenBid to monitor." )}}
-      <div class="sources-guide-grid" style="margin-top:16px">
-        <div class="card-soft source-ref-card">
-          <strong>JSON feed</strong>
-          <div class="footer-note" style="margin-top:6px">Use when a feed returns a top-level releases list with source links per item.</div>
-          <div class="sources-guide-code-list" style="margin-top:10px"><span class="sources-guide-code">json_feed</span></div>
-        </div>
-        <div class="card-soft source-ref-card">
-          <strong>National portals</strong>
-          <div class="footer-note" style="margin-top:6px">Best for eTenders, Public Works, CIDB, and Eskom tender pages.</div>
-          <div class="sources-guide-code-list" style="margin-top:10px"><span class="sources-guide-code">etenders_portal</span><span class="sources-guide-code">publicworks_portal</span><span class="sources-guide-code">cidb_portal</span><span class="sources-guide-code">eskom_portal</span></div>
-        </div>
-        <div class="card-soft source-ref-card">
-          <strong>City and utility portals</strong>
-          <div class="footer-note" style="margin-top:6px">For OnlineTenders, Durban procurement, Transnet, and City of Johannesburg listings.</div>
-          <div class="sources-guide-code-list" style="margin-top:10px"><span class="sources-guide-code">onlinetenders_portal</span><span class="sources-guide-code">durban_procurement_portal</span><span class="sources-guide-code">transnet_portal</span><span class="sources-guide-code">city_of_joburg_portal</span></div>
-        </div>
-        <div class="card-soft source-ref-card">
-          <strong>Generic public page</strong>
-          <div class="footer-note" style="margin-top:6px">Use when the source is a public listing page that does not match a dedicated adapter.</div>
-          <div class="sources-guide-code-list" style="margin-top:10px"><span class="sources-guide-code">webpage_portal</span></div>
-        </div>
+        <section class="card sources-schedule-panel">
+          {{template "card_header" (dict "title" "Scheduling" "subtitle" "Set the global default interval, pause scheduled checks when needed, and run every enabled source in one action." )}}
+          <div style="margin-top:16px">
+            {{if .CanManageSources}}
+              {{template "source_schedule_form" .}}
+              <form method="post" action="/sources/check-all" class="sources-check-all-form">
+                <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                <button type="submit" class="button secondary">Check all enabled sources now</button>
+              </form>
+            {{else}}
+              <div class="card-soft">
+                <strong>Current schedule</strong>
+                <div class="footer-note" style="margin-top:6px">Default interval: every {{.ScheduleSettings.DefaultIntervalMinutes}} minutes.</div>
+                <div class="footer-note" style="margin-top:6px">Scheduled checks: {{if .ScheduleSettings.Paused}}Paused{{else}}Active{{end}}.</div>
+              </div>
+            {{end}}
+          </div>
+        </section>
       </div>
-    </section>
+
+      <section class="card sources-guide-panel">
+        {{template "card_header" (dict "title" "Source guide" "subtitle" "Pick the adapter that matches the public page you want OpenBid to monitor." )}}
+        <div class="sources-guide-grid" style="margin-top:16px">
+          <div class="card-soft source-ref-card">
+            <strong>JSON feed</strong>
+            <div class="footer-note" style="margin-top:6px">Use when a feed returns a top-level releases list with source links per item.</div>
+            <div class="sources-guide-code-list" style="margin-top:10px"><span class="sources-guide-code">json_feed</span></div>
+          </div>
+          <div class="card-soft source-ref-card">
+            <strong>National portals</strong>
+            <div class="footer-note" style="margin-top:6px">Best for eTenders, Public Works, CIDB, and Eskom tender pages.</div>
+            <div class="sources-guide-code-list" style="margin-top:10px"><span class="sources-guide-code">etenders_portal</span><span class="sources-guide-code">publicworks_portal</span><span class="sources-guide-code">cidb_portal</span><span class="sources-guide-code">eskom_portal</span></div>
+          </div>
+          <div class="card-soft source-ref-card">
+            <strong>City and utility portals</strong>
+            <div class="footer-note" style="margin-top:6px">For OnlineTenders, Durban procurement, Transnet, and City of Johannesburg listings.</div>
+            <div class="sources-guide-code-list" style="margin-top:10px"><span class="sources-guide-code">onlinetenders_portal</span><span class="sources-guide-code">durban_procurement_portal</span><span class="sources-guide-code">transnet_portal</span><span class="sources-guide-code">city_of_joburg_portal</span></div>
+          </div>
+          <div class="card-soft source-ref-card">
+            <strong>Generic public page</strong>
+            <div class="footer-note" style="margin-top:6px">Use when the source is a public listing page that does not match a dedicated adapter.</div>
+            <div class="sources-guide-code-list" style="margin-top:10px"><span class="sources-guide-code">webpage_portal</span></div>
+          </div>
+        </div>
+      </section>
+    </div>
   </div>
-</div>
+</details>
 
-<section class="card sources-ops-panel" style="margin-top:18px">
-  {{template "card_header" (dict "title" "Source operations" "subtitle" "Run single sources, queue selected checks, and update per-source timing without leaving the page." )}}
-  <div style="margin-top:16px">
+<details id="sources-ops-disclosure" class="section-disclosure smart-disclosure sources-ops-disclosure sources-ops-panel" style="margin-top:18px">
+  <summary>
+    <div>
+      <h2 class="card-title">Source operations</h2>
+      <p class="section-disclosure-copy">Run single sources, queue selected checks, and update per-source timing when you need to work on active feeds.</p>
+    </div>
+  </summary>
+  <div class="section-disclosure-body">
     {{if .CanManageSources}}
       <form id="bulk-source-check-form" method="post" action="/sources/check-selected" style="margin:0">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
@@ -96,10 +111,17 @@
     {{end}}
     <div class="table-wrap sources-table-wrap">{{template "source_config_table_typed" .}}</div>
   </div>
-</section>
+</details>
 
-<section class="card sources-history-panel" style="margin-top:18px">
-  {{template "card_header" (dict "title" "Recent execution history" "subtitle" "Review the latest checks, triggers, item counts, and messages without expanding another disclosure." )}}
-  <div class="table-wrap sources-table-wrap" style="margin-top:16px">{{template "source_recent_runs_table" .}}</div>
-</section>
+<details id="sources-history-disclosure" class="section-disclosure smart-disclosure sources-history-disclosure sources-history-panel" style="margin-top:18px">
+  <summary>
+    <div>
+      <h2 class="card-title">Recent execution history</h2>
+      <p class="section-disclosure-copy">Review the latest checks, triggers, item counts, and messages only when you need historical detail.</p>
+    </div>
+  </summary>
+  <div class="section-disclosure-body">
+    <div class="table-wrap sources-table-wrap">{{template "source_recent_runs_table" .}}</div>
+  </div>
+</details>
 {{end}}
