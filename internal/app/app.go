@@ -217,7 +217,7 @@ func (a *App) seed(ctx context.Context) error {
 			if a.Config.AppEnv == "production" {
 				return errors.New("BOOTSTRAP_ADMIN_PASSWORD must be set before starting with an empty production database")
 			}
-			password = "OpenBid!2026"
+			password = "OpenBid!2026-YK4j3z39CEfu0kbFHcEzM8yI"
 		}
 		salt, hash, err := auth.HashPassword(password)
 		if err != nil {

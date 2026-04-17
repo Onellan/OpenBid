@@ -808,7 +808,7 @@ cat runtime/secrets/openbid_bootstrap_admin_password
 
 Expected result:
 
-- A strong password beginning with `OpenBid!2026-`.
+- `OpenBid!2026-YK4j3z39CEfu0kbFHcEzM8yI`.
 
 Store that password in your password manager. It is used only to create the
 bootstrap admin account when the database has no users.

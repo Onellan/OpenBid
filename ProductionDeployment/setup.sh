@@ -33,12 +33,8 @@ random_base64() {
   fail "cannot generate secrets: openssl is unavailable and /dev/urandom is not readable"
 }
 
-random_admin_password() {
-  token="$(random_base64 | tr -dc 'A-Za-z0-9' | cut -c1-24)"
-  if [ -z "$token" ]; then
-    fail "cannot generate bootstrap admin password"
-  fi
-  printf 'OpenBid!2026-%s\n' "$token"
+default_admin_password() {
+  printf '%s\n' 'OpenBid!2026-YK4j3z39CEfu0kbFHcEzM8yI'
 }
 
 ensure_nonempty_file() {
@@ -90,7 +86,7 @@ else
 fi
 
 if [ ! -f "$admin_password_file" ]; then
-  random_admin_password > "$admin_password_file" || fail "failed to write $admin_password_file"
+  default_admin_password > "$admin_password_file" || fail "failed to write $admin_password_file"
   info "Created $admin_password_file"
 else
   info "Kept existing $admin_password_file"

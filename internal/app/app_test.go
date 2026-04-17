@@ -18,6 +18,8 @@ import (
 	"time"
 )
 
+const testLocalAdminPassword = "OpenBid!2026-YK4j3z39CEfu0kbFHcEzM8yI"
+
 func newTestApp(t *testing.T) *App {
 	root := t.TempDir()
 	t.Setenv("DATA_PATH", filepath.Join(root, "store.db"))
@@ -154,7 +156,7 @@ func TestBulkTendersRequiresCSRF(t *testing.T) {
 func TestPasswordChangeFlow(t *testing.T) {
 	a := newTestApp(t)
 	user, _, cookie, csrf := adminSession(t, a)
-	form := url.Values{"csrf_token": {csrf}, "current_password": {"OpenBid!2026"}, "new_password": {"Stronger!2026"}, "confirm_password": {"Stronger!2026"}}
+	form := url.Values{"csrf_token": {csrf}, "current_password": {testLocalAdminPassword}, "new_password": {"Stronger!2026"}, "confirm_password": {"Stronger!2026"}}
 	req := httptest.NewRequest(http.MethodPost, "/password", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.AddCookie(cookie)
@@ -1076,7 +1078,7 @@ func TestLoginPageHidesDemoCredentialsInProduction(t *testing.T) {
 	w := httptest.NewRecorder()
 	a.Server.Handler.ServeHTTP(w, req)
 	body := w.Body.String()
-	if strings.Contains(body, "OpenBid!2026") || strings.Contains(body, "Demo access") {
+	if strings.Contains(body, testLocalAdminPassword) || strings.Contains(body, "Demo access") {
 		t.Fatalf("production login page exposed demo credentials: %s", body)
 	}
 }
@@ -1989,7 +1991,7 @@ func TestLoginAcceptsRecoveryCodeAndConsumesIt(t *testing.T) {
 
 	form := url.Values{
 		"username": {"admin"},
-		"password": {"OpenBid!2026"},
+		"password": {testLocalAdminPassword},
 		"mfa_code": {"ABCD-EF12"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
@@ -2022,7 +2024,7 @@ func TestLegacyPlaintextMFASecretAndRecoveryCodesUpgradeOnLogin(t *testing.T) {
 
 	form := url.Values{
 		"username": {"admin"},
-		"password": {"OpenBid!2026"},
+		"password": {testLocalAdminPassword},
 		"mfa_code": {auth.GenerateTOTPFromSecret(legacySecret, time.Now())},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))

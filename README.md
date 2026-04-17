@@ -51,7 +51,7 @@ The Docker stack reads its first admin password from `ProductionDeployment/runti
 For local development only:
 
 - Username: `admin`
-- Password: `OpenBid!2026`
+- Password: `OpenBid!2026-YK4j3z39CEfu0kbFHcEzM8yI`
 
 These are seeded by `go run ./cmd/server` only when `APP_ENV=development` and no bootstrap password file is configured. Docker and production installs use secret files created by `ProductionDeployment/setup.sh`.
 

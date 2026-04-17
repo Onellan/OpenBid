@@ -98,7 +98,7 @@ func TestPasswordChangeRefreshesSessionVersion(t *testing.T) {
 	user, tenant, cookie, csrf := adminSession(t, a)
 	form := url.Values{
 		"csrf_token":       {csrf},
-		"current_password": {"OpenBid!2026"},
+		"current_password": {testLocalAdminPassword},
 		"new_password":     {"Stronger!2026"},
 		"confirm_password": {"Stronger!2026"},
 	}
@@ -193,7 +193,7 @@ func TestPrivilegedUserCanDisableMFA(t *testing.T) {
 	user, _, cookie, csrf := sessionForPlatformRole(t, a, models.PlatformRoleAdmin)
 	user.MFAEnabled = true
 	user.MFASecret = auth.NewTOTPSecret()
-	salt, hash, err := auth.HashPassword("OpenBid!2026")
+	salt, hash, err := auth.HashPassword(testLocalAdminPassword)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestPrivilegedUserCanDisableMFA(t *testing.T) {
 	}
 	form := url.Values{
 		"csrf_token": {csrf},
-		"password":   {"OpenBid!2026"},
+		"password":   {testLocalAdminPassword},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/mfa/disable", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

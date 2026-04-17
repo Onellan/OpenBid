@@ -122,7 +122,7 @@ services:
     command: ["openbid-e2e-seed"]
     environment:
       DATA_PATH: "/app/data/store.db"
-      E2E_ADMIN_PASSWORD: "${E2E_ADMIN_PASSWORD:-OpenBidE2E!2026}"
+      E2E_ADMIN_PASSWORD: "${E2E_ADMIN_PASSWORD:-OpenBid!2026-YK4j3z39CEfu0kbFHcEzM8yI}"
     volumes:
       - "./runtime/data:/app/data"
     depends_on:

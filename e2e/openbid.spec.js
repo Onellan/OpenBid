@@ -2,7 +2,7 @@ const { test, expect } = require("@playwright/test");
 const { generate } = require("otplib");
 
 const ADMIN_USERNAME = "e2e-admin";
-const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD || "OpenBidE2E!2026";
+const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD || "OpenBid!2026-YK4j3z39CEfu0kbFHcEzM8yI";
 const SEEDED_TENANT = "OpenBid E2E Tenant";
 
 async function login(page, overrides = {}) {

@@ -19,7 +19,7 @@ const (
 	e2eUsername     = "e2e-admin"
 	e2eDisplayName  = "OpenBid E2E Admin"
 	e2eEmail        = "e2e-admin@example.test"
-	e2ePassword     = "OpenBidE2E!2026"
+	e2ePassword     = "OpenBid!2026-YK4j3z39CEfu0kbFHcEzM8yI"
 	e2ePasswordEnv  = "E2E_ADMIN_PASSWORD"
 	e2eTenantName   = "OpenBid E2E Tenant"
 	e2eTenantSlug   = "openbid-e2e-tenant"
