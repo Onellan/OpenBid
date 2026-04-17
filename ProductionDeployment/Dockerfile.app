@@ -13,6 +13,7 @@ COPY web ./web
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/openbid-server ./cmd/server && \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/openbid-e2e-seed ./cmd/e2e_seed && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/openbid-worker ./cmd/worker && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/openbid-sqlite-check ./cmd/sqlite_check && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/openbid-sqlite-backup ./cmd/sqlite_backup && \
@@ -31,6 +32,7 @@ LABEL org.opencontainers.image.title="OpenBid App" \
       org.opencontainers.image.created="${BUILD_DATE}"
 WORKDIR /app
 COPY --from=build /out/openbid-server /usr/local/bin/openbid-server
+COPY --from=build /out/openbid-e2e-seed /usr/local/bin/openbid-e2e-seed
 COPY --from=build /out/openbid-worker /usr/local/bin/openbid-worker
 COPY --from=build /out/openbid-sqlite-check /usr/local/bin/openbid-sqlite-check
 COPY --from=build /out/openbid-sqlite-backup /usr/local/bin/openbid-sqlite-backup
