@@ -157,7 +157,7 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
       - name: Run browser E2E coverage
-        run: npm run test:e2e
+        run: npm run test:e2e:ci
       - name: Show compose status on failure
         if: failure()
         run: |
