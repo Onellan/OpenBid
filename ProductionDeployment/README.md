@@ -114,7 +114,7 @@ Both compose files define the same services:
 
 | Service | Image/build source | Purpose | Exposed to host |
 | --- | --- | --- | --- |
-| `proxy` | `nginx:1.27-alpine` | Public HTTP entry point, reverse proxy, rate limiting, forwarding headers | Yes, default host port `8088` |
+| `proxy` | `nginx:stable-alpine3.23` | Public HTTP entry point, reverse proxy, rate limiting, forwarding headers | Yes, default host port `8088` |
 | `app` | `Dockerfile.app` or `ghcr.io/onellan/openbid/app` | Go web application, login, pages, API-like health endpoints, automatic database migration/seed | No |
 | `worker` | `Dockerfile.app` or `ghcr.io/onellan/openbid/app` | Background source sync, document extraction queue, worker heartbeat | No |
 | `extractor` | `Dockerfile.extractor` or `ghcr.io/onellan/openbid/extractor` | Python document text extraction service using Poppler tools | No |
@@ -1385,6 +1385,81 @@ Expected result:
 
 For browser login, use HTTPS because production secure cookies are enabled.
 
+### Configure outbound email after first login
+
+OpenBid does not run a public mail server. It does not host inboxes, MX
+records, POP3, IMAP, spam filtering, or inbound email. Outbound email is a
+lightweight SMTP client feature that sends through the SMTP provider you
+configure in the Admin UI.
+
+Email is optional and disabled by default. The app, worker, Smart Keywords, and
+source sync continue to work when email is not configured.
+
+To configure email:
+
+1. Log in as a Platform Admin or Platform Super Admin.
+2. Open:
+
+```text
+Settings -> Email
+```
+
+Or go directly to:
+
+```text
+https://openbid.example.com/admin/email
+```
+
+Minimum required settings:
+
+| Field | Required when | Example | Notes |
+| --- | --- | --- | --- |
+| Global outbound email enabled | You want OpenBid to send mail | On | Leave off until the other fields are complete |
+| SMTP host | Always | `smtp.sendgrid.net` | Use the host supplied by your email provider |
+| SMTP port | Always | `587` | Common ports are `587` for STARTTLS, `465` for TLS, and `25` for plain/provider-specific use |
+| Security mode | Always | `STARTTLS` | Choose `STARTTLS`, `TLS`, or `plain` to match your provider |
+| From email | Always | `alerts@example.com` | Must be an email address your provider allows |
+| SMTP authentication required | When your provider requires login | On | Most production providers require this |
+| SMTP username | When authentication is on | `apikey` or account username | Depends on provider |
+| SMTP password/app password | When authentication is on | provider app password | The UI never displays the stored password |
+
+Optional settings:
+
+| Field | Example | Notes |
+| --- | --- | --- |
+| From display name | `OpenBid Alerts` | Friendly sender name shown by mail clients |
+| Reply-to address | `support@example.com` | Leave blank to omit Reply-To |
+| Timeout seconds | `10` | Increase only if your SMTP provider is slow |
+| Default test recipient | `you@example.com` | Convenience value for the test email form |
+
+Success looks like:
+
+- The readiness panel says `Email ready`.
+- Missing required field warnings are gone.
+- Invalid field warnings are gone.
+- The password status says whether a password is stored, but the password value
+  is not shown.
+- Clicking `Send test email` redirects back with a success message.
+- The test recipient receives an email with subject `OpenBid test email`.
+
+If readiness says `Email not configured` or `Email partially configured`, read
+the missing/invalid field list at the top of the Email settings page, fix those
+fields, save again, then send another test email.
+
+Smart Keywords uses this central Admin email configuration. Smart Keywords does
+not ask for SMTP host, port, password, TLS mode, or provider details. In Smart
+Keywords, the only email-specific choice is:
+
+```text
+Send email alerts: on/off
+```
+
+When `Send email alerts` is off, Smart Keyword email alert channels do not send
+email. When it is on, Smart Keywords sends through the Admin-configured email
+service. If Smart Keywords tries to send email while Admin email is not ready,
+OpenBid records the alert attempt as failed/skipped and continues processing
+matches without crashing the app or worker.
+
 ### Confirm the app is healthy
 
 ```bash
@@ -2466,6 +2541,67 @@ Verify:
 - Browser shows a logged-in OpenBid page after submitting credentials.
 - App logs do not show repeated invalid credential attempts.
 
+### Outbound email or SMTP test fails
+
+Symptoms:
+
+- `/admin/email` shows `Email not configured` or `Email partially configured`.
+- `Send test email` redirects back with an error.
+- Smart Keyword email alert history shows `failed` or `skipped`.
+- The recipient does not receive the test message.
+
+Likely causes:
+
+- Global outbound email is disabled.
+- A required SMTP field is missing.
+- Security mode or port does not match the provider.
+- SMTP username/password or app password is wrong.
+- The provider rejected the from address.
+- The host firewall, network, or provider blocks the SMTP port.
+- Smart Keywords email alerts are off even though a Saved Smart View has an
+  email channel.
+
+Diagnose from the UI:
+
+1. Log in as a Platform Admin.
+2. Open `/admin/email`.
+3. Read the readiness status.
+4. Read the missing and invalid field lists.
+5. Confirm `Password stored` says `Yes` when SMTP authentication is required.
+6. Send a test email to an address you control.
+
+Diagnose from the host:
+
+```bash
+docker compose logs --tail=300 app
+docker compose logs --tail=300 worker
+docker compose exec -T app sh -lc 'nc -vz smtp.example.com 587'
+```
+
+Replace `smtp.example.com` and `587` with your provider host and port.
+
+Fix:
+
+- In `/admin/email`, enable outbound email globally.
+- Fill required fields: SMTP host, SMTP port, security mode, from email, and
+  username/password when authentication is required.
+- Use `STARTTLS` with port `587` unless your provider specifically tells you to
+  use `TLS` on port `465` or `plain`.
+- Use an app password or provider token when the provider requires it.
+- Use a from address that your provider has verified.
+- Save settings, then send a test email before relying on Smart Keywords.
+- In `/smart-keywords`, turn on `Send email alerts` only after Admin email says
+  `Email ready`.
+
+Verify:
+
+- `/admin/email` says `Email ready`.
+- `Send test email` shows a success message.
+- The test recipient receives the message.
+- App logs show `email send succeeded` and do not show SMTP auth or TLS errors.
+- Smart Keyword email alert deliveries show `sent` when a matching Saved Smart
+  View has an enabled email channel and recipient.
+
 ### Reverse proxy issues
 
 Symptoms:
@@ -2902,6 +3038,11 @@ Use the URLs that match your deployment.
 - Back up secrets together with the database. A database backup without the
   matching `openbid_secret_key` may not be enough for full recovery of sensitive
   user security values.
+- SMTP passwords and app passwords are stored in the OpenBid database through
+  the Admin Email page. The UI reports whether a password is stored but never
+  displays it after saving.
+- Treat SMTP app passwords like production secrets. Rotate them in your email
+  provider if they are copied into chat, logs, screenshots, or support tickets.
 
 ### Password hygiene
 
@@ -2972,11 +3113,30 @@ Do not publicly expose:
 - Docker socket.
 - Internal `app` service.
 - Internal `extractor` service.
+- SMTP provider credentials or screenshots that reveal provider secrets.
 - Any admin UI without HTTPS and strong passwords.
 
 ## 15. Maintenance Guidance
 
 ### Log review
+
+Review app and worker logs regularly:
+
+```bash
+docker compose logs --tail=200 app
+docker compose logs --tail=200 worker
+```
+
+For outbound email, look for:
+
+- `email send succeeded`, which confirms the SMTP provider accepted a message.
+- `email send failed`, which indicates configuration, TLS, auth, network, or
+  provider rejection problems.
+- Smart Keyword alert delivery rows in the UI that show `failed` or `skipped`.
+
+Do not paste logs into public support channels without checking for hostnames,
+email addresses, usernames, and other operational details first. OpenBid does
+not log SMTP passwords.
 
 Review logs regularly:
 
@@ -3188,6 +3348,21 @@ docker compose logs --tail=200 proxy
 ```bash
 docker compose ps
 curl http://localhost:8088/healthz
+```
+
+### Email readiness
+
+Email settings are managed in the web UI:
+
+```text
+https://openbid.example.com/admin/email
+```
+
+Useful log checks:
+
+```bash
+docker compose logs --tail=200 app | grep -i 'email send' || true
+docker compose logs --tail=200 worker | grep -i 'smart alert\|email send' || true
 ```
 
 ### Pull images

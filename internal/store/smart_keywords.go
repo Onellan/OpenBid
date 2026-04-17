@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"log"
 	"os"
 	"sort"
@@ -83,14 +84,15 @@ func decodeChannels(value string) []models.NotificationChannel {
 
 func scanSmartSettings(scanner interface{ Scan(dest ...any) error }) (models.SmartExtractionSettings, error) {
 	var settings models.SmartExtractionSettings
-	var enabled, alertsEnabled int
+	var enabled, alertsEnabled, emailAlertsEnabled int
 	var lastReprocessedAt, createdAt, updatedAt string
-	err := scanner.Scan(&settings.TenantID, &enabled, &alertsEnabled, &settings.RefreshStatus, &settings.RefreshMessage, &lastReprocessedAt, &createdAt, &updatedAt)
+	err := scanner.Scan(&settings.TenantID, &enabled, &alertsEnabled, &emailAlertsEnabled, &settings.RefreshStatus, &settings.RefreshMessage, &lastReprocessedAt, &createdAt, &updatedAt)
 	if err != nil {
 		return models.SmartExtractionSettings{}, err
 	}
 	settings.Enabled = intToBool(enabled)
 	settings.AlertsEnabled = intToBool(alertsEnabled)
+	settings.EmailAlertsEnabled = intToBool(emailAlertsEnabled)
 	settings.LastReprocessedAt = parseSQLiteTime(lastReprocessedAt)
 	settings.CreatedAt = parseSQLiteTime(createdAt)
 	settings.UpdatedAt = parseSQLiteTime(updatedAt)
@@ -162,7 +164,7 @@ func (s *SQLiteStore) GetSmartExtractionSettings(ctx context.Context, tenantID s
 		return models.SmartExtractionSettings{}, fmt.Errorf("smart extraction settings require tenant_id")
 	}
 	row := s.db.QueryRowContext(ctx, `
-		select tenant_id, enabled, alerts_enabled, refresh_status, refresh_message, last_reprocessed_at, created_at, updated_at
+		select tenant_id, enabled, alerts_enabled, email_alerts_enabled, refresh_status, refresh_message, last_reprocessed_at, created_at, updated_at
 		from smart_extraction_settings
 		where tenant_id = ?
 	`, tenantID)
@@ -208,16 +210,17 @@ func (s *SQLiteStore) UpsertSmartExtractionSettings(ctx context.Context, setting
 	settings.CreatedAt = existing.CreatedAt
 	settings.UpdatedAt = now
 	_, err := s.db.ExecContext(ctx, `
-		insert into smart_extraction_settings(tenant_id, enabled, alerts_enabled, refresh_status, refresh_message, last_reprocessed_at, created_at, updated_at)
-		values(?,?,?,?,?,?,?,?)
+		insert into smart_extraction_settings(tenant_id, enabled, alerts_enabled, email_alerts_enabled, refresh_status, refresh_message, last_reprocessed_at, created_at, updated_at)
+		values(?,?,?,?,?,?,?,?,?)
 		on conflict(tenant_id) do update set
 			enabled=excluded.enabled,
 			alerts_enabled=excluded.alerts_enabled,
+			email_alerts_enabled=excluded.email_alerts_enabled,
 			refresh_status=excluded.refresh_status,
 			refresh_message=excluded.refresh_message,
 			last_reprocessed_at=coalesce(nullif(excluded.last_reprocessed_at, ''), smart_extraction_settings.last_reprocessed_at),
 			updated_at=excluded.updated_at
-	`, settings.TenantID, boolToInt(settings.Enabled), boolToInt(settings.AlertsEnabled), settings.RefreshStatus, settings.RefreshMessage, sqliteTimeString(settings.LastReprocessedAt), sqliteTimeString(settings.CreatedAt), sqliteTimeString(settings.UpdatedAt))
+	`, settings.TenantID, boolToInt(settings.Enabled), boolToInt(settings.AlertsEnabled), boolToInt(settings.EmailAlertsEnabled), settings.RefreshStatus, settings.RefreshMessage, sqliteTimeString(settings.LastReprocessedAt), sqliteTimeString(settings.CreatedAt), sqliteTimeString(settings.UpdatedAt))
 	return err
 }
 
@@ -927,7 +930,7 @@ func (s *SQLiteStore) triggerSmartViewAlertsForTender(ctx context.Context, tenan
 			if !channel.Enabled {
 				continue
 			}
-			if _, err := s.recordSmartAlertDelivery(ctx, tenantID, view, tender, channel, trigger, false); err != nil {
+			if _, err := s.recordSmartAlertDelivery(ctx, tenantID, settings, view, tender, channel, trigger, false); err != nil {
 				return err
 			}
 		}
@@ -935,28 +938,69 @@ func (s *SQLiteStore) triggerSmartViewAlertsForTender(ctx context.Context, tenan
 	return nil
 }
 
-func (s *SQLiteStore) recordSmartAlertDelivery(ctx context.Context, tenantID string, view models.SavedSmartView, tender models.Tender, channel models.NotificationChannel, trigger string, force bool) (models.SmartAlertDelivery, error) {
+func (s *SQLiteStore) recordSmartAlertDelivery(ctx context.Context, tenantID string, settings models.SmartExtractionSettings, view models.SavedSmartView, tender models.Tender, channel models.NotificationChannel, trigger string, force bool) (models.SmartAlertDelivery, error) {
 	now := time.Now().UTC()
 	frequency := strings.TrimSpace(view.AlertFrequency)
 	if frequency == "" {
 		frequency = "immediate"
 	}
-	dedupKey := strings.Join([]string{tenantID, view.ID, tender.ID, strings.ToLower(channel.Type), strings.ToLower(channel.Destination), strings.Join(tender.GroupTags, "|")}, "|")
+	channelType := strings.ToLower(strings.TrimSpace(channel.Type))
+	destination := strings.TrimSpace(channel.Destination)
+	dedupKey := strings.Join([]string{tenantID, view.ID, tender.ID, channelType, strings.ToLower(destination), strings.Join(tender.GroupTags, "|")}, "|")
 	status := "sent"
 	if frequency != "immediate" && !force {
 		status = "pending_digest"
+	}
+	message := fmt.Sprintf("%s matched %s via %s. Group Tags: %s", tender.Title, view.Name, trigger, strings.Join(tender.GroupTags, ", "))
+	deliveryError := ""
+	var existingCount int
+	if err := s.db.QueryRowContext(ctx, "select count(*) from smart_alert_deliveries where dedup_key = ?", dedupKey).Scan(&existingCount); err == nil && existingCount > 0 {
+		log.Printf("smart alert duplicate suppressed tenant=%s view=%s tender=%s channel=%s", tenantID, view.ID, tender.ID, channelType)
+		return models.SmartAlertDelivery{
+			ID:          newid(),
+			TenantID:    tenantID,
+			ViewID:      view.ID,
+			TenderID:    tender.ID,
+			ChannelType: channelType,
+			Destination: destination,
+			Frequency:   frequency,
+			Status:      "duplicate_suppressed",
+			DedupKey:    dedupKey,
+			Message:     message,
+			CreatedAt:   now,
+			SentAt:      now,
+		}, nil
+	}
+	if channelType == "email" && status == "sent" {
+		switch {
+		case !settings.EmailAlertsEnabled:
+			status = "skipped"
+			deliveryError = "Smart Keywords email alerts are off."
+		case s.emailSender == nil:
+			status = "failed"
+			deliveryError = "Email service is unavailable."
+		default:
+			result, err := s.emailSender.Send(ctx, smartAlertEmailMessage(view, tender, trigger, destination, message))
+			if err != nil {
+				status = "failed"
+				deliveryError = err.Error()
+			} else {
+				message = result.Message
+			}
+		}
 	}
 	delivery := models.SmartAlertDelivery{
 		ID:          newid(),
 		TenantID:    tenantID,
 		ViewID:      view.ID,
 		TenderID:    tender.ID,
-		ChannelType: channel.Type,
-		Destination: channel.Destination,
+		ChannelType: channelType,
+		Destination: destination,
 		Frequency:   frequency,
 		Status:      status,
+		Error:       deliveryError,
 		DedupKey:    dedupKey,
-		Message:     fmt.Sprintf("%s matched %s via %s. Group Tags: %s", tender.Title, view.Name, trigger, strings.Join(tender.GroupTags, ", ")),
+		Message:     message,
 		CreatedAt:   now,
 		SentAt:      now,
 	}
@@ -974,6 +1018,38 @@ func (s *SQLiteStore) recordSmartAlertDelivery(ctx context.Context, tenantID str
 	}
 	log.Printf("smart alert delivery tenant=%s view=%s tender=%s channel=%s status=%s", tenantID, view.ID, tender.ID, channel.Type, delivery.Status)
 	return delivery, nil
+}
+
+func smartAlertEmailMessage(view models.SavedSmartView, tender models.Tender, trigger, destination, summary string) models.EmailMessage {
+	tags := strings.Join(tender.GroupTags, ", ")
+	text := strings.Join([]string{
+		"OpenBid Smart Keyword alert",
+		"",
+		summary,
+		"",
+		"Tender: " + tender.Title,
+		"Issuer: " + tender.Issuer,
+		"Source: " + tender.SourceKey,
+		"View: " + view.Name,
+		"Trigger: " + trigger,
+		"Group Tags: " + tags,
+	}, "\n")
+	htmlBody := "<p><strong>OpenBid Smart Keyword alert</strong></p>" +
+		"<p>" + html.EscapeString(summary) + "</p>" +
+		"<ul>" +
+		"<li><strong>Tender:</strong> " + html.EscapeString(tender.Title) + "</li>" +
+		"<li><strong>Issuer:</strong> " + html.EscapeString(tender.Issuer) + "</li>" +
+		"<li><strong>Source:</strong> " + html.EscapeString(tender.SourceKey) + "</li>" +
+		"<li><strong>View:</strong> " + html.EscapeString(view.Name) + "</li>" +
+		"<li><strong>Trigger:</strong> " + html.EscapeString(trigger) + "</li>" +
+		"<li><strong>Group Tags:</strong> " + html.EscapeString(tags) + "</li>" +
+		"</ul>"
+	return models.EmailMessage{
+		To:       []string{destination},
+		Subject:  "OpenBid smart alert: " + strings.TrimSpace(tender.Title),
+		TextBody: text,
+		HTMLBody: htmlBody,
+	}
 }
 
 func (s *SQLiteStore) ListSmartAlertDeliveries(ctx context.Context, tenantID, viewID string) ([]models.SmartAlertDelivery, error) {
@@ -1008,5 +1084,9 @@ func (s *SQLiteStore) TestSmartViewAlert(ctx context.Context, tenantID, userID, 
 		channel = view.AlertChannels[0]
 	}
 	tender := models.Tender{ID: "test-alert", Title: "Test Smart View alert", SourceKey: "openbid", Issuer: "OpenBid", GroupTags: []string{"Test"}}
-	return s.recordSmartAlertDelivery(ctx, tenantID, view, tender, channel, "test", true)
+	settings, err := s.GetSmartExtractionSettings(ctx, tenantID)
+	if err != nil {
+		return models.SmartAlertDelivery{}, err
+	}
+	return s.recordSmartAlertDelivery(ctx, tenantID, settings, view, tender, channel, "test", true)
 }

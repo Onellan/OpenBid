@@ -252,6 +252,7 @@ func (s *SQLiteStore) migrateRelationalTables(ctx context.Context, tx *sql.Tx) e
 			tenant_id text primary key,
 			enabled integer not null default 0,
 			alerts_enabled integer not null default 0,
+			email_alerts_enabled integer not null default 0,
 			refresh_status text not null default 'pending',
 			refresh_message text not null default '',
 			last_reprocessed_at text not null default '',
@@ -358,6 +359,15 @@ func (s *SQLiteStore) migrateRelationalTables(ctx context.Context, tx *sql.Tx) e
 	}
 	if !hasPlatformRole {
 		if _, err := tx.ExecContext(ctx, `alter table user_records add column platform_role text not null default '';`); err != nil {
+			return err
+		}
+	}
+	hasEmailAlertsEnabled, err := sqliteColumnExistsTx(ctx, tx, "smart_extraction_settings", "email_alerts_enabled")
+	if err != nil {
+		return err
+	}
+	if !hasEmailAlertsEnabled {
+		if _, err := tx.ExecContext(ctx, `alter table smart_extraction_settings add column email_alerts_enabled integer not null default 0;`); err != nil {
 			return err
 		}
 	}

@@ -167,6 +167,9 @@ type Store interface {
 	ListSmartAlertDeliveries(context.Context, string, string) ([]models.SmartAlertDelivery, error)
 	TestSmartViewAlert(context.Context, string, string, string) (models.SmartAlertDelivery, error)
 
+	GetEmailSettings(context.Context) (models.EmailSettings, error)
+	UpsertEmailSettings(context.Context, models.EmailSettings) error
+
 	GetKeywordProfile(context.Context, string, string) (models.KeywordProfile, error)
 	ListKeywords(context.Context, string, string) ([]models.Keyword, error)
 	UpsertKeyword(context.Context, models.Keyword) (models.Keyword, error)

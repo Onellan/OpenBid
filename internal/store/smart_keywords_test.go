@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"encoding/csv"
 	"os"
 	"path/filepath"
@@ -9,6 +10,21 @@ import (
 
 	"openbid/internal/models"
 )
+
+type fakeSmartEmailSender struct {
+	calls int
+	last  models.EmailMessage
+	err   error
+}
+
+func (f *fakeSmartEmailSender) Send(_ context.Context, message models.EmailMessage) (models.EmailSendResult, error) {
+	f.calls++
+	f.last = message
+	if f.err != nil {
+		return models.EmailSendResult{}, f.err
+	}
+	return models.EmailSendResult{AcceptedRecipients: len(message.To), Message: "sent by fake sender"}, nil
+}
 
 func newSmartTestStore(t *testing.T) *SQLiteStore {
 	t.Helper()
@@ -93,7 +109,9 @@ func TestSmartReprocessSearchAndAlertDedup(t *testing.T) {
 	if _, err := s.UpsertSmartKeyword(ctx, models.SmartKeyword{TenantID: "tenant-1", GroupID: group.ID, Value: "wastewater", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpsertSmartExtractionSettings(ctx, models.SmartExtractionSettings{TenantID: "tenant-1", Enabled: true, AlertsEnabled: true}); err != nil {
+	sender := &fakeSmartEmailSender{}
+	s.SetEmailSender(sender)
+	if err := s.UpsertSmartExtractionSettings(ctx, models.SmartExtractionSettings{TenantID: "tenant-1", Enabled: true, AlertsEnabled: true, EmailAlertsEnabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.UpsertTender(ctx, models.Tender{ID: "match", Title: "Wastewater treatment upgrade", Status: "open"}); err != nil {
@@ -141,6 +159,74 @@ func TestSmartReprocessSearchAndAlertDedup(t *testing.T) {
 	}
 	if len(deliveries) != 1 || deliveries[0].Status != "sent" {
 		t.Fatalf("expected one deduplicated sent alert, got %#v", deliveries)
+	}
+	if sender.calls != 1 || len(sender.last.To) != 1 || sender.last.To[0] != "ops@example.org" {
+		t.Fatalf("expected one outbound email to ops@example.org, calls=%d last=%#v", sender.calls, sender.last)
+	}
+}
+
+func TestSmartEmailAlertsDisabledSkipsEmailSend(t *testing.T) {
+	s := newSmartTestStore(t)
+	ctx := t.Context()
+	group, err := s.UpsertSmartKeywordGroup(ctx, models.SmartKeywordGroup{TenantID: "tenant-1", Name: "Water", TagName: "Water", Enabled: true, MatchMode: models.SmartMatchModeAny, MinMatchCount: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertSmartKeyword(ctx, models.SmartKeyword{TenantID: "tenant-1", GroupID: group.ID, Value: "water", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertSmartExtractionSettings(ctx, models.SmartExtractionSettings{TenantID: "tenant-1", Enabled: true, AlertsEnabled: true, EmailAlertsEnabled: false}); err != nil {
+		t.Fatal(err)
+	}
+	sender := &fakeSmartEmailSender{}
+	s.SetEmailSender(sender)
+	view, err := s.UpsertSavedSmartView(ctx, models.SavedSmartView{
+		TenantID: "tenant-1", UserID: "user-1", Name: "Water view", FiltersJSON: `{"GroupTags":["Water"]}`,
+		AlertsEnabled: true, AlertFrequency: "immediate",
+		AlertChannels: []models.NotificationChannel{{Type: "email", Destination: "ops@example.org", Enabled: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tender := models.Tender{ID: "water-1", Title: "Water treatment", GroupTags: []string{"Water"}}
+	if err := s.triggerSmartViewAlertsForTender(ctx, "tenant-1", tender, "test"); err != nil {
+		t.Fatal(err)
+	}
+	deliveries, err := s.ListSmartAlertDeliveries(ctx, "tenant-1", view.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sender.calls != 0 {
+		t.Fatalf("expected disabled email alerts to avoid sender call, got %d", sender.calls)
+	}
+	if len(deliveries) != 1 || deliveries[0].Status != "skipped" || !strings.Contains(deliveries[0].Error, "off") {
+		t.Fatalf("expected skipped delivery when email alerts are off, got %#v", deliveries)
+	}
+}
+
+func TestEmailSettingsDefaultAndUpsert(t *testing.T) {
+	s := newSmartTestStore(t)
+	ctx := t.Context()
+	settings, err := s.GetEmailSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.Enabled || settings.SMTPPort != 587 || settings.SMTPSecurityMode != "starttls" || !settings.SMTPAuthRequired {
+		t.Fatalf("unexpected default email settings: %#v", settings)
+	}
+	settings.Enabled = true
+	settings.SMTPHost = "smtp.example.org"
+	settings.SMTPFromEmail = "alerts@example.org"
+	settings.SMTPPassword = "secret"
+	if err := s.UpsertEmailSettings(ctx, settings); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetEmailSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Enabled || got.SMTPHost != "smtp.example.org" || got.SMTPPassword != "secret" || got.ID != "global" {
+		t.Fatalf("stored email settings mismatch: %#v", got)
 	}
 }
 

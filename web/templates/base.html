@@ -48,35 +48,37 @@
             </div>
           </details>
           <details class="nav-cascade">
-            <summary class="nav-link utility {{if or (hasPrefix .CurrentPath "/settings") (eq .CurrentPath "/password") (hasPrefix .CurrentPath "/mfa") (hasPrefix .CurrentPath "/admin/users") (hasPrefix .CurrentPath "/admin/tenants") (hasPrefix .CurrentPath "/audit-log") (hasPrefix .CurrentPath "/health")}}active{{end}}">Settings</summary>
+            <summary class="nav-link utility {{if or (hasPrefix .CurrentPath "/settings") (eq .CurrentPath "/password") (hasPrefix .CurrentPath "/mfa") (hasPrefix .CurrentPath "/admin/users") (hasPrefix .CurrentPath "/admin/tenants") (hasPrefix .CurrentPath "/admin/email") (hasPrefix .CurrentPath "/audit-log") (hasPrefix .CurrentPath "/health")}}active{{end}}">Settings</summary>
             <div class="nav-cascade-panel">
               <div class="nav-cascade-section">
                 <div class="nav-cascade-heading">Account</div>
                 <a class="nav-cascade-link utility {{if or (hasPrefix .CurrentPath "/settings") (eq .CurrentPath "/password") (hasPrefix .CurrentPath "/mfa")}}active{{end}}" href="/settings"><strong>Settings</strong><span>Manage account security and workspace preferences.</span></a>
                 {{if .CanAdminUsers}}<a class="nav-cascade-link utility {{if hasPrefix .CurrentPath "/admin/users"}}active{{end}}" href="/admin/users"><strong>User Admin</strong><span>Manage users, roles, and memberships.</span></a>{{end}}
                 {{if .CanManageTenants}}<a class="nav-cascade-link utility {{if hasPrefix .CurrentPath "/admin/tenants"}}active{{end}}" href="/admin/tenants"><strong>Tenant Admin</strong><span>Create and manage tenant workspaces.</span></a>{{end}}
-                {{if .CanManageAudit}}<a class="nav-cascade-link utility {{if hasPrefix .CurrentPath "/audit-log"}}active{{end}}" href="/audit-log"><strong>Audit Log</strong><span>Review workflow and administrative history.</span></a>{{end}}
+                {{if .CanManagePlatform}}<a class="nav-cascade-link utility {{if hasPrefix .CurrentPath "/admin/email"}}active{{end}}" href="/admin/email"><strong>Email</strong><span>Configure outbound SMTP and send test email.</span></a>{{end}}
+                {{if .CanManageAudit}}<a class="nav-cascade-link utility {{if eq .CurrentPath "/audit-log"}}active{{end}}" href="/audit-log"><strong>Audit Log</strong><span>Review workflow and administrative history.</span></a>{{end}}
+                {{if .CanManageAudit}}<a class="nav-cascade-link utility {{if hasPrefix .CurrentPath "/audit-log/security"}}active{{end}}" href="/audit-log/security"><strong>Security Audit</strong><span>Review authentication and role-sensitive events.</span></a>{{end}}
                 {{if .CanViewPlatformHealth}}<a class="nav-cascade-link utility {{if hasPrefix .CurrentPath "/health"}}active{{end}}" href="/health"><strong>Health</strong><span>Inspect runtime, services, and database integrity.</span></a>{{end}}
                 <a class="nav-cascade-link utility" href="/logout"><strong>Logout</strong><span>Sign out of the current workspace session.</span></a>
               </div>
             </div>
           </details>
         </nav>
-        <details class="mobile-menu">
-          <summary>Menu</summary>
+        <details class="mobile-menu" data-mobile-menu>
+          <summary aria-label="Open navigation menu">Menu</summary>
           <div class="mobile-menu-panel">
             <nav class="mobile-menu-section" aria-label="Mobile primary">
-              <div class="mobile-menu-links"><a href="/">Home</a></div>
+              <div class="mobile-menu-links"><a data-mobile-menu-link href="/">Home</a></div>
             </nav>
             <div class="mobile-menu-section">
               <details>
                 <summary>Find Work</summary>
                 <div class="mobile-menu-links">
-                  <a href="/tenders">Tenders</a>
-                  <a href="/keyword-search">Keyword Search</a>
-                  <a href="/smart-keywords">Smart Keyword Extraction</a>
-                  <a href="/bookmarks">Bookmarks</a>
-                  <a href="/saved-searches">Saved Searches</a>
+                  <a data-mobile-menu-link href="/tenders">Tenders</a>
+                  <a data-mobile-menu-link href="/keyword-search">Keyword Search</a>
+                  <a data-mobile-menu-link href="/smart-keywords">Smart Keyword Extraction</a>
+                  <a data-mobile-menu-link href="/bookmarks">Bookmarks</a>
+                  <a data-mobile-menu-link href="/saved-searches">Saved Searches</a>
                 </div>
               </details>
             </div>
@@ -84,9 +86,9 @@
               <details>
                 <summary>Data Pipes</summary>
                 <div class="mobile-menu-links">
-                  <a href="/queue">Queue</a>
-                  {{if .CanManageDataPipes}}<a href="/queue#expired-tender-cleanup">Remove Expired Tenders</a>{{end}}
-                  {{if .CanManageSources}}<a href="/sources">Sources</a>{{end}}
+                  <a data-mobile-menu-link href="/queue">Queue</a>
+                  {{if .CanManageDataPipes}}<a data-mobile-menu-link href="/queue#expired-tender-cleanup">Remove Expired Tenders</a>{{end}}
+                  {{if .CanManageSources}}<a data-mobile-menu-link href="/sources">Sources</a>{{end}}
                 </div>
               </details>
             </div>
@@ -94,12 +96,14 @@
               <details>
                 <summary>Settings</summary>
                 <div class="mobile-menu-links">
-                  <a href="/settings">Settings</a>
-                  {{if .CanAdminUsers}}<a href="/admin/users">User Admin</a>{{end}}
-                  {{if .CanManageTenants}}<a href="/admin/tenants">Tenant Admin</a>{{end}}
-                  {{if .CanManageAudit}}<a href="/audit-log">Audit Log</a>{{end}}
-                  {{if .CanViewPlatformHealth}}<a href="/health">Health</a>{{end}}
-                  <a href="/logout">Logout</a>
+                  <a data-mobile-menu-link href="/settings">Settings</a>
+                  {{if .CanAdminUsers}}<a data-mobile-menu-link href="/admin/users">User Admin</a>{{end}}
+                  {{if .CanManageTenants}}<a data-mobile-menu-link href="/admin/tenants">Tenant Admin</a>{{end}}
+                  {{if .CanManagePlatform}}<a data-mobile-menu-link href="/admin/email">Email</a>{{end}}
+                  {{if .CanManageAudit}}<a data-mobile-menu-link href="/audit-log">Audit Log</a>{{end}}
+                  {{if .CanManageAudit}}<a data-mobile-menu-link href="/audit-log/security">Security Audit</a>{{end}}
+                  {{if .CanViewPlatformHealth}}<a data-mobile-menu-link href="/health">Health</a>{{end}}
+                  <a data-mobile-menu-link href="/logout">Logout</a>
                 </div>
               </details>
             </div>

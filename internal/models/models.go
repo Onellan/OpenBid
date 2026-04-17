@@ -137,9 +137,9 @@ const (
 )
 
 type SmartExtractionSettings struct {
-	TenantID, RefreshStatus, RefreshMessage string
-	Enabled, AlertsEnabled                  bool
-	LastReprocessedAt, CreatedAt, UpdatedAt time.Time
+	TenantID, RefreshStatus, RefreshMessage    string
+	Enabled, AlertsEnabled, EmailAlertsEnabled bool
+	LastReprocessedAt, CreatedAt, UpdatedAt    time.Time
 }
 
 type SmartKeywordGroup struct {
@@ -210,6 +210,41 @@ type SmartAlertDelivery struct {
 	ID, TenantID, ViewID, TenderID, ChannelType, Destination, Frequency string
 	Status, Error, DedupKey, Message                                    string
 	CreatedAt, SentAt                                                   time.Time
+}
+
+type EmailSettings struct {
+	ID               string
+	Enabled          bool
+	SMTPHost         string
+	SMTPPort         int
+	SMTPSecurityMode string
+	SMTPAuthRequired bool
+	SMTPUsername     string
+	SMTPPassword     string
+	SMTPFromEmail    string
+	SMTPFromName     string
+	SMTPReplyTo      string
+	TimeoutSeconds   int
+	TestRecipient    string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+type EmailMessage struct {
+	To        []string
+	CC        []string
+	BCC       []string
+	Subject   string
+	TextBody  string
+	HTMLBody  string
+	FromEmail string
+	FromName  string
+	ReplyTo   string
+}
+
+type EmailSendResult struct {
+	AcceptedRecipients int
+	Message            string
 }
 type KeywordProfile struct {
 	ID, TenantID, UserID, Name, RefreshStatus, RefreshMessage string

@@ -10,6 +10,7 @@
   <a class="feature-link" href="/settings/mfa"><strong>MFA</strong><span class="footer-note">Add or remove multi-factor authentication.</span></a>
   {{if .CanAdminUsers}}<a class="feature-link" href="/admin/users"><strong>User Admin</strong><span class="footer-note">Manage users, role assignments, and workspace memberships.</span></a>{{end}}
   {{if .CanManageTenants}}<a class="feature-link" href="/admin/tenants"><strong>Tenant Admin</strong><span class="footer-note">Create and manage tenant workspaces and their owners.</span></a>{{end}}
+  {{if .CanManagePlatform}}<a class="feature-link" href="/admin/email"><strong>Email</strong><span class="footer-note">Configure outbound SMTP, readiness checks, and test delivery.</span></a>{{end}}
   {{if .CanManageAudit}}<a class="feature-link" href="/audit-log"><strong>Audit Log</strong><span class="footer-note">Review workflow and administrative history across the workspace.</span></a>{{end}}
   {{if .CanManageAudit}}<a class="feature-link" href="/audit-log/security"><strong>Security Audit</strong><span class="footer-note">Triage auth-sensitive events, lockouts, MFA changes, password resets, and tenant or user admin actions.</span></a>{{end}}
   {{if .CanViewPlatformHealth}}<a class="feature-link" href="/health"><strong>Health</strong><span class="footer-note">Inspect application runtime, services, worker freshness, and database integrity.</span></a>{{end}}

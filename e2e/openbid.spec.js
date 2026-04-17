@@ -1,5 +1,5 @@
 const { test, expect } = require("@playwright/test");
-const { authenticator } = require("otplib");
+const { generate } = require("otplib");
 
 const ADMIN_USERNAME = "e2e-admin";
 const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD || "OpenBidE2E!2026";
@@ -31,6 +31,22 @@ async function expectHome(page) {
   await expect(
     page.getByRole("link", { name: /Smart Keyword Extraction/ }),
   ).toBeVisible();
+}
+
+async function openDisclosure(page, selector) {
+  const disclosure = page.locator(selector);
+  if (
+    !(await disclosure.evaluate((node) => node.hasAttribute("open")))
+  ) {
+    await disclosure.locator("summary").click();
+  }
+  await expect(disclosure).toHaveAttribute("open", "");
+}
+
+async function makeCheckboxDirtyChecked(locator) {
+  if (!(await locator.isChecked())) {
+    await locator.check();
+  }
 }
 
 test.describe.serial("OpenBid critical browser journeys", () => {
@@ -116,10 +132,11 @@ test.describe.serial("OpenBid critical browser journeys", () => {
     await login(page);
     await page.goto("/smart-keywords");
     await expect(
-      page.getByRole("heading", { name: "Extract only the tenders that match your active keywords" }),
+      page.getByRole("heading", { name: "Smart Keyword Extraction" }),
     ).toBeVisible();
 
     const groupName = `E2E Smart ${Date.now()}`;
+    await openDisclosure(page, "#smart-groups-panel");
     const createGroupForm = page
       .locator('form[action="/smart-keywords/groups"]')
       .first();
@@ -140,17 +157,20 @@ test.describe.serial("OpenBid critical browser journeys", () => {
 
     await page.goto("/smart-keywords");
     const settingsForm = page.locator('form[action="/smart-keywords/settings"]');
-    await settingsForm.getByLabel("Smart Keyword Extraction").check();
-    await settingsForm.getByLabel("Global smart alerts").check();
-    await settingsForm.getByRole("button", { name: "Save settings" }).click();
-    await expect(
-      page.getByText("Smart Keyword Extraction settings saved"),
-    ).toBeVisible();
+    await makeCheckboxDirtyChecked(settingsForm.getByLabel("Enable smart extraction"));
+    await makeCheckboxDirtyChecked(settingsForm.getByLabel("Global smart alerts"));
+    const saveSettings = settingsForm.getByRole("button", { name: "Save settings" });
+    if (await saveSettings.isEnabled()) {
+      await saveSettings.click();
+      await expect(
+        page.getByText("Smart Keyword Extraction settings saved"),
+      ).toBeVisible();
+    }
 
     page.once("dialog", (dialog) => dialog.accept());
     await page
       .locator('form[action="/smart-keywords/reprocess"]')
-      .getByRole("button", { name: "Reprocess existing tenders" })
+      .getByRole("button", { name: "Reprocess matches" })
       .click();
     await expect(
       page.locator('[role="status"]').getByText(/Reprocessed \d+ tenders/),
@@ -163,6 +183,7 @@ test.describe.serial("OpenBid critical browser journeys", () => {
     ).toBeVisible();
 
     await page.goto("/smart-keywords");
+    await openDisclosure(page, "#smart-views-panel");
     const viewForm = page.locator('form[action="/smart-keywords/views"]').first();
     await viewForm.getByLabel("Name").fill(`${groupName} View`);
     await viewForm.getByLabel("Group Tags").fill(groupName);
@@ -178,13 +199,50 @@ test.describe.serial("OpenBid critical browser journeys", () => {
     page.once("dialog", (dialog) => dialog.accept());
     await page
       .locator('form[action="/smart-keywords/reprocess"]')
-      .getByRole("button", { name: "Reprocess existing tenders" })
+      .getByRole("button", { name: "Reprocess matches" })
       .click();
     await expect(
       page.locator('[role="status"]').getByText(/Reprocessed \d+ tenders/),
     ).toBeVisible();
+    await openDisclosure(page, "#smart-alert-history");
     await expect(page.getByText("smart-alerts@example.org").first()).toBeVisible();
-    await expect(page.getByText("sent").first()).toBeVisible();
+    await expect(page.getByText("skipped").first()).toBeVisible();
+  });
+
+  test("mobile navigation drawer keeps nested sections open and routes links", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await login(page);
+
+    const mobileMenu = page.locator("details.mobile-menu");
+    await page.getByLabel("Open navigation menu").click();
+    await expect(mobileMenu).toHaveAttribute("open", "");
+    await page.locator("details.mobile-menu summary", { hasText: "Find Work" }).click();
+    await expect(mobileMenu).toHaveAttribute("open", "");
+    await expect(mobileMenu.getByRole("link", { name: "Smart Keyword Extraction", exact: true })).toBeVisible();
+    await Promise.all([
+      page.waitForURL(/\/smart-keywords$/),
+      mobileMenu.getByRole("link", { name: "Smart Keyword Extraction", exact: true }).click(),
+    ]);
+    await expect(page.getByRole("heading", { name: "Smart Keyword Extraction" })).toBeVisible();
+
+    await page.getByLabel("Open navigation menu").click();
+    await page.locator("details.mobile-menu summary", { hasText: "Data Pipes" }).click();
+    await Promise.all([
+      page.waitForURL(/\/queue$/),
+      mobileMenu.getByRole("link", { name: "Queue", exact: true }).click(),
+    ]);
+    await expect(page.getByRole("heading", { name: "Queue and extraction monitoring" })).toBeVisible();
+
+    await page.getByLabel("Open navigation menu").click();
+    await page.locator("details.mobile-menu summary", { hasText: "Settings" }).click();
+    await expect(mobileMenu.getByRole("link", { name: "Email", exact: true })).toBeVisible();
+    await Promise.all([
+      page.waitForURL(/\/admin\/email$/),
+      mobileMenu.getByRole("link", { name: "Email", exact: true }).click(),
+    ]);
+    await expect(page.getByRole("heading", { name: "Email settings" })).toBeVisible();
   });
 
   test("MFA setup and MFA login flow work", async ({ page }) => {
@@ -199,7 +257,7 @@ test.describe.serial("OpenBid critical browser journeys", () => {
       (await page.locator(".card-soft .mono").first().textContent()) || ""
     ).trim();
     expect(secret).not.toBe("");
-    const otp = authenticator.generate(secret);
+    const otp = await generate({ secret });
 
     await page.getByLabel("Authenticator code").fill(otp);
     await page.getByRole("button", { name: "Enable MFA" }).click();
@@ -208,7 +266,7 @@ test.describe.serial("OpenBid critical browser journeys", () => {
     ).toBeVisible();
 
     await page.goto("/logout");
-    await login(page, { mfaCode: authenticator.generate(secret) });
+    await login(page, { mfaCode: await generate({ secret }) });
     await expectHome(page);
   });
 });

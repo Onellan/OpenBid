@@ -1,4 +1,4 @@
-FROM golang:1.26.2-alpine AS build
+FROM golang:1.26.2-alpine3.23 AS build
 ARG VERSION=dev
 ARG VCS_REF=local
 ARG BUILD_DATE=unknown
@@ -17,7 +17,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/openbid-sqlite-check ./cmd/sqlite_check && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/openbid-sqlite-backup ./cmd/sqlite_backup && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/openbid-worker-health ./cmd/worker_health
-FROM alpine:3.20
+FROM alpine:3.23
 ARG VERSION=dev
 ARG VCS_REF=local
 ARG BUILD_DATE=unknown

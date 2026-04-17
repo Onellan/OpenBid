@@ -9,7 +9,9 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
+	"openbid/internal/mail"
 	"openbid/internal/models"
 )
 
@@ -31,6 +33,29 @@ type SmartKeywordGroupView struct {
 	Keywords []models.SmartKeyword
 }
 
+type smartKeywordReadiness struct {
+	Ready               bool
+	ActiveInputCount    int
+	StatusTone          string
+	StatusLabel         string
+	StatusMessage       string
+	DependencyMessage   string
+	EnableControlLocked bool
+}
+
+type smartKeywordPageSummary struct {
+	ActiveKeywords       int
+	TotalKeywords        int
+	StandaloneKeywords   int
+	KeywordGroups        int
+	EnabledGroups        int
+	PreviewMatches       int
+	PreviewTotal         int
+	SavedViews           int
+	AlertDeliveries      int
+	LastReprocessedLabel string
+}
+
 func (a *App) SmartKeywordsPage(w http.ResponseWriter, r *http.Request) {
 	u, t, _, ok := a.currentUserTenant(r)
 	if !ok {
@@ -50,18 +75,63 @@ func (a *App) SmartKeywordsPage(w http.ResponseWriter, r *http.Request) {
 			standalone = append(standalone, keyword)
 		}
 	}
+	readiness := smartKeywordSettingsReadiness(settings, groups, keywords)
+	emailReadiness := mail.Readiness{Status: "not_configured", StatusLabel: "Email not configured", StatusTone: "warning", Summary: "Admin email settings have not been configured."}
+	if a.Email != nil {
+		if current, _, err := a.Email.Readiness(r.Context()); err == nil {
+			emailReadiness = current
+		}
+	}
+	summary := smartKeywordSummary(settings, readiness, groups, keywords, standalone, views, deliveries, preview)
 	a.render(w, r, "smart_keywords.html", map[string]any{
-		"Title":        "Smart Keyword Extraction",
-		"User":         u,
-		"Tenant":       t,
-		"Settings":     settings,
-		"Groups":       groupViews,
-		"GroupOptions": groups,
-		"Standalone":   standalone,
-		"Views":        views,
-		"Deliveries":   deliveries,
-		"Preview":      preview,
+		"Title":                 "Smart Keyword Extraction",
+		"User":                  u,
+		"Tenant":                t,
+		"Settings":              settings,
+		"SmartKeywordReadiness": readiness,
+		"EmailReadiness":        emailReadiness,
+		"Summary":               summary,
+		"Groups":                groupViews,
+		"GroupOptions":          groups,
+		"Standalone":            standalone,
+		"Views":                 views,
+		"Deliveries":            deliveries,
+		"Preview":               preview,
 	})
+}
+
+func smartKeywordSummary(settings models.SmartExtractionSettings, readiness smartKeywordReadiness, groups []models.SmartKeywordGroup, keywords []models.SmartKeyword, standalone []models.SmartKeyword, views []models.SavedSmartView, deliveries []models.SmartAlertDelivery, preview []models.SmartTenderPreview) smartKeywordPageSummary {
+	enabledGroups := 0
+	for _, group := range groups {
+		if group.Enabled {
+			enabledGroups++
+		}
+	}
+	previewMatches := 0
+	for _, item := range preview {
+		if item.Evaluation.Accepted {
+			previewMatches++
+		}
+	}
+	return smartKeywordPageSummary{
+		ActiveKeywords:       readiness.ActiveInputCount,
+		TotalKeywords:        len(keywords),
+		StandaloneKeywords:   len(standalone),
+		KeywordGroups:        len(groups),
+		EnabledGroups:        enabledGroups,
+		PreviewMatches:       previewMatches,
+		PreviewTotal:         len(preview),
+		SavedViews:           len(views),
+		AlertDeliveries:      len(deliveries),
+		LastReprocessedLabel: smartKeywordLastReprocessedLabel(settings.LastReprocessedAt),
+	}
+}
+
+func smartKeywordLastReprocessedLabel(value time.Time) string {
+	if value.IsZero() {
+		return "Not reprocessed yet"
+	}
+	return value.Local().Format("2006-01-02 15:04")
 }
 
 func (a *App) SmartKeywordGroupPage(w http.ResponseWriter, r *http.Request) {
@@ -107,6 +177,55 @@ func smartKeywordGroupViews(groups []models.SmartKeywordGroup, keywords []models
 	return out
 }
 
+func smartKeywordSettingsReadiness(settings models.SmartExtractionSettings, groups []models.SmartKeywordGroup, keywords []models.SmartKeyword) smartKeywordReadiness {
+	enabledGroups := map[string]bool{}
+	for _, group := range groups {
+		if group.Enabled {
+			enabledGroups[group.ID] = true
+		}
+	}
+	activeInputs := 0
+	for _, keyword := range keywords {
+		if !keyword.Enabled || strings.TrimSpace(keyword.NormalizedValue) == "" {
+			continue
+		}
+		groupID := strings.TrimSpace(keyword.GroupID)
+		if groupID == "" || enabledGroups[groupID] {
+			activeInputs++
+		}
+	}
+	ready := activeInputs > 0
+	out := smartKeywordReadiness{
+		Ready:             ready,
+		ActiveInputCount:  activeInputs,
+		DependencyMessage: "Activate at least one standalone keyword or keyword group before enabling this feature.",
+		StatusTone:        "warning",
+		StatusLabel:       "Disabled",
+		StatusMessage:     "No active keywords or keyword groups found.",
+	}
+	if !ready {
+		out.EnableControlLocked = !settings.Enabled
+		if settings.Enabled {
+			out.StatusLabel = "Unavailable"
+			out.StatusMessage = "Unavailable until at least one keyword or keyword group is active."
+		}
+		return out
+	}
+	if settings.Enabled {
+		out.StatusTone = "success"
+		out.StatusLabel = "Enabled"
+		out.StatusMessage = strings.TrimSpace(settings.RefreshMessage)
+		if out.StatusMessage == "" {
+			out.StatusMessage = "Smart extraction is active."
+		}
+		return out
+	}
+	out.StatusTone = "info"
+	out.StatusLabel = "Disabled"
+	out.StatusMessage = "Ready to enable; active keywords are available."
+	return out
+}
+
 func (a *App) SaveSmartKeywordSettings(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || !a.ensureCSRF(r) {
 		http.Error(w, "forbidden", http.StatusForbidden)
@@ -124,6 +243,7 @@ func (a *App) SaveSmartKeywordSettings(w http.ResponseWriter, r *http.Request) {
 	current, _ := a.Store.GetSmartExtractionSettings(r.Context(), t.ID)
 	current.Enabled = r.FormValue("enabled") == "1"
 	current.AlertsEnabled = r.FormValue("alerts_enabled") == "1"
+	current.EmailAlertsEnabled = r.FormValue("email_alerts_enabled") == "1"
 	if err := a.Store.UpsertSmartExtractionSettings(r.Context(), current); err != nil {
 		a.redirectAfterAction(w, r, "/smart-keywords", "error", err.Error())
 		return
