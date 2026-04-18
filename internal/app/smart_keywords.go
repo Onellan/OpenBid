@@ -40,7 +40,6 @@ type smartKeywordReadiness struct {
 	StatusLabel         string
 	StatusMessage       string
 	DependencyMessage   string
-	EnableControlLocked bool
 }
 
 type smartKeywordPageSummary struct {
@@ -178,6 +177,7 @@ func smartKeywordGroupViews(groups []models.SmartKeywordGroup, keywords []models
 }
 
 func smartKeywordSettingsReadiness(settings models.SmartExtractionSettings, groups []models.SmartKeywordGroup, keywords []models.SmartKeyword) smartKeywordReadiness {
+	smartMode := settings.ExtractionMode == models.ExtractionModeSmartKeywordCriteria
 	enabledGroups := map[string]bool{}
 	for _, group := range groups {
 		if group.Enabled {
@@ -198,31 +198,35 @@ func smartKeywordSettingsReadiness(settings models.SmartExtractionSettings, grou
 	out := smartKeywordReadiness{
 		Ready:             ready,
 		ActiveInputCount:  activeInputs,
-		DependencyMessage: "Activate at least one standalone keyword or keyword group before enabling this feature.",
+		DependencyMessage: "Extraction mode is configured in Sources. Activate at least one standalone keyword or keyword group to use Smart Keyword Extraction mode safely.",
 		StatusTone:        "warning",
-		StatusLabel:       "Disabled",
+		StatusLabel:       "No Filter",
 		StatusMessage:     "No active keywords or keyword groups found.",
 	}
 	if !ready {
-		out.EnableControlLocked = !settings.Enabled
-		if settings.Enabled {
+		if smartMode {
 			out.StatusLabel = "Unavailable"
-			out.StatusMessage = "Unavailable until at least one keyword or keyword group is active."
+			out.StatusMessage = "Smart Keyword Extraction mode is unavailable until at least one keyword or keyword group is active."
+			out.StatusTone = "warning"
+		} else {
+			out.StatusLabel = "No Filter"
+			out.StatusMessage = "No Filter mode is active for source extraction."
+			out.StatusTone = "info"
 		}
 		return out
 	}
-	if settings.Enabled {
+	if smartMode {
 		out.StatusTone = "success"
 		out.StatusLabel = "Enabled"
 		out.StatusMessage = strings.TrimSpace(settings.RefreshMessage)
 		if out.StatusMessage == "" {
-			out.StatusMessage = "Smart extraction is active."
+			out.StatusMessage = "Smart Keyword Extraction mode is active for source extraction."
 		}
 		return out
 	}
 	out.StatusTone = "info"
-	out.StatusLabel = "Disabled"
-	out.StatusMessage = "Ready to enable; active keywords are available."
+	out.StatusLabel = "No Filter"
+	out.StatusMessage = "No Filter mode is active for source extraction."
 	return out
 }
 
@@ -241,7 +245,6 @@ func (a *App) SaveSmartKeywordSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	current, _ := a.Store.GetSmartExtractionSettings(r.Context(), t.ID)
-	current.Enabled = r.FormValue("enabled") == "1"
 	current.AlertsEnabled = r.FormValue("alerts_enabled") == "1"
 	current.EmailAlertsEnabled = r.FormValue("email_alerts_enabled") == "1"
 	if err := a.Store.UpsertSmartExtractionSettings(r.Context(), current); err != nil {

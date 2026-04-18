@@ -57,7 +57,7 @@ func TestSmartKeywordEvaluationModesTagsAndExcludes(t *testing.T) {
 	if _, err := s.UpsertSmartKeyword(ctx, models.SmartKeyword{TenantID: "tenant-1", Value: "pump station", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpsertSmartExtractionSettings(ctx, models.SmartExtractionSettings{TenantID: "tenant-1", Enabled: true}); err != nil {
+	if err := s.UpsertSmartExtractionSettings(ctx, models.SmartExtractionSettings{TenantID: "tenant-1", ExtractionMode: models.ExtractionModeSmartKeywordCriteria}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -99,6 +99,42 @@ func TestSmartKeywordEvaluationModesTagsAndExcludes(t *testing.T) {
 	}
 }
 
+func TestSmartSourceExtractionModeNoFilterAcceptsNonMatchingTenders(t *testing.T) {
+	s := newSmartTestStore(t)
+	ctx := t.Context()
+	if err := s.UpsertSmartExtractionSettings(ctx, models.SmartExtractionSettings{TenantID: "tenant-1", ExtractionMode: models.ExtractionModeNoFilter}); err != nil {
+		t.Fatal(err)
+	}
+	_, evaluation, accepted, err := s.EvaluateSmartTenderForExtraction(ctx, models.Tender{ID: "free-1", Title: "Road resurfacing package"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !accepted || !evaluation.Accepted {
+		t.Fatalf("expected no-filter mode to accept tender, got accepted=%v eval=%#v", accepted, evaluation)
+	}
+	if len(evaluation.Reasons) == 0 || !strings.Contains(strings.ToLower(strings.Join(evaluation.Reasons, " ")), "no filter") {
+		t.Fatalf("expected no-filter reason in evaluation, got %#v", evaluation.Reasons)
+	}
+}
+
+func TestSmartExtractionModeBackfillsFromLegacyEnabledToggle(t *testing.T) {
+	s := newSmartTestStore(t)
+	ctx := t.Context()
+	if _, err := s.UpsertSmartKeyword(ctx, models.SmartKeyword{TenantID: "tenant-legacy", Value: "water", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertSmartExtractionSettings(ctx, models.SmartExtractionSettings{TenantID: "tenant-legacy", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := s.GetSmartExtractionSettings(ctx, "tenant-legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.ExtractionMode != models.ExtractionModeSmartKeywordCriteria || !settings.Enabled {
+		t.Fatalf("expected legacy enabled state to map to smart keyword extraction mode, got %#v", settings)
+	}
+}
+
 func TestSmartReprocessSearchAndAlertDedup(t *testing.T) {
 	s := newSmartTestStore(t)
 	ctx := t.Context()
@@ -111,7 +147,7 @@ func TestSmartReprocessSearchAndAlertDedup(t *testing.T) {
 	}
 	sender := &fakeSmartEmailSender{}
 	s.SetEmailSender(sender)
-	if err := s.UpsertSmartExtractionSettings(ctx, models.SmartExtractionSettings{TenantID: "tenant-1", Enabled: true, AlertsEnabled: true, EmailAlertsEnabled: true}); err != nil {
+	if err := s.UpsertSmartExtractionSettings(ctx, models.SmartExtractionSettings{TenantID: "tenant-1", ExtractionMode: models.ExtractionModeSmartKeywordCriteria, AlertsEnabled: true, EmailAlertsEnabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.UpsertTender(ctx, models.Tender{ID: "match", Title: "Wastewater treatment upgrade", Status: "open"}); err != nil {
@@ -175,7 +211,7 @@ func TestSmartEmailAlertsDisabledSkipsEmailSend(t *testing.T) {
 	if _, err := s.UpsertSmartKeyword(ctx, models.SmartKeyword{TenantID: "tenant-1", GroupID: group.ID, Value: "water", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpsertSmartExtractionSettings(ctx, models.SmartExtractionSettings{TenantID: "tenant-1", Enabled: true, AlertsEnabled: true, EmailAlertsEnabled: false}); err != nil {
+	if err := s.UpsertSmartExtractionSettings(ctx, models.SmartExtractionSettings{TenantID: "tenant-1", ExtractionMode: models.ExtractionModeSmartKeywordCriteria, AlertsEnabled: true, EmailAlertsEnabled: false}); err != nil {
 		t.Fatal(err)
 	}
 	sender := &fakeSmartEmailSender{}

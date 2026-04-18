@@ -370,6 +370,7 @@ func (a *App) SourcesPage(w http.ResponseWriter, r *http.Request) {
 	for _, cfg := range snapshot.Configs {
 		items = append(items, SourceAdminItem{Config: cfg, Health: healthByKey[cfg.Key], RecentRun: runByKey[cfg.Key]})
 	}
+	smartSettings, _ := a.Store.GetSmartExtractionSettings(r.Context(), t.ID)
 	a.render(w, r, "sources.html", map[string]any{
 		"Title":            "Sources",
 		"User":             u,
@@ -377,6 +378,7 @@ func (a *App) SourcesPage(w http.ResponseWriter, r *http.Request) {
 		"Items":            items,
 		"RecentRuns":       snapshot.SyncRuns,
 		"ScheduleSettings": snapshot.Settings,
+		"SmartExtractionSettings": smartSettings,
 		"CSRFToken":        a.mustCSRF(r),
 		"SourceType":       source.TypeJSONFeed,
 		"CanManageSources": canManageSources(u, m),
@@ -592,6 +594,16 @@ func (a *App) AdminUpdateSourceSchedule(w http.ResponseWriter, r *http.Request) 
 		a.serverError(w, r, "unable to save source schedule", err)
 		return
 	}
+	currentSmartSettings, _ := a.Store.GetSmartExtractionSettings(r.Context(), t.ID)
+	mode := models.ExtractionMode(strings.TrimSpace(r.FormValue("extraction_mode")))
+	if mode != models.ExtractionModeSmartKeywordCriteria {
+		mode = models.ExtractionModeNoFilter
+	}
+	currentSmartSettings.ExtractionMode = mode
+	if err := a.Store.UpsertSmartExtractionSettings(r.Context(), currentSmartSettings); err != nil {
+		a.serverError(w, r, "unable to save extraction mode", err)
+		return
+	}
 	if err := a.recalculateSourceSchedules(r.Context(), time.Now().UTC()); err != nil {
 		a.serverError(w, r, "unable to recalculate source schedules", err)
 		return
@@ -600,6 +612,7 @@ func (a *App) AdminUpdateSourceSchedule(w http.ResponseWriter, r *http.Request) 
 	a.auditAction(r.Context(), actionContext{User: u, Tenant: t, Member: m}, "update", "source_schedule", "global", "Global source schedule updated", map[string]string{
 		"default_interval_minutes": strconv.Itoa(interval),
 		"paused":                   strconv.FormatBool(settings.Paused),
+		"extraction_mode":          string(mode),
 	})
 	a.redirectAfterAction(w, r, "/sources", "success", "Global source schedule updated")
 }

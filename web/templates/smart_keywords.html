@@ -49,22 +49,13 @@
         <span class="badge info">Info</span>
         <span>{{.SmartKeywordReadiness.DependencyMessage}}</span>
       </div>
+      <div class="smart-settings-info" role="status">
+        <span class="badge {{if eq .Settings.ExtractionMode "smart_keyword_extraction"}}success{{else}}info{{end}}">Source extraction mode</span>
+        <span>{{if eq .Settings.ExtractionMode "smart_keyword_extraction"}}Smart Keyword Extraction{{else}}No Filter{{end}}. Configure this in <a href="/sources">Sources &rarr; Scheduling</a>.</span>
+      </div>
       <form method="post" action="/smart-keywords/settings" class="smart-settings-form" data-dirty-form>
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <div class="smart-settings-grid">
-          <label class="setting-tile">
-            <span class="setting-kicker">Extraction</span>
-            <span class="setting-main">
-              <span>
-                <span class="setting-title">Enable smart extraction</span>
-                <span class="setting-helper">Broaden matching with related keyword detection.</span>
-              </span>
-              <span class="switch-control">
-                <input type="checkbox" name="enabled" value="1" {{if .Settings.Enabled}}checked{{end}} {{if .SmartKeywordReadiness.EnableControlLocked}}disabled{{end}}>
-                <span class="switch-track" aria-hidden="true"></span>
-              </span>
-            </span>
-          </label>
           <label class="setting-tile">
             <span class="setting-kicker">Alerts</span>
             <span class="setting-main">

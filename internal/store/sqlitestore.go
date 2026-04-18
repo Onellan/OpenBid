@@ -771,7 +771,7 @@ func (s *SQLiteStore) listTendersInMemory(ctx context.Context, f ListFilter) ([]
 	smartEnabled := false
 	smartAccepted := map[string]bool{}
 	if strings.TrimSpace(f.TenantID) != "" {
-		if settings, err := s.GetSmartExtractionSettings(ctx, f.TenantID); err == nil && settings.Enabled {
+		if settings, err := s.GetSmartExtractionSettings(ctx, f.TenantID); err == nil && smartExtractionGateEnabled(settings) {
 			smartEnabled = true
 			rows, err := s.db.QueryContext(ctx, "select tender_id from smart_tender_matches where tenant_id = ? and accepted = 1", f.TenantID)
 			if err == nil {
@@ -947,7 +947,7 @@ func buildTenderSQLFilter(f ListFilter) (string, []any, []string) {
 		whereArgs = append(whereArgs, f.TenantID, f.TenantID, "%"+strings.ToLower(f.GroupTag)+"%")
 	}
 	if strings.TrimSpace(f.TenantID) != "" {
-		clauses = append(clauses, "(not exists (select 1 from smart_extraction_settings smcfg where smcfg.tenant_id = ? and smcfg.enabled = 1) or exists (select 1 from smart_tender_matches smvis where smvis.tenant_id = ? and smvis.tender_id = t.id and smvis.accepted = 1))")
+		clauses = append(clauses, "(not exists (select 1 from smart_extraction_settings smcfg where smcfg.tenant_id = ? and smcfg.extraction_mode = 'smart_keyword_extraction') or exists (select 1 from smart_tender_matches smvis where smvis.tenant_id = ? and smvis.tender_id = t.id and smvis.accepted = 1))")
 		whereArgs = append(whereArgs, f.TenantID, f.TenantID)
 	}
 	if f.HasDocuments {
@@ -2126,7 +2126,7 @@ func (s *SQLiteStore) Dashboard(ctx context.Context, tenantID string, lowMemory,
 	smartClause := ""
 	smartArgs := []any{}
 	if strings.TrimSpace(tenantID) != "" {
-		if settings, err := s.GetSmartExtractionSettings(ctx, tenantID); err == nil && settings.Enabled {
+		if settings, err := s.GetSmartExtractionSettings(ctx, tenantID); err == nil && smartExtractionGateEnabled(settings) {
 			smartClause = " and exists (select 1 from smart_tender_matches smdash where smdash.tenant_id = ? and smdash.tender_id = i.tender_id and smdash.accepted = 1)"
 			smartArgs = append(smartArgs, tenantID)
 		}

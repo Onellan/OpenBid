@@ -250,6 +250,7 @@ func (s *SQLiteStore) migrateRelationalTables(ctx context.Context, tx *sql.Tx) e
 		);`,
 		`create table if not exists smart_extraction_settings (
 			tenant_id text primary key,
+			extraction_mode text not null default 'no_filter',
 			enabled integer not null default 0,
 			alerts_enabled integer not null default 0,
 			email_alerts_enabled integer not null default 0,
@@ -368,6 +369,22 @@ func (s *SQLiteStore) migrateRelationalTables(ctx context.Context, tx *sql.Tx) e
 	}
 	if !hasEmailAlertsEnabled {
 		if _, err := tx.ExecContext(ctx, `alter table smart_extraction_settings add column email_alerts_enabled integer not null default 0;`); err != nil {
+			return err
+		}
+	}
+	hasExtractionMode, err := sqliteColumnExistsTx(ctx, tx, "smart_extraction_settings", "extraction_mode")
+	if err != nil {
+		return err
+	}
+	if !hasExtractionMode {
+		if _, err := tx.ExecContext(ctx, `alter table smart_extraction_settings add column extraction_mode text not null default 'no_filter';`); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			update smart_extraction_settings
+			set extraction_mode = case when enabled = 1 then 'smart_keyword_extraction' else 'no_filter' end
+			where coalesce(trim(extraction_mode), '') = '' or lower(extraction_mode) = 'no_filter'
+		`); err != nil {
 			return err
 		}
 	}

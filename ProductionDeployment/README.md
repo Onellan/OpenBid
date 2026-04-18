@@ -1814,6 +1814,9 @@ After first login:
 - Review user administration and create named accounts for real users.
 - Keep the bootstrap `admin` account tightly controlled.
 - Review source configuration at `/sources`.
+- Set source extraction criterion in `/sources` -> Scheduling:
+  - `No Filter` extracts tenders normally.
+  - `Smart Keyword Extraction` only persists tenders that match active Smart Keywords.
 - Review platform health at `/health`.
 - Trigger a manual source check only after you are comfortable with the source
   settings.

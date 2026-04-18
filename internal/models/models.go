@@ -136,8 +136,16 @@ const (
 	SmartMatchModeAll SmartMatchMode = "ALL"
 )
 
+type ExtractionMode string
+
+const (
+	ExtractionModeNoFilter             ExtractionMode = "no_filter"
+	ExtractionModeSmartKeywordCriteria ExtractionMode = "smart_keyword_extraction"
+)
+
 type SmartExtractionSettings struct {
 	TenantID, RefreshStatus, RefreshMessage    string
+	ExtractionMode                             ExtractionMode
 	Enabled, AlertsEnabled, EmailAlertsEnabled bool
 	LastReprocessedAt, CreatedAt, UpdatedAt    time.Time
 }

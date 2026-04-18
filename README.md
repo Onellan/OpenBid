@@ -55,6 +55,15 @@ For local development only:
 
 These are seeded by `go run ./cmd/server` only when `APP_ENV=development` and no bootstrap password file is configured. Docker and production installs use secret files created by `ProductionDeployment/setup.sh`.
 
+## Source Extraction Mode
+
+Source tender extraction now uses an explicit extraction mode configured from `/sources` (Scheduling):
+
+- `No Filter`: extract tenders normally without Smart Keyword gating.
+- `Smart Keyword Extraction`: only persist source tenders that match active Smart Keywords.
+
+The previous `Enable Smart Extraction` toggle on `/smart-keywords` has been removed. `/smart-keywords` still manages keyword rules, preview, reprocess, and alert settings.
+
 ## Production Deployment
 
 All deployment files are located in `ProductionDeployment/`.

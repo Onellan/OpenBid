@@ -82,15 +82,36 @@ func decodeChannels(value string) []models.NotificationChannel {
 	return out
 }
 
+func normalizeExtractionMode(mode models.ExtractionMode, legacyEnabled bool) models.ExtractionMode {
+	switch mode {
+	case models.ExtractionModeSmartKeywordCriteria:
+		return mode
+	case models.ExtractionModeNoFilter:
+		return mode
+	default:
+		if legacyEnabled {
+			return models.ExtractionModeSmartKeywordCriteria
+		}
+		return models.ExtractionModeNoFilter
+	}
+}
+
+func smartExtractionGateEnabled(settings models.SmartExtractionSettings) bool {
+	return normalizeExtractionMode(settings.ExtractionMode, settings.Enabled) == models.ExtractionModeSmartKeywordCriteria
+}
+
 func scanSmartSettings(scanner interface{ Scan(dest ...any) error }) (models.SmartExtractionSettings, error) {
 	var settings models.SmartExtractionSettings
 	var enabled, alertsEnabled, emailAlertsEnabled int
+	var extractionMode string
 	var lastReprocessedAt, createdAt, updatedAt string
-	err := scanner.Scan(&settings.TenantID, &enabled, &alertsEnabled, &emailAlertsEnabled, &settings.RefreshStatus, &settings.RefreshMessage, &lastReprocessedAt, &createdAt, &updatedAt)
+	err := scanner.Scan(&settings.TenantID, &extractionMode, &enabled, &alertsEnabled, &emailAlertsEnabled, &settings.RefreshStatus, &settings.RefreshMessage, &lastReprocessedAt, &createdAt, &updatedAt)
 	if err != nil {
 		return models.SmartExtractionSettings{}, err
 	}
 	settings.Enabled = intToBool(enabled)
+	settings.ExtractionMode = normalizeExtractionMode(models.ExtractionMode(strings.TrimSpace(extractionMode)), settings.Enabled)
+	settings.Enabled = settings.ExtractionMode == models.ExtractionModeSmartKeywordCriteria
 	settings.AlertsEnabled = intToBool(alertsEnabled)
 	settings.EmailAlertsEnabled = intToBool(emailAlertsEnabled)
 	settings.LastReprocessedAt = parseSQLiteTime(lastReprocessedAt)
@@ -164,7 +185,7 @@ func (s *SQLiteStore) GetSmartExtractionSettings(ctx context.Context, tenantID s
 		return models.SmartExtractionSettings{}, fmt.Errorf("smart extraction settings require tenant_id")
 	}
 	row := s.db.QueryRowContext(ctx, `
-		select tenant_id, enabled, alerts_enabled, email_alerts_enabled, refresh_status, refresh_message, last_reprocessed_at, created_at, updated_at
+		select tenant_id, extraction_mode, enabled, alerts_enabled, email_alerts_enabled, refresh_status, refresh_message, last_reprocessed_at, created_at, updated_at
 		from smart_extraction_settings
 		where tenant_id = ?
 	`, tenantID)
@@ -173,8 +194,9 @@ func (s *SQLiteStore) GetSmartExtractionSettings(ctx context.Context, tenantID s
 		now := time.Now().UTC()
 		return models.SmartExtractionSettings{
 			TenantID:       tenantID,
+			ExtractionMode: models.ExtractionModeNoFilter,
 			RefreshStatus:  "pending",
-			RefreshMessage: "Smart Keyword Extraction is disabled.",
+			RefreshMessage: "No Filter mode is active for source extraction.",
 			CreatedAt:      now,
 			UpdatedAt:      now,
 		}, nil
@@ -187,13 +209,15 @@ func (s *SQLiteStore) UpsertSmartExtractionSettings(ctx context.Context, setting
 	if settings.TenantID == "" {
 		return fmt.Errorf("smart extraction settings require tenant_id")
 	}
+	settings.ExtractionMode = normalizeExtractionMode(settings.ExtractionMode, settings.Enabled)
+	settings.Enabled = settings.ExtractionMode == models.ExtractionModeSmartKeywordCriteria
 	if settings.Enabled {
 		active, err := s.activeSmartKeywordCount(ctx, settings.TenantID)
 		if err != nil {
 			return err
 		}
 		if active == 0 {
-			return fmt.Errorf("enable at least one standalone keyword or group keyword before turning on Smart Keyword Extraction")
+			return fmt.Errorf("add at least one active standalone or group keyword before using Smart Keyword Extraction mode")
 		}
 	}
 	existing, _ := s.GetSmartExtractionSettings(ctx, settings.TenantID)
@@ -210,9 +234,10 @@ func (s *SQLiteStore) UpsertSmartExtractionSettings(ctx context.Context, setting
 	settings.CreatedAt = existing.CreatedAt
 	settings.UpdatedAt = now
 	_, err := s.db.ExecContext(ctx, `
-		insert into smart_extraction_settings(tenant_id, enabled, alerts_enabled, email_alerts_enabled, refresh_status, refresh_message, last_reprocessed_at, created_at, updated_at)
-		values(?,?,?,?,?,?,?,?,?)
+		insert into smart_extraction_settings(tenant_id, extraction_mode, enabled, alerts_enabled, email_alerts_enabled, refresh_status, refresh_message, last_reprocessed_at, created_at, updated_at)
+		values(?,?,?,?,?,?,?,?,?,?)
 		on conflict(tenant_id) do update set
+			extraction_mode=excluded.extraction_mode,
 			enabled=excluded.enabled,
 			alerts_enabled=excluded.alerts_enabled,
 			email_alerts_enabled=excluded.email_alerts_enabled,
@@ -220,7 +245,7 @@ func (s *SQLiteStore) UpsertSmartExtractionSettings(ctx context.Context, setting
 			refresh_message=excluded.refresh_message,
 			last_reprocessed_at=coalesce(nullif(excluded.last_reprocessed_at, ''), smart_extraction_settings.last_reprocessed_at),
 			updated_at=excluded.updated_at
-	`, settings.TenantID, boolToInt(settings.Enabled), boolToInt(settings.AlertsEnabled), boolToInt(settings.EmailAlertsEnabled), settings.RefreshStatus, settings.RefreshMessage, sqliteTimeString(settings.LastReprocessedAt), sqliteTimeString(settings.CreatedAt), sqliteTimeString(settings.UpdatedAt))
+	`, settings.TenantID, string(settings.ExtractionMode), boolToInt(settings.Enabled), boolToInt(settings.AlertsEnabled), boolToInt(settings.EmailAlertsEnabled), settings.RefreshStatus, settings.RefreshMessage, sqliteTimeString(settings.LastReprocessedAt), sqliteTimeString(settings.CreatedAt), sqliteTimeString(settings.UpdatedAt))
 	return err
 }
 
@@ -444,7 +469,7 @@ func (s *SQLiteStore) smartConfig(ctx context.Context, tenantID string) (models.
 }
 
 func (s *SQLiteStore) EvaluateSmartTenderForExtraction(ctx context.Context, tender models.Tender) (models.Tender, models.SmartKeywordEvaluation, bool, error) {
-	rows, err := s.db.QueryContext(ctx, "select tenant_id from smart_extraction_settings where enabled = 1 order by tenant_id asc")
+	rows, err := s.db.QueryContext(ctx, "select tenant_id from smart_extraction_settings where extraction_mode = ? order by tenant_id asc", string(models.ExtractionModeSmartKeywordCriteria))
 	if err != nil {
 		return tender, models.SmartKeywordEvaluation{}, true, err
 	}
@@ -461,7 +486,7 @@ func (s *SQLiteStore) EvaluateSmartTenderForExtraction(ctx context.Context, tend
 		return tender, models.SmartKeywordEvaluation{}, true, err
 	}
 	if len(tenantIDs) == 0 {
-		return tender, models.SmartKeywordEvaluation{Accepted: true, Reasons: []string{"Smart Keyword Extraction is disabled."}}, true, nil
+		return tender, models.SmartKeywordEvaluation{Accepted: true, Reasons: []string{"No Filter mode is selected for source extraction."}}, true, nil
 	}
 	combined := models.SmartKeywordEvaluation{Enabled: true}
 	accepted := false
@@ -470,7 +495,7 @@ func (s *SQLiteStore) EvaluateSmartTenderForExtraction(ctx context.Context, tend
 		if err != nil {
 			return tender, combined, false, err
 		}
-		evaluation := smartkeywords.Evaluate(tender, settings.Enabled, groups, keywords)
+		evaluation := smartkeywords.Evaluate(tender, smartExtractionGateEnabled(settings), groups, keywords)
 		if evaluation.Accepted {
 			accepted = true
 		}
@@ -512,7 +537,7 @@ func (s *SQLiteStore) refreshSmartMatchWithConfig(ctx context.Context, tenantID 
 }
 
 func writeSmartTenderMatch(ctx context.Context, exec sqlExecer, tenantID string, tender models.Tender, settings models.SmartExtractionSettings, groups []models.SmartKeywordGroup, keywords []models.SmartKeyword) (models.SmartKeywordEvaluation, error) {
-	evaluation := smartkeywords.Evaluate(tender, settings.Enabled, groups, keywords)
+	evaluation := smartkeywords.Evaluate(tender, smartExtractionGateEnabled(settings), groups, keywords)
 	now := time.Now().UTC()
 	_, err := exec.ExecContext(ctx, `
 		insert into smart_tender_matches(tenant_id, tender_id, accepted, group_tags, matched_keywords, standalone_keywords, reasons, updated_at)
@@ -572,7 +597,7 @@ func (s *SQLiteStore) PreviewSmartKeywords(ctx context.Context, tenantID string,
 	for _, tender := range tenders {
 		out = append(out, models.SmartTenderPreview{
 			Tender:     tender,
-			Evaluation: smartkeywords.Evaluate(tender, settings.Enabled, groups, keywords),
+			Evaluation: smartkeywords.Evaluate(tender, smartExtractionGateEnabled(settings), groups, keywords),
 		})
 	}
 	return out, nil

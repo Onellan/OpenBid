@@ -794,8 +794,11 @@ func TestAdminTriggerAllSourceChecksQueuesEnabledOnly(t *testing.T) {
 
 func TestAdminUpdateSourceScheduleStoresSettings(t *testing.T) {
 	a := newTestApp(t)
-	_, _, cookie, csrf := adminSession(t, a)
-	form := url.Values{"csrf_token": {csrf}, "default_interval_minutes": {"90"}, "paused": {"on"}}
+	_, tenant, cookie, csrf := adminSession(t, a)
+	if _, err := a.Store.UpsertSmartKeyword(t.Context(), models.SmartKeyword{TenantID: tenant.ID, Value: "water", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{"csrf_token": {csrf}, "default_interval_minutes": {"90"}, "paused": {"on"}, "extraction_mode": {"smart_keyword_extraction"}}
 	req := httptest.NewRequest(http.MethodPost, "/sources/schedule", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.AddCookie(cookie)
@@ -810,6 +813,43 @@ func TestAdminUpdateSourceScheduleStoresSettings(t *testing.T) {
 	}
 	if settings.DefaultIntervalMinutes != 90 || !settings.Paused {
 		t.Fatalf("unexpected settings: %#v", settings)
+	}
+	smartSettings, err := a.Store.GetSmartExtractionSettings(t.Context(), tenant.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if smartSettings.ExtractionMode != models.ExtractionModeSmartKeywordCriteria {
+		t.Fatalf("expected smart keyword extraction mode, got %#v", smartSettings)
+	}
+}
+
+func TestSourcesPageShowsExtractionModeSelector(t *testing.T) {
+	a := newTestApp(t)
+	_, tenant, cookie, _ := adminSession(t, a)
+	if _, err := a.Store.UpsertSmartKeyword(t.Context(), models.SmartKeyword{TenantID: tenant.ID, Value: "water", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store.UpsertSmartExtractionSettings(t.Context(), models.SmartExtractionSettings{TenantID: tenant.ID, ExtractionMode: models.ExtractionModeSmartKeywordCriteria}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/sources", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	body := w.Body.String()
+	for _, marker := range []string{
+		"source-extraction-mode",
+		"Extraction criterion",
+		"No Filter",
+		"Smart Keyword Extraction",
+		"Active extraction criterion",
+	} {
+		if !strings.Contains(body, marker) {
+			t.Fatalf("sources page missing %q: %s", marker, body)
+		}
 	}
 }
 

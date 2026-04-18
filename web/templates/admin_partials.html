@@ -213,7 +213,14 @@
     <input id="source-schedule-paused" type="checkbox" name="paused" {{if .ScheduleSettings.Paused}}checked{{end}}>
     <span>Pause all scheduled checks</span>
   </label>
+  <label for="source-extraction-mode">Extraction criterion
+    <select id="source-extraction-mode" name="extraction_mode">
+      <option value="no_filter" {{if eq .SmartExtractionSettings.ExtractionMode "no_filter"}}selected{{end}}>No Filter</option>
+      <option value="smart_keyword_extraction" {{if eq .SmartExtractionSettings.ExtractionMode "smart_keyword_extraction"}}selected{{end}}>Smart Keyword Extraction</option>
+    </select>
+  </label>
   </fieldset>
+  <div class="sources-form-note">No Filter extracts tenders normally. Smart Keyword Extraction only persists tenders that match active Smart Keywords.</div>
   <div class="actions">
     <button type="submit">Save schedule</button>
   </div>

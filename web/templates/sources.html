@@ -19,6 +19,11 @@
     <div class="metric">{{if .ScheduleSettings.Paused}}Paused{{else}}Live{{end}}</div>
     <div class="footer-note">{{if .ScheduleSettings.Paused}}Automatic checks are paused until you resume them.{{else}}Automatic checks are running on their normal cadence.{{end}}</div>
   </div>
+  <div class="card metric-card sources-state-card">
+    <div class="metric-label">Extraction criterion</div>
+    <div class="metric">{{if eq .SmartExtractionSettings.ExtractionMode "smart_keyword_extraction"}}Smart Keywords{{else}}No Filter{{end}}</div>
+    <div class="footer-note">Controls whether source checks persist all tenders or only Smart Keyword matches.</div>
+  </div>
   {{template "metric_card" (dict "label" "Recent runs" "value" (len .RecentRuns))}}
 </div>
 
@@ -105,7 +110,7 @@
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       </form>
       <div class="sources-ops-toolbar">
-        <div class="footer-note">Select one or more sources below to queue targeted checks without touching healthy feeds.</div>
+        <div class="footer-note">Select one or more sources below to queue targeted checks without touching healthy feeds. Active extraction criterion: <strong>{{if eq .SmartExtractionSettings.ExtractionMode "smart_keyword_extraction"}}Smart Keyword Extraction{{else}}No Filter{{end}}</strong>.</div>
         <div class="actions"><button type="submit" form="bulk-source-check-form">Check selected sources</button></div>
       </div>
     {{end}}

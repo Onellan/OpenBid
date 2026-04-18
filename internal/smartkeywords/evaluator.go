@@ -51,7 +51,7 @@ func Evaluate(t models.Tender, enabled bool, groups []models.SmartKeywordGroup, 
 	result := models.SmartKeywordEvaluation{Enabled: enabled}
 	if !enabled {
 		result.Accepted = true
-		result.Reasons = []string{"Smart Keyword Extraction is disabled."}
+		result.Reasons = []string{"No Filter mode is selected for source extraction."}
 		return result
 	}
 	text := TenderSearchText(t)

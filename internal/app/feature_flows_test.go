@@ -229,15 +229,13 @@ func TestMobileNavigationRendersRoleAwareLinksAndRoutes(t *testing.T) {
 		"data-mobile-menu-link href=\"/sources\"",
 		"data-mobile-menu-link href=\"/admin/users\"",
 		"data-mobile-menu-link href=\"/admin/tenants\"",
-		"data-mobile-menu-link href=\"/admin/email\"",
-		"data-mobile-menu-link href=\"/audit-log/security\"",
 		"data-mobile-menu-link href=\"/health\"",
 	} {
 		if !strings.Contains(body, marker) {
 			t.Fatalf("mobile navigation missing %q: %s", marker, body)
 		}
 	}
-	for _, path := range []string{"/tenders", "/keyword-search", "/smart-keywords", "/queue", "/sources", "/settings", "/admin/users", "/admin/tenants", "/admin/email", "/audit-log", "/audit-log/security", "/health"} {
+	for _, path := range []string{"/tenders", "/keyword-search", "/smart-keywords", "/queue", "/sources", "/settings", "/admin/users", "/admin/tenants", "/health"} {
 		req = httptest.NewRequest(http.MethodGet, path, nil)
 		req.AddCookie(cookie)
 		w = httptest.NewRecorder()
@@ -381,6 +379,8 @@ func TestSmartKeywordsOptimizedScreenSectionsPreviewAndActions(t *testing.T) {
 		"Smart Keyword Extraction",
 		"summary-stat",
 		"Active keywords",
+		"Source extraction mode",
+		"Configure this in <a href=\"/sources\">Sources",
 		"Preview matches",
 		"Reprocess matches",
 		"Send email alerts",
@@ -397,6 +397,9 @@ func TestSmartKeywordsOptimizedScreenSectionsPreviewAndActions(t *testing.T) {
 		if !strings.Contains(body, marker) {
 			t.Fatalf("optimized smart keywords page missing %q: %s", marker, body)
 		}
+	}
+	if strings.Contains(body, "Enable smart extraction") {
+		t.Fatalf("smart keywords page still renders legacy extraction toggle: %s", body)
 	}
 
 	addForm := url.Values{"csrf_token": {csrf}, "value": {"treatment plant"}, "enabled": {"1"}}

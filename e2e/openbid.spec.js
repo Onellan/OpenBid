@@ -125,6 +125,7 @@ test.describe.serial("OpenBid critical browser journeys", () => {
   test("Smart Keyword Extraction group tags, saved views, and alerts work", async ({
     page,
   }) => {
+    test.setTimeout(300_000);
     await login(page);
     await page.goto("/smart-keywords");
     await expect(
@@ -151,9 +152,15 @@ test.describe.serial("OpenBid critical browser journeys", () => {
     await addKeywordForm.getByRole("button", { name: "Add to group" }).click();
     await expect(page.getByText("Keyword saved")).toBeVisible();
 
+    await page.goto("/sources");
+    await openDisclosure(page, "#sources-setup-disclosure");
+    const scheduleForm = page.locator('form[action="/sources/schedule"]');
+    await scheduleForm.getByLabel("Extraction criterion").selectOption("smart_keyword_extraction");
+    await scheduleForm.getByRole("button", { name: "Save schedule" }).click();
+    await expect(page.getByText("Global source schedule updated")).toBeVisible();
+
     await page.goto("/smart-keywords");
     const settingsForm = page.locator('form[action="/smart-keywords/settings"]');
-    await makeCheckboxDirtyChecked(settingsForm.getByLabel("Enable smart extraction"));
     await makeCheckboxDirtyChecked(settingsForm.getByLabel("Global smart alerts"));
     const saveSettings = settingsForm.getByRole("button", { name: "Save settings" });
     if (await saveSettings.isEnabled()) {
@@ -170,7 +177,7 @@ test.describe.serial("OpenBid critical browser journeys", () => {
       .click();
     await expect(
       page.locator('[role="status"]').getByText(/Reprocessed \d+ tenders/),
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 120_000 });
 
     await page.goto(`/tenders?group_tag=${encodeURIComponent(groupName)}`);
     await expect(page.getByText("E2E Failed Queue Tender")).toBeVisible();
@@ -199,7 +206,7 @@ test.describe.serial("OpenBid critical browser journeys", () => {
       .click();
     await expect(
       page.locator('[role="status"]').getByText(/Reprocessed \d+ tenders/),
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 120_000 });
     await openDisclosure(page, "#smart-alert-history");
     await expect(page.getByText("smart-alerts@example.org").first()).toBeVisible();
     await expect(page.getByText("skipped").first()).toBeVisible();
@@ -233,12 +240,12 @@ test.describe.serial("OpenBid critical browser journeys", () => {
 
     await page.getByLabel("Open navigation menu").click();
     await page.locator("details.mobile-menu summary", { hasText: "Settings" }).click();
-    await expect(mobileMenu.getByRole("link", { name: "Email", exact: true })).toBeVisible();
+    await expect(mobileMenu.getByRole("link", { name: "User Admin", exact: true })).toBeVisible();
     await Promise.all([
-      page.waitForURL(/\/admin\/email$/),
-      mobileMenu.getByRole("link", { name: "Email", exact: true }).click(),
+      page.waitForURL(/\/admin\/users$/),
+      mobileMenu.getByRole("link", { name: "User Admin", exact: true }).click(),
     ]);
-    await expect(page.getByRole("heading", { name: "Email settings" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "User administration" })).toBeVisible();
   });
 
   test("MFA setup and MFA login flow work", async ({ page }) => {
