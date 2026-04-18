@@ -47,6 +47,8 @@ type App struct {
 	LoginRateLimiter *LoginRateLimiter
 	AlertNotifier    *AlertNotifier
 	sourceAdminCache sourceAdminCache
+	closeCancel      context.CancelFunc
+	bgWg             sync.WaitGroup
 }
 
 type sourceAdminSnapshot struct {
@@ -180,20 +182,25 @@ func New() (*App, error) {
 		_ = st.Close()
 		return nil, err
 	}
+	closeCtx, closeCancel := context.WithCancel(context.Background())
 	a := &App{
 		Config: cfg, Store: st, Templates: tpl, Sources: source.NewRegistry(), Extractor: extract.New(cfg.ExtractorURL), StartedAt: time.Now().UTC(),
 		LoginRateLimiter: NewLoginRateLimiter(time.Duration(cfg.LoginRateLimitWindowSeconds)*time.Second, cfg.LoginRateLimitMaxAttempts),
 		AlertNotifier:    NewAlertNotifier(cfg.AlertWebhookURL),
+		closeCancel:      closeCancel,
 	}
 	a.Email = mail.NewService(st, mail.SMTPTransport{})
 	st.SetEmailSender(a.Email)
 	if err := a.seed(context.Background()); err != nil {
+		closeCancel()
 		_ = st.Close()
 		return nil, err
 	}
 	if cfg.AppEnv == "production" {
+		a.bgWg.Add(1)
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer a.bgWg.Done()
+			ctx, cancel := context.WithTimeout(closeCtx, 5*time.Second)
 			defer cancel()
 			_ = a.cachedSourceAdminSnapshot(ctx)
 		}()
@@ -1139,6 +1146,10 @@ func (a *App) Logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) Close() error {
+	if a.closeCancel != nil {
+		a.closeCancel()
+	}
+	a.bgWg.Wait()
 	if closer, ok := a.Store.(interface{ Close() error }); ok {
 		return closer.Close()
 	}
