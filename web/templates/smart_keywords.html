@@ -42,147 +42,69 @@
     </div>
   </section>
 
-  <section class="smart-panel smart-settings-panel" aria-labelledby="smart-settings-title">
-    <div class="smart-panel-heading">
-      <div>
-        <h2 id="smart-settings-title" class="card-title">Settings</h2>
-        <p class="card-subtitle">Keep extraction and notification behavior in one compact control panel.</p>
+  <details id="smart-settings-panel" class="section-disclosure smart-disclosure" data-compact-panel open>
+    <summary><div><h2 class="card-title">Settings</h2><p class="section-disclosure-copy">Keep extraction and notification behavior in one compact control panel.</p></div><span class="badge {{.SmartKeywordReadiness.StatusTone}}">{{.SmartKeywordReadiness.StatusLabel}}</span></summary>
+    <div class="section-disclosure-body">
+      <div class="smart-settings-info" role="status">
+        <span class="badge info">Info</span>
+        <span>{{.SmartKeywordReadiness.DependencyMessage}}</span>
       </div>
-      <span class="badge {{.SmartKeywordReadiness.StatusTone}}">{{.SmartKeywordReadiness.StatusLabel}}</span>
-    </div>
-    <div class="smart-settings-info" role="status">
-      <span class="badge info">Info</span>
-      <span>{{.SmartKeywordReadiness.DependencyMessage}}</span>
-    </div>
-    <form method="post" action="/smart-keywords/settings" class="smart-settings-form" data-dirty-form>
-      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <div class="smart-settings-grid">
-        <label class="setting-tile">
-          <span class="setting-kicker">Extraction</span>
-          <span class="setting-main">
-            <span>
-              <span class="setting-title">Enable smart extraction</span>
-              <span class="setting-helper">Broaden matching with related keyword detection.</span>
-            </span>
-            <span class="switch-control">
-              <input type="checkbox" name="enabled" value="1" {{if .Settings.Enabled}}checked{{end}} {{if .SmartKeywordReadiness.EnableControlLocked}}disabled{{end}}>
-              <span class="switch-track" aria-hidden="true"></span>
-            </span>
-          </span>
-        </label>
-        <label class="setting-tile">
-          <span class="setting-kicker">Alerts</span>
-          <span class="setting-main">
-            <span>
-              <span class="setting-title">Global smart alerts</span>
-              <span class="setting-helper">Create alerts when matched tenders enter saved views.</span>
-            </span>
-            <span class="switch-control">
-              <input type="checkbox" name="alerts_enabled" value="1" {{if .Settings.AlertsEnabled}}checked{{end}} {{if not .SmartKeywordReadiness.Ready}}disabled{{end}}>
-              <span class="switch-track" aria-hidden="true"></span>
-            </span>
-          </span>
-        </label>
-        <label class="setting-tile">
-          <span class="setting-kicker">Email</span>
-          <span class="setting-main">
-            <span>
-              <span class="setting-title">Send email alerts</span>
-              <span class="setting-helper">Use the Admin mail server for email alert channels.</span>
-            </span>
-            <span class="switch-control">
-              <input type="checkbox" name="email_alerts_enabled" value="1" {{if .Settings.EmailAlertsEnabled}}checked{{end}} {{if not .SmartKeywordReadiness.Ready}}disabled{{end}}>
-              <span class="switch-track" aria-hidden="true"></span>
-            </span>
-          </span>
-        </label>
-      </div>
-      <div class="smart-settings-status">
-        <span>Status:</span>
-        <span>{{.SmartKeywordReadiness.StatusMessage}}</span>
-        <span class="smart-settings-divider">Email:</span>
-        <span>{{.EmailReadiness.Summary}}</span>
-      </div>
-      <div class="smart-settings-actions">
-        <button type="reset" class="secondary" disabled>Reset</button>
-        <button type="submit" disabled>Save settings</button>
-      </div>
-    </form>
-  </section>
-
-  <div class="smart-workspace-grid">
-    <section id="smart-keyword-manager" class="smart-panel" aria-labelledby="standalone-keywords-title">
-      <div class="smart-panel-heading">
-        <div>
-          <h2 id="standalone-keywords-title" class="card-title">Standalone keywords</h2>
-          <p class="card-subtitle">Fast rules that match tenders without adding Group Tags.</p>
-        </div>
-        <span class="badge info">{{.Summary.StandaloneKeywords}} keywords</span>
-      </div>
-      <form method="post" action="/smart-keywords/keywords" class="smart-inline-form">
+      <form method="post" action="/smart-keywords/settings" class="smart-settings-form" data-dirty-form>
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <input type="hidden" name="enabled" value="1">
-        <label class="sr-only" for="new-smart-keyword">New standalone keyword</label>
-        <input id="new-smart-keyword" name="value" placeholder="water treatment">
-        <button type="submit">Add keyword</button>
+        <div class="smart-settings-grid">
+          <label class="setting-tile">
+            <span class="setting-kicker">Extraction</span>
+            <span class="setting-main">
+              <span>
+                <span class="setting-title">Enable smart extraction</span>
+                <span class="setting-helper">Broaden matching with related keyword detection.</span>
+              </span>
+              <span class="switch-control">
+                <input type="checkbox" name="enabled" value="1" {{if .Settings.Enabled}}checked{{end}} {{if .SmartKeywordReadiness.EnableControlLocked}}disabled{{end}}>
+                <span class="switch-track" aria-hidden="true"></span>
+              </span>
+            </span>
+          </label>
+          <label class="setting-tile">
+            <span class="setting-kicker">Alerts</span>
+            <span class="setting-main">
+              <span>
+                <span class="setting-title">Global smart alerts</span>
+                <span class="setting-helper">Create alerts when matched tenders enter saved views.</span>
+              </span>
+              <span class="switch-control">
+                <input type="checkbox" name="alerts_enabled" value="1" {{if .Settings.AlertsEnabled}}checked{{end}} {{if not .SmartKeywordReadiness.Ready}}disabled{{end}}>
+                <span class="switch-track" aria-hidden="true"></span>
+              </span>
+            </span>
+          </label>
+          <label class="setting-tile">
+            <span class="setting-kicker">Email</span>
+            <span class="setting-main">
+              <span>
+                <span class="setting-title">Send email alerts</span>
+                <span class="setting-helper">Use the Admin mail server for email alert channels.</span>
+              </span>
+              <span class="switch-control">
+                <input type="checkbox" name="email_alerts_enabled" value="1" {{if .Settings.EmailAlertsEnabled}}checked{{end}} {{if not .SmartKeywordReadiness.Ready}}disabled{{end}}>
+                <span class="switch-track" aria-hidden="true"></span>
+              </span>
+            </span>
+          </label>
+        </div>
+        <div class="smart-settings-status">
+          <span>Status:</span>
+          <span>{{.SmartKeywordReadiness.StatusMessage}}</span>
+          <span class="smart-settings-divider">Email:</span>
+          <span>{{.EmailReadiness.Summary}}</span>
+        </div>
+        <div class="smart-settings-actions">
+          <button type="reset" class="secondary" disabled>Reset</button>
+          <button type="submit" disabled>Save settings</button>
+        </div>
       </form>
-      <div class="smart-list" data-mobile-stack>
-        {{range .Standalone}}
-        <div class="smart-list-row">
-          <form id="smart-keyword-{{.ID}}" method="post" action="/smart-keywords/keywords" class="smart-row-form">
-            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <input type="hidden" name="id" value="{{.ID}}">
-            <label>
-              <span class="sr-only">Keyword</span>
-              <input name="value" value="{{.Value}}">
-            </label>
-            <label class="toggle-inline">
-              <input type="checkbox" name="enabled" value="1" {{if .Enabled}}checked{{end}}>
-              <span>{{if .Enabled}}Enabled{{else}}Disabled{{end}}</span>
-            </label>
-            <button type="submit" class="secondary">Save</button>
-          </form>
-          <form method="post" action="/smart-keywords/keywords/delete" data-confirm="Delete keyword '{{.Value}}'?" class="smart-row-delete">
-            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <input type="hidden" name="id" value="{{.ID}}">
-            <button type="submit" class="secondary">Delete</button>
-          </form>
-        </div>
-        {{else}}
-        <div class="empty-state compact-empty">No standalone keywords yet. Add one above to start filtering tender matches.</div>
-        {{end}}
-      </div>
-    </section>
-
-    <section id="smart-preview-panel" class="smart-panel" aria-labelledby="preview-title">
-      <div class="smart-panel-heading">
-        <div>
-          <h2 id="preview-title" class="card-title">Tender preview</h2>
-          <p class="card-subtitle">A lightweight check of recent tenders before you reprocess stored matches.</p>
-        </div>
-        <span class="badge {{if .Summary.PreviewMatches}}success{{else}}info{{end}}">{{.Summary.PreviewMatches}} matched</span>
-      </div>
-      <div class="table-wrap smart-table-wrap">
-        <table class="compact-table">
-          <tr><th>Tender</th><th>Result</th><th>Signals</th><th>Open</th></tr>
-          {{range .Preview}}
-          <tr>
-            <td><strong>{{.Tender.Title}}</strong><div class="footer-note">{{.Tender.Issuer}} {{if .Tender.SourceKey}}· {{.Tender.SourceKey}}{{end}}</div></td>
-            <td>{{if .Evaluation.Accepted}}<span class="badge success">Matched</span>{{else}}<span class="badge">Excluded</span>{{end}}</td>
-            <td>
-              {{range .Evaluation.MatchedKeywords}}<span class="badge info">{{.}}</span> {{end}}
-              {{range .Evaluation.GroupTags}}<span class="badge success">{{.}}</span> {{end}}
-              {{if not .Evaluation.Reasons}}<span class="footer-note">No signal.</span>{{end}}
-            </td>
-            <td><a class="button secondary" href="/tenders/{{.Tender.ID}}">View</a></td>
-          </tr>
-          {{else}}
-          <tr><td colspan="4">{{template "empty_state" "No tenders are available to preview yet."}}</td></tr>
-          {{end}}
-        </table>
-      </div>
-    </section>
-  </div>
+    </div>
+  </details>
 
   <details id="smart-groups-panel" class="section-disclosure smart-disclosure" data-compact-panel>
     <summary><div><h2 class="card-title">Keyword groups</h2><p class="section-disclosure-copy">Advanced rules that apply Group Tags when their keywords match.</p></div><span class="badge info">{{.Summary.KeywordGroups}} groups</span></summary>
@@ -230,6 +152,71 @@
         </tr>
         {{else}}<tr><td colspan="5">{{template "empty_state" "No keyword groups configured."}}</td></tr>{{end}}
       </table></div>
+    </div>
+  </details>
+
+  <details id="smart-preview-panel" class="section-disclosure smart-disclosure" data-compact-panel open>
+    <summary><div><h2 class="card-title">Tender preview</h2><p class="section-disclosure-copy">A lightweight check of recent tenders before you reprocess stored matches.</p></div><span class="badge {{if .Summary.PreviewMatches}}success{{else}}info{{end}}">{{.Summary.PreviewMatches}} matched</span></summary>
+    <div class="section-disclosure-body">
+      <div class="table-wrap smart-table-wrap">
+        <table class="compact-table">
+          <tr><th>Tender</th><th>Signals</th></tr>
+          {{range .Preview}}
+          <tr>
+            <td>
+              <a href="/tenders/{{.Tender.ID}}"><strong>{{.Tender.Title}}</strong></a>
+              <div class="footer-note">{{.Tender.Issuer}} {{if .Tender.SourceKey}}· {{.Tender.SourceKey}}{{end}} · {{if .Evaluation.Accepted}}<span class="badge success">Matched</span>{{else}}<span class="badge">Excluded</span>{{end}}</div>
+            </td>
+            <td>
+              {{range .Evaluation.MatchedKeywords}}<span class="badge info">{{.}}</span> {{end}}
+              {{range .Evaluation.GroupTags}}<span class="badge success">{{.}}</span> {{end}}
+              {{if not .Evaluation.Reasons}}<span class="footer-note">No signal.</span>{{end}}
+            </td>
+          </tr>
+          {{else}}
+          <tr><td colspan="2">{{template "empty_state" "No tenders are available to preview yet."}}</td></tr>
+          {{end}}
+        </table>
+      </div>
+    </div>
+  </details>
+
+  <details id="smart-keyword-manager" class="section-disclosure smart-disclosure" data-compact-panel>
+    <summary><div><h2 class="card-title">Standalone keywords</h2><p class="section-disclosure-copy">Fast rules that match tenders without adding Group Tags.</p></div><span class="badge info">{{.Summary.StandaloneKeywords}} keywords</span></summary>
+    <div class="section-disclosure-body">
+      <form method="post" action="/smart-keywords/keywords" class="smart-inline-form">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="hidden" name="enabled" value="1">
+        <label class="sr-only" for="new-smart-keyword">New standalone keyword</label>
+        <input id="new-smart-keyword" name="value" placeholder="water treatment">
+        <button type="submit">Add keyword</button>
+      </form>
+      <div class="smart-list" data-mobile-stack>
+        {{range .Standalone}}
+        <div class="smart-list-row">
+          <form id="smart-keyword-{{.ID}}" method="post" action="/smart-keywords/keywords" class="smart-row-form">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+            <input type="hidden" name="id" value="{{.ID}}">
+            <label>
+              <span class="sr-only">Keyword</span>
+              <input name="value" value="{{.Value}}">
+            </label>
+            <label class="toggle-inline">
+              <input type="checkbox" name="enabled" value="1" {{if .Enabled}}checked{{end}}>
+              <span>{{if .Enabled}}Enabled{{else}}Disabled{{end}}</span>
+            </label>
+            <button type="submit" class="secondary">Save</button>
+          </form>
+          <form method="post" action="/smart-keywords/keywords/delete" data-confirm="Delete keyword '{{.Value}}'?" class="smart-row-delete">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+            <input type="hidden" name="id" value="{{.ID}}">
+            <button type="submit" class="secondary">Delete</button>
+          </form>
+        </div>
+        {{else}}
+        <div class="empty-state compact-empty">No standalone keywords yet. Add one above to start filtering tender matches.</div>
+        {{end}}
+      </div>
     </div>
   </details>
 
