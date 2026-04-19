@@ -24,6 +24,11 @@ ARG VCS_REF=local
 ARG BUILD_DATE=unknown
 # hadolint ignore=DL3018
 RUN apk add --no-cache ca-certificates
+# Some South African government sites serve incomplete TLS chains (leaf cert
+# only, no intermediates). Bundle the missing intermediate CA certificates so
+# Go and wget can verify these connections.
+COPY ProductionDeployment/certs/*.crt /usr/local/share/ca-certificates/
+RUN update-ca-certificates
 RUN addgroup -S app && adduser -S app -G app
 LABEL org.opencontainers.image.title="OpenBid App" \
       org.opencontainers.image.description="OpenBid application and worker runtime" \
