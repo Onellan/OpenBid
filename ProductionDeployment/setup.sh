@@ -93,7 +93,7 @@ else
 fi
 
 if command -v chmod >/dev/null 2>&1; then
-  chmod 600 "$secret_key_file" "$admin_password_file" || fail "failed to set secret file permissions"
+  chmod 444 "$secret_key_file" "$admin_password_file" || fail "failed to set secret file permissions"
 fi
 
 if [ ! -f .env ]; then
