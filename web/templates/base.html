@@ -58,11 +58,19 @@
                 {{if .CanViewPlatformHealth}}<a class="nav-cascade-link utility {{if hasPrefix .CurrentPath "/health"}}active{{end}}" href="/health"><strong>Health</strong><span>Inspect runtime, services, and database integrity.</span></a>{{end}}
                 <a class="nav-cascade-link utility" href="/logout"><strong>Logout</strong><span>Sign out of the current workspace session.</span></a>
               </div>
+              {{if or .CanManagePlatform .CanManageAudit}}
+              <div class="nav-cascade-section">
+                <div class="nav-cascade-heading">Platform</div>
+                {{if .CanManagePlatform}}<a class="nav-cascade-link utility {{if hasPrefix .CurrentPath "/admin/email"}}active{{end}}" href="/admin/email"><strong>Email</strong><span>Configure outbound SMTP and test delivery.</span></a>{{end}}
+                {{if .CanManageAudit}}<a class="nav-cascade-link utility {{if and (hasPrefix .CurrentPath "/audit-log") (not (hasPrefix .CurrentPath "/audit-log/security"))}}active{{end}}" href="/audit-log"><strong>Audit Log</strong><span>Review workflow and administrative history.</span></a>{{end}}
+                {{if .CanManageAudit}}<a class="nav-cascade-link utility {{if hasPrefix .CurrentPath "/audit-log/security"}}active{{end}}" href="/audit-log/security"><strong>Security Audit</strong><span>Triage auth-sensitive events and lockouts.</span></a>{{end}}
+              </div>
+              {{end}}
             </div>
           </details>
         </nav>
         <details class="mobile-menu" data-mobile-menu>
-          <summary aria-label="Open navigation menu">Menu</summary>
+          <summary aria-label="Open navigation menu"><span class="mobile-menu-icon" aria-hidden="true"><span></span><span></span><span></span></span><span class="mobile-menu-label">Menu</span></summary>
           <div class="mobile-menu-panel">
             <nav class="mobile-menu-section" aria-label="Mobile primary">
               <div class="mobile-menu-links"><a data-mobile-menu-link href="/">Home</a></div>
@@ -97,6 +105,9 @@
                   {{if .CanAdminUsers}}<a data-mobile-menu-link href="/admin/users">User Admin</a>{{end}}
                   {{if .CanManageTenants}}<a data-mobile-menu-link href="/admin/tenants">Tenant Admin</a>{{end}}
                   {{if .CanViewPlatformHealth}}<a data-mobile-menu-link href="/health">Health</a>{{end}}
+                  {{if .CanManagePlatform}}<a data-mobile-menu-link href="/admin/email">Email</a>{{end}}
+                  {{if .CanManageAudit}}<a data-mobile-menu-link href="/audit-log">Audit Log</a>{{end}}
+                  {{if .CanManageAudit}}<a data-mobile-menu-link href="/audit-log/security">Security Audit</a>{{end}}
                   <a data-mobile-menu-link href="/logout">Logout</a>
                 </div>
               </details>

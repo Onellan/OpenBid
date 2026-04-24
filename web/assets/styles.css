@@ -229,6 +229,7 @@ main {
   box-shadow: var(--shadow-strong);
   display: grid;
   gap: 12px;
+  z-index: 30;
 }
 .nav-cascade-panel.left {
   right: auto;
@@ -281,7 +282,10 @@ main {
   min-height: 44px;
   list-style: none;
   cursor: pointer;
-  padding: 10px 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
   border-radius: 12px;
   border: 1px solid var(--color-border);
   background: #fff;
@@ -290,6 +294,30 @@ main {
 }
 .mobile-menu summary::-webkit-details-marker {
   display: none;
+}
+.mobile-menu-icon {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  width: 18px;
+  flex-shrink: 0;
+}
+.mobile-menu-icon span {
+  display: block;
+  height: 2px;
+  background: currentColor;
+  border-radius: 2px;
+  transition: opacity 0.15s, transform 0.15s;
+}
+.mobile-menu[open] .mobile-menu-icon span:nth-child(1) {
+  transform: translateY(6px) rotate(45deg);
+}
+.mobile-menu[open] .mobile-menu-icon span:nth-child(2) {
+  opacity: 0;
+}
+.mobile-menu[open] .mobile-menu-icon span:nth-child(3) {
+  transform: translateY(-6px) rotate(-45deg);
 }
 .mobile-menu-panel {
   display: grid;
@@ -332,7 +360,8 @@ main {
   font-weight: 600;
 }
 .mobile-menu-links a:hover,
-.mobile-menu-links a:focus-visible {
+.mobile-menu-links a:focus-visible,
+.mobile-menu-links a[aria-current="page"] {
   background: var(--color-primary-soft);
   border-color: #cfe0f1;
   color: var(--color-primary);
@@ -1536,6 +1565,9 @@ hr {
     justify-content: flex-end;
     position: relative;
   }
+  .brand-tag {
+    display: none;
+  }
 }
 @media (max-width: 700px) {
   .row-4 {
@@ -1565,6 +1597,9 @@ hr {
   }
   .card-title {
     font-size: 18px;
+  }
+  .opportunity-actions {
+    grid-template-columns: 1fr;
   }
   .smart-hero,
   .smart-panel-heading,
@@ -1596,7 +1631,23 @@ hr {
   .workspace-title {
     font-size: 15px;
   }
-  .brand-tag {
+}
+@media (max-width: 480px) {
+  .kpi-band {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .smart-summary-bar {
+    grid-template-columns: 1fr;
+  }
+  .page-hero .actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .page-hero .actions .button {
+    text-align: center;
+    justify-content: center;
+  }
+  .mobile-menu-label {
     display: none;
   }
 }

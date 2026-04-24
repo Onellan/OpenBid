@@ -161,3 +161,19 @@ for (const form of document.querySelectorAll("form[data-dirty-form]")) {
   });
   syncDirtyState();
 }
+
+(function markCurrentPageLinks() {
+  const path = window.location.pathname;
+  document
+    .querySelectorAll(".mobile-menu-links a[href], .nav-cascade-link[href]")
+    .forEach(function (link) {
+      const href = link.getAttribute("href");
+      if (!href) return;
+      const isActive =
+        href === path ||
+        (href.length > 1 && path.startsWith(href));
+      if (isActive) {
+        link.setAttribute("aria-current", "page");
+      }
+    });
+})();
