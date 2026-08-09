@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.14.4-alpine3.23@sha256:dd4d2bd5b53d9b25a51da13addf2be586beebd5387e289e798e4083d94ca837a
+FROM python:3.15.0rc1-alpine3.23@sha256:af4dbb84b898095e33a0e18ed70be66e6df4f85740da1a2c266907f31e036075
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 # hadolint ignore=DL3018
