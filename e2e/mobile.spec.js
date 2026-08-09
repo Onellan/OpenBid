@@ -6,7 +6,18 @@ const ADMIN_USERNAME =
 const ADMIN_PASSWORD =
   process.env.E2E_ADMIN_PASSWORD || "OpenBid!2026-YK4j3z39CEfu0kbFHcEzM8yI";
 
+let authenticatedCookies;
+
 async function loginAs(page) {
+  if (authenticatedCookies) {
+    await page.context().addCookies(authenticatedCookies);
+    await page.goto("/");
+    if (!new URL(page.url()).pathname.startsWith("/login")) {
+      return;
+    }
+    authenticatedCookies = undefined;
+  }
+
   await page.goto("/login");
   await page.getByLabel("Username").fill(ADMIN_USERNAME);
   await page.getByLabel("Password").fill(ADMIN_PASSWORD);
@@ -14,6 +25,7 @@ async function loginAs(page) {
     page.waitForURL(/\/$/, { waitUntil: "domcontentloaded" }),
     page.getByRole("button", { name: "Sign in to OpenBid" }).click(),
   ]);
+  authenticatedCookies = await page.context().cookies();
 }
 
 // The hamburger is identified by its aria-label so we avoid strict-mode
