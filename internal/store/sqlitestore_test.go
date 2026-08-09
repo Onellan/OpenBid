@@ -67,6 +67,51 @@ func TestSQLiteMigrationAndRuntimeValidation(t *testing.T) {
 	}
 }
 
+func TestSQLiteBackupPreservesRecords(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	s, err := NewSQLiteStore(filepath.Join(root, "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	if err := s.UpsertTenant(ctx, models.Tenant{ID: "tenant-backup", Name: "Backup Tenant"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertTender(ctx, models.Tender{ID: "tender-backup", Title: "Preserved tender", SourceKey: "backup-test", Status: "open"}); err != nil {
+		t.Fatal(err)
+	}
+
+	backupPath := filepath.Join(root, "backups", "store.db")
+	if err := s.BackupTo(ctx, backupPath); err != nil {
+		t.Fatal(err)
+	}
+
+	restored, err := NewSQLiteStore(backupPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	if err := restored.ValidateRuntime(ctx); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := restored.RuntimeStats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.QuickCheck != "ok" || stats.TenantCount != 1 || stats.TenderCount != 1 {
+		t.Fatalf("expected valid backup with preserved records, got %#v", stats)
+	}
+	items, total, err := restored.ListTenders(ctx, ListFilter{Page: 1, PageSize: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(items) != 1 || items[0].ID != "tender-backup" || items[0].Title != "Preserved tender" {
+		t.Fatalf("expected tender data to survive backup, total=%d items=%#v", total, items)
+	}
+}
+
 func TestSQLiteMigrationAddsKeywordTablesWithoutDroppingExistingRecords(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "store.db")
 	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?_pragma=foreign_keys(ON)")
