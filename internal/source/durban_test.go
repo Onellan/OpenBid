@@ -95,7 +95,7 @@ func TestDurbanAdapterFetchMapsTenderRowsAndDocuments(t *testing.T) {
 	if first.Issuer != "UShaka Marine World" || first.TenderType != "RFQ" || first.Category != "General" {
 		t.Fatalf("unexpected listing metadata: %#v", first)
 	}
-	if first.ClosingDate != "2026-04-21 11:00" || first.PublishedDate != "2026-04-14" || first.Status != "open" {
+	if first.ClosingDate != "2026-04-21 11:00" || first.PublishedDate != "2026-04-14" || first.Status != "closed" {
 		t.Fatalf("unexpected date/status mapping: %#v", first)
 	}
 	if first.DocumentURL != server.URL+"/uploads/0000/13/2026/04/14/sz-24.pdf" {

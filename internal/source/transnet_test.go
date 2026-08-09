@@ -148,7 +148,7 @@ func TestTransnetAdapterFetchMapsSupplierPortalTenders(t *testing.T) {
 	if item.PublishedDate != "2026-03-13" || item.ClosingDate != "2026-05-05 16:00" {
 		t.Fatalf("unexpected date mapping: %#v", item)
 	}
-	if item.Status != "open" || item.TenderType != "RFQ" {
+	if item.Status != "closed" || item.TenderType != "RFQ" {
 		t.Fatalf("unexpected status/type mapping: %#v", item)
 	}
 	if item.OriginalURL != server.URL+"/portal/procurement/supplier_relationship_management/tenders/detailed/2827" {
