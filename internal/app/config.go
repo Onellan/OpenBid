@@ -109,6 +109,20 @@ func loadConfigFromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	defaultJobConcurrency := 4
+	defaultSourceConcurrency := 2
+	if lowMemoryMode {
+		defaultJobConcurrency = 2
+		defaultSourceConcurrency = 1
+	}
+	workerJobConcurrency, err := envInt("WORKER_JOB_CONCURRENCY", defaultJobConcurrency)
+	if err != nil {
+		return Config{}, err
+	}
+	workerSourceConcurrency, err := envInt("WORKER_SOURCE_CONCURRENCY", defaultSourceConcurrency)
+	if err != nil {
+		return Config{}, err
+	}
 	loginRateLimitWindowSeconds, err := envInt("LOGIN_RATE_LIMIT_WINDOW_SECONDS", 600)
 	if err != nil {
 		return Config{}, err
@@ -170,6 +184,8 @@ func loadConfigFromEnv() (Config, error) {
 		SessionHours:                   sessionHours,
 		WorkerSyncMinutes:              workerSyncMinutes,
 		WorkerLoopSeconds:              workerLoopSeconds,
+		WorkerJobConcurrency:           workerJobConcurrency,
+		WorkerSourceConcurrency:        workerSourceConcurrency,
 		LoginRateLimitWindowSeconds:    loginRateLimitWindowSeconds,
 		LoginRateLimitMaxAttempts:      loginRateLimitMaxAttempts,
 		AlertEvalSeconds:               alertEvalSeconds,

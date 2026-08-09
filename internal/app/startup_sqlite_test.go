@@ -1,12 +1,37 @@
 package app
 
 import (
+	"context"
 	"openbid/internal/models"
 	"openbid/internal/store"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestWorkerStartupDoesNotBootstrapOrReconcileApplicationData(t *testing.T) {
+	dataPath := filepath.Join(t.TempDir(), "store.db")
+	t.Setenv("DATA_PATH", dataPath)
+	a, err := NewWorker()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	users, err := a.Store.ListUsers(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(users) != 0 {
+		t.Fatalf("expected worker startup not to seed users, got %d", len(users))
+	}
+	configs, err := a.Store.ListSourceConfigs(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(configs) != 0 {
+		t.Fatalf("expected worker startup not to reconcile sources, got %d", len(configs))
+	}
+}
 
 func TestSeededStartupSQLite(t *testing.T) {
 	old := os.Getenv("DATA_PATH")

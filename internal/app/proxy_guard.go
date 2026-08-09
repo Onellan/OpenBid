@@ -4,7 +4,7 @@ import "net/http"
 
 func (a *App) WithProxyRequirement(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if a.Config.AppEnv != "production" || r.URL.Path == "/healthz" || proxyHeadersPresent(r) {
+		if a.Config.AppEnv != "production" || r.URL.Path == "/healthz" || (requestFromTrustedProxy(r) && proxyHeadersPresent(r)) {
 			next.ServeHTTP(w, r)
 			return
 		}

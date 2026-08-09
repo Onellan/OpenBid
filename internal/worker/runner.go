@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -24,6 +25,8 @@ type Runner struct {
 	Extractor            *extract.Client
 	HeartbeatPath        string
 	SyncEvery, LoopEvery time.Duration
+	JobConcurrency       int
+	SourceConcurrency    int
 	Now                  func() time.Time
 }
 
@@ -236,105 +239,109 @@ func (r Runner) syncAll(ctx context.Context) {
 	}
 }
 func (r Runner) processJobs(ctx context.Context) {
-	jobs, err := r.Store.ListJobs(ctx)
+	concurrency := r.JobConcurrency
+	if concurrency < 1 {
+		concurrency = 2
+	}
+	if concurrency > 16 {
+		concurrency = 16
+	}
+	jobs, err := r.Store.ClaimDueJobs(ctx, r.now(), concurrency*4)
 	if err != nil {
-		r.logKV("worker_jobs_list_failed", "error", err)
+		r.logKV("worker_jobs_claim_failed", "error", err)
 		return
 	}
+	work := make(chan models.ExtractionJob)
+	var workers sync.WaitGroup
+	for range concurrency {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for job := range work {
+				r.processClaimedJob(ctx, job)
+			}
+		}()
+	}
 	for _, job := range jobs {
-		if job.JobType == models.JobTypeExpiredTenderCleanup {
-			r.processExpiredTenderCleanupJob(ctx, job)
-			continue
-		}
-		if strings.TrimSpace(job.TenderID) == "" {
-			r.logKV("worker_job_prune_missing_tender_id", "job", job.ID)
-			r.deleteJob(ctx, job.ID)
-			continue
-		}
-		tender, err := r.Store.GetTender(ctx, job.TenderID)
-		if err != nil {
-			r.logKV("worker_job_prune_missing_tender", "job", job.ID, "tender", job.TenderID)
-			r.deleteJob(ctx, job.ID)
-			continue
-		}
-		if !(job.State == models.ExtractionQueued || job.State == models.ExtractionRetry) || r.now().Before(job.NextAttemptAt) {
-			continue
-		}
-		if tenderstate.IsExpired(tender, r.now()) {
-			r.markExpiredExtractionSkipped(ctx, tender, &job)
-			continue
-		}
-		job.State = models.ExtractionProcessing
-		job.Attempts++
-		if !r.persistJobUpdate(ctx, job) {
-			continue
-		}
-		if r.Extractor == nil || strings.TrimSpace(r.Extractor.BaseURL) == "" {
-			job.State = models.ExtractionFailed
-			job.LastError = "extractor client is not configured"
-			job.NextAttemptAt = time.Time{}
-			r.persistJobUpdate(ctx, job)
-			r.updateTenderDocumentState(ctx, job.TenderID, models.ExtractionFailed)
-			r.logKV("worker_job_extractor_unconfigured", "job", job.ID, "tender", job.TenderID)
-			continue
-		}
-		if _, err := netguard.NormalizePublicHTTPURL(job.DocumentURL); err != nil {
-			job.State = models.ExtractionFailed
-			job.LastError = err.Error()
-			job.NextAttemptAt = time.Time{}
-			r.persistJobUpdate(ctx, job)
-			r.updateTenderDocumentState(ctx, job.TenderID, models.ExtractionFailed)
-			r.logKV("worker_job_extract_rejected_url", "job", job.ID, "tender", job.TenderID, "error", err)
-			continue
-		}
-		res, err := r.Extractor.Extract(ctx, job.DocumentURL)
-		if err != nil {
-			job.State = models.ExtractionRetry
-			if job.Attempts >= 3 {
-				job.State = models.ExtractionFailed
-			}
-			job.LastError = err.Error()
-			if job.State == models.ExtractionFailed {
-				job.NextAttemptAt = time.Time{}
-			} else {
-				job.NextAttemptAt = r.now().Add(time.Duration(job.Attempts*job.Attempts) * time.Minute)
-			}
-			r.persistJobUpdate(ctx, job)
-			if job.State == models.ExtractionFailed {
-				r.updateTenderDocumentState(ctx, job.TenderID, models.ExtractionFailed)
-			} else {
-				r.updateTenderDocumentState(ctx, job.TenderID, models.ExtractionRetry)
-			}
-			r.logKV("worker_job_extract_failed", "job", job.ID, "tender", job.TenderID, "attempts", job.Attempts, "state", job.State, "error", err)
-			continue
-		}
-		if t, err := r.Store.GetTender(ctx, job.TenderID); err == nil {
-			t.DocumentStatus = models.ExtractionCompleted
-			t.Excerpt = res.Excerpt
-			t.DocumentFacts = cloneFactMap(res.Facts)
-			applyDocumentPromotions(&t, t.DocumentFacts)
-			t.ExtractedFacts = mergeFactMaps(t.ExtractedFacts, t.PageFacts, t.DocumentFacts)
-			if filtered, evaluation, accepted, err := r.Store.EvaluateSmartTenderForExtraction(ctx, t); err == nil && accepted {
-				t.GroupTags = evaluation.GroupTags
-				t = filtered
-			}
-			r.persistTender(ctx, t)
-		} else {
-			r.logKV("worker_tender_lookup_failed", "tender", job.TenderID, "error", err)
-		}
-		job.State = models.ExtractionCompleted
-		job.NextAttemptAt = time.Time{}
-		r.persistJobUpdate(ctx, job)
-		r.logKV("worker_job_extract_completed", "job", job.ID, "tender", job.TenderID, "attempts", job.Attempts)
+		work <- job
+	}
+	close(work)
+	workers.Wait()
+	if archived, err := r.Store.ArchiveFinishedJobs(ctx, r.now().Add(-30*24*time.Hour), 500); err != nil {
+		r.logKV("worker_job_archive_failed", "error", err)
+	} else if archived > 0 {
+		r.logKV("worker_job_archive_completed", "count", archived)
 	}
 }
 
-func (r Runner) processExpiredTenderCleanupJob(ctx context.Context, job models.ExtractionJob) {
-	if !(job.State == models.ExtractionQueued || job.State == models.ExtractionRetry) || r.now().Before(job.NextAttemptAt) {
+func (r Runner) processClaimedJob(ctx context.Context, job models.ExtractionJob) {
+	if job.JobType == models.JobTypeExpiredTenderCleanup {
+		r.processExpiredTenderCleanupJob(ctx, job)
 		return
 	}
-	job.State = models.ExtractionProcessing
-	job.Attempts++
+	if strings.TrimSpace(job.TenderID) == "" {
+		r.logKV("worker_job_prune_missing_tender_id", "job", job.ID)
+		r.deleteJob(ctx, job.ID)
+		return
+	}
+	tender, err := r.Store.GetTender(ctx, job.TenderID)
+	if err != nil {
+		r.logKV("worker_job_prune_missing_tender", "job", job.ID, "tender", job.TenderID)
+		r.deleteJob(ctx, job.ID)
+		return
+	}
+	if tenderstate.IsExpired(tender, r.now()) {
+		if job.Attempts > 0 {
+			job.Attempts--
+		}
+		r.markExpiredExtractionSkipped(ctx, tender, &job)
+		return
+	}
+	if r.Extractor == nil || strings.TrimSpace(r.Extractor.BaseURL) == "" {
+		job.State, job.LastError, job.NextAttemptAt = models.ExtractionFailed, "extractor client is not configured", time.Time{}
+		r.persistJobUpdate(ctx, job)
+		r.updateTenderDocumentState(ctx, job.TenderID, models.ExtractionFailed)
+		return
+	}
+	if _, err := netguard.NormalizePublicHTTPURL(job.DocumentURL); err != nil {
+		job.State, job.LastError, job.NextAttemptAt = models.ExtractionFailed, err.Error(), time.Time{}
+		r.persistJobUpdate(ctx, job)
+		r.updateTenderDocumentState(ctx, job.TenderID, models.ExtractionFailed)
+		return
+	}
+	res, err := r.Extractor.Extract(ctx, job.DocumentURL)
+	if err != nil {
+		job.State = models.ExtractionRetry
+		if job.Attempts >= 3 {
+			job.State = models.ExtractionFailed
+			job.NextAttemptAt = time.Time{}
+		} else {
+			job.NextAttemptAt = r.now().Add(time.Duration(job.Attempts*job.Attempts) * time.Minute)
+		}
+		job.LastError = err.Error()
+		r.persistJobUpdate(ctx, job)
+		r.updateTenderDocumentState(ctx, job.TenderID, job.State)
+		r.logKV("worker_job_extract_failed", "job", job.ID, "tender", job.TenderID, "attempts", job.Attempts, "state", job.State, "error", err)
+		return
+	}
+	if tender, err = r.Store.GetTender(ctx, job.TenderID); err == nil {
+		tender.DocumentStatus = models.ExtractionCompleted
+		tender.Excerpt = res.Excerpt
+		tender.DocumentFacts = cloneFactMap(res.Facts)
+		applyDocumentPromotions(&tender, tender.DocumentFacts)
+		tender.ExtractedFacts = mergeFactMaps(tender.ExtractedFacts, tender.PageFacts, tender.DocumentFacts)
+		if filtered, evaluation, accepted, evalErr := r.Store.EvaluateSmartTenderForExtraction(ctx, tender); evalErr == nil && accepted {
+			tender.GroupTags = evaluation.GroupTags
+			tender = filtered
+		}
+		r.persistTender(ctx, tender)
+	}
+	job.State, job.NextAttemptAt = models.ExtractionCompleted, time.Time{}
+	r.persistJobUpdate(ctx, job)
+	r.logKV("worker_job_extract_completed", "job", job.ID, "tender", job.TenderID, "attempts", job.Attempts)
+}
+
+func (r Runner) processExpiredTenderCleanupJob(ctx context.Context, job models.ExtractionJob) {
 	job.LastError = ""
 	job.ResultSummary = "Archiving expired tenders now."
 	if !r.persistJobUpdate(ctx, job) {
@@ -401,6 +408,12 @@ func (r Runner) processSourceChecks(ctx context.Context) {
 		healthByKey[health.SourceKey] = health
 	}
 	now := r.now()
+	type sourceWork struct {
+		cfg     models.SourceConfig
+		health  models.SourceHealth
+		trigger string
+	}
+	dueWork := []sourceWork{}
 	for _, cfg := range configs {
 		health := healthByKey[cfg.Key]
 		health.SourceKey = cfg.Key
@@ -416,8 +429,31 @@ func (r Runner) processSourceChecks(ctx context.Context) {
 		if !due {
 			continue
 		}
-		r.runSourceCheck(ctx, cfg, settings, health, trigger)
+		dueWork = append(dueWork, sourceWork{cfg: cfg, health: health, trigger: trigger})
 	}
+	concurrency := r.SourceConcurrency
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	if concurrency > 8 {
+		concurrency = 8
+	}
+	work := make(chan sourceWork)
+	var workers sync.WaitGroup
+	for range concurrency {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for item := range work {
+				r.runSourceCheck(ctx, item.cfg, settings, item.health, item.trigger)
+			}
+		}()
+	}
+	for _, item := range dueWork {
+		work <- item
+	}
+	close(work)
+	workers.Wait()
 }
 
 func (r Runner) runSourceCheck(ctx context.Context, cfg models.SourceConfig, settings models.SourceScheduleSettings, health models.SourceHealth, trigger string) {
@@ -545,18 +581,13 @@ func (r Runner) nextWait(ctx context.Context) time.Duration {
 			}
 		}
 	}
-	jobs, err := r.Store.ListJobs(ctx)
-	if err == nil {
-		for _, job := range jobs {
-			if !(job.State == models.ExtractionQueued || job.State == models.ExtractionRetry) {
-				continue
-			}
-			if !job.NextAttemptAt.After(now) {
-				return time.Second
-			}
-			if job.NextAttemptAt.Before(next) {
-				next = job.NextAttemptAt
-			}
+	dueAt, err := r.Store.NextDueJobAt(ctx)
+	if err == nil && !dueAt.IsZero() {
+		if !dueAt.After(now) {
+			return time.Second
+		}
+		if dueAt.Before(next) {
+			next = dueAt
 		}
 	}
 	wait := time.Until(next)

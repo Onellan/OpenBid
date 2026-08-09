@@ -1,21 +1,32 @@
 #!/usr/bin/env python3
 import ipaddress
+import http.client
 import json
 import os
 import re
 import shutil
 import socket
+import ssl
 import subprocess  # nosec B404 - pdftotext is invoked with fixed arguments and shell=False.
 import tempfile
+import threading
 import urllib.parse
-import urllib.request
+from collections import OrderedDict
 from datetime import datetime
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
+from time import monotonic
 
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 PHONE_RE = re.compile(r"(?:\+27|0)[0-9][0-9 \-()/]{7,}")
 MONTH_FORMATS = ["%d %B %Y", "%d %b %Y", "%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d"]
 MAX_FETCH_BYTES = 15 * 1024 * 1024
+MAX_REDIRECTS = 5
+MAX_EXTRACTED_TEXT_BYTES = 5 * 1024 * 1024
+PDF_PROCESS_TIMEOUT_SECONDS = 45
+CACHE_TTL_SECONDS = 300
+CACHE_MAX_ENTRIES = 64
+_result_cache: OrderedDict[str, tuple[float, tuple[str, str]]] = OrderedDict()
+_cache_lock = threading.Lock()
 
 
 def is_public_ip(value: str) -> bool:
@@ -30,7 +41,7 @@ def is_public_ip(value: str) -> bool:
     )
 
 
-def validate_public_url(raw: str) -> str:
+def resolve_public_url(raw: str) -> tuple[urllib.parse.ParseResult, tuple[str, ...]]:
     parsed = urllib.parse.urlparse((raw or "").strip())
     if parsed.scheme not in ("http", "https"):
         raise ValueError("url must use http or https")
@@ -50,7 +61,7 @@ def validate_public_url(raw: str) -> str:
         host_ip = ipaddress.ip_address(host)
     except ValueError:
         try:
-            addresses = {item[4][0] for item in socket.getaddrinfo(host, None)}
+            addresses = {item[4][0] for item in socket.getaddrinfo(host, parsed.port)}
         except socket.gaierror as err:
             raise ValueError("url host did not resolve") from err
         if not addresses:
@@ -63,23 +74,97 @@ def validate_public_url(raw: str) -> str:
     else:
         if not is_public_ip(str(host_ip)):
             raise ValueError("private or local network urls are not allowed")
+        addresses = {str(host_ip)}
+    return parsed, tuple(sorted(addresses))
+
+
+def validate_public_url(raw: str) -> str:
+    parsed, _addresses = resolve_public_url(raw)
     return parsed.geturl()
 
 
-def fetch(url: str) -> bytes:
-    safe_url = validate_public_url(url)
-    req = urllib.request.Request(safe_url, headers={"User-Agent": "OpenBid/1.0"})
-    with urllib.request.urlopen(
-        req, timeout=60
-    ) as resp:  # nosec B310 - URL is scheme and host validated above.
-        validate_public_url(resp.geturl())
-        content_length = resp.headers.get("Content-Length", "").strip()
+class PinnedHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, host: str, pinned_ip: str, port: int, timeout: int = 60):
+        self.pinned_ip = pinned_ip
+        super().__init__(host, port=port, timeout=timeout)
+
+    def connect(self):
+        self.sock = socket.create_connection(
+            (self.pinned_ip, self.port), self.timeout, self.source_address
+        )
+        if self._tunnel_host:
+            self._tunnel()
+
+
+class PinnedHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, host: str, pinned_ip: str, port: int, timeout: int = 60):
+        self.pinned_ip = pinned_ip
+        super().__init__(
+            host,
+            port=port,
+            timeout=timeout,
+            context=ssl.create_default_context(),
+        )
+
+    def connect(self):
+        sock = socket.create_connection(
+            (self.pinned_ip, self.port), self.timeout, self.source_address
+        )
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+
+
+def _fetch_once(
+    parsed: urllib.parse.ParseResult, pinned_ip: str
+) -> tuple[int, dict[str, str], bytes]:
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    connection_type = (
+        PinnedHTTPSConnection if parsed.scheme == "https" else PinnedHTTPConnection
+    )
+    connection = connection_type(parsed.hostname or "", pinned_ip, port, timeout=60)
+    path = urllib.parse.urlunparse(("", "", parsed.path or "/", parsed.params, parsed.query, ""))
+    host_header = parsed.hostname or ""
+    if ":" in host_header and not host_header.startswith("["):
+        host_header = f"[{host_header}]"
+    if parsed.port and parsed.port != (443 if parsed.scheme == "https" else 80):
+        host_header = f"{host_header}:{parsed.port}"
+    try:
+        connection.request(
+            "GET",
+            path,
+            headers={"Host": host_header, "User-Agent": "OpenBid/1.0", "Accept-Encoding": "identity"},
+        )
+        response = connection.getresponse()
+        headers = {key.lower(): value for key, value in response.getheaders()}
+        content_length = headers.get("content-length", "").strip()
         if content_length.isdigit() and int(content_length) > MAX_FETCH_BYTES:
             raise ValueError("document is too large to extract safely")
-        data = resp.read(MAX_FETCH_BYTES + 1)
+        data = response.read(MAX_FETCH_BYTES + 1)
         if len(data) > MAX_FETCH_BYTES:
             raise ValueError("document is too large to extract safely")
+        return response.status, headers, data
+    finally:
+        connection.close()
+
+
+def fetch(url: str) -> bytes:
+    current = url
+    for redirect_count in range(MAX_REDIRECTS + 1):
+        parsed, addresses = resolve_public_url(current)
+        status, headers, data = _fetch_once(parsed, addresses[0])
+        if status in (301, 302, 303, 307, 308):
+            location = headers.get("location", "").strip()
+            if not location:
+                raise ValueError("redirect response did not include a location")
+            if redirect_count >= MAX_REDIRECTS:
+                raise ValueError("too many redirects")
+            current = urllib.parse.urljoin(parsed.geturl(), location)
+            # Reject a private redirect before a connection to it can be attempted.
+            validate_public_url(current)
+            continue
+        if status < 200 or status >= 300:
+            raise ValueError(f"document fetch returned HTTP {status}")
         return data
+    raise ValueError("too many redirects")
 
 
 def parse_pdf(data: bytes) -> str:
@@ -96,9 +181,13 @@ def parse_pdf(data: bytes) -> str:
             check=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            timeout=PDF_PROCESS_TIMEOUT_SECONDS,
         )  # nosec B603 - shell=False with fixed executable and temporary file paths.
         with open(txt, "r", encoding="utf-8", errors="ignore") as fh:
-            return fh.read()
+            text = fh.read(MAX_EXTRACTED_TEXT_BYTES + 1)
+            if len(text) > MAX_EXTRACTED_TEXT_BYTES:
+                raise ValueError("extracted document text is too large")
+            return text
     finally:
         for p in (src, txt):
             try:
@@ -324,6 +413,58 @@ def mine(text: str) -> dict:
     return facts
 
 
+def extract_document(url: str) -> tuple[str, str]:
+    cache_key = (url or "").strip()
+    now = monotonic()
+    with _cache_lock:
+        cached = _result_cache.get(cache_key)
+        if cached and now-cached[0] <= CACHE_TTL_SECONDS:
+            _result_cache.move_to_end(cache_key)
+            return cached[1]
+        if cached:
+            _result_cache.pop(cache_key, None)
+
+    data = fetch(cache_key)
+    if data.startswith(b"%PDF-") or cache_key.lower().endswith(".pdf"):
+        result = ("pdf", parse_pdf(data))
+    elif "<html" in data[:500].decode("utf-8", errors="ignore").lower():
+        result = ("html", parse_html(data))
+    else:
+        result = ("text", data.decode("utf-8", errors="ignore"))
+    if len(result[1]) > MAX_EXTRACTED_TEXT_BYTES:
+        raise ValueError("extracted document text is too large")
+    with _cache_lock:
+        _result_cache[cache_key] = (now, result)
+        _result_cache.move_to_end(cache_key)
+        while len(_result_cache) > CACHE_MAX_ENTRIES:
+            _result_cache.popitem(last=False)
+    return result
+
+
+class BoundedThreadingHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+    request_queue_size = 32
+
+    def __init__(self, server_address, handler_class, max_workers: int | None = None):
+        super().__init__(server_address, handler_class)
+        workers = max_workers or int(os.getenv("EXTRACTOR_MAX_CONCURRENCY", "2"))
+        self._request_slots = threading.BoundedSemaphore(max(1, min(workers, 8)))
+
+    def process_request(self, request, client_address):
+        self._request_slots.acquire()
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._request_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._request_slots.release()
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/healthz":
@@ -347,14 +488,19 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(400)
             self.end_headers()
             return
-        payload = json.loads(self.rfile.read(length) or b"{}")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self.send_response(400)
+            self.end_headers()
+            return
         url = payload.get("url", "")
         if not url:
             self.send_response(400)
             self.end_headers()
             return
         try:
-            data = fetch(url)
+            kind, text = extract_document(url)
         except Exception as exc:
             body = json.dumps({"error": str(exc)}).encode()
             self.send_response(400)
@@ -363,12 +509,6 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        if url.lower().endswith(".pdf"):
-            kind, text = "pdf", parse_pdf(data)
-        elif "<html" in data[:500].decode("utf-8", errors="ignore").lower():
-            kind, text = "html", parse_html(data)
-        else:
-            kind, text = "text", data.decode("utf-8", errors="ignore")
         out = json.dumps(
             {"type": kind, "excerpt": text[:600], "facts": mine(text)}
         ).encode()
@@ -380,7 +520,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    HTTPServer(
+    BoundedThreadingHTTPServer(
         (
             os.getenv("HOST", "0.0.0.0"),  # nosec B104 - container default.
             int(os.getenv("PORT", "9090")),

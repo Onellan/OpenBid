@@ -45,7 +45,23 @@ func requestIDFromContext(ctx context.Context) string {
 	return ""
 }
 
+func remoteClientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err == nil {
+		return host
+	}
+	return strings.TrimSpace(r.RemoteAddr)
+}
+
+func requestFromTrustedProxy(r *http.Request) bool {
+	ip := net.ParseIP(remoteClientIP(r))
+	return ip != nil && (ip.IsLoopback() || ip.IsPrivate())
+}
+
 func forwardedClientIP(r *http.Request) string {
+	if !requestFromTrustedProxy(r) {
+		return remoteClientIP(r)
+	}
 	for _, header := range []string{"X-Forwarded-For", "X-Real-IP"} {
 		raw := strings.TrimSpace(r.Header.Get(header))
 		if raw == "" {
@@ -54,13 +70,11 @@ func forwardedClientIP(r *http.Request) string {
 		if index := strings.Index(raw, ","); index >= 0 {
 			raw = strings.TrimSpace(raw[:index])
 		}
-		return raw
+		if net.ParseIP(raw) != nil {
+			return raw
+		}
 	}
-	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
-	if err == nil {
-		return host
-	}
-	return strings.TrimSpace(r.RemoteAddr)
+	return remoteClientIP(r)
 }
 
 func (a *App) WithRequestObservability(next http.Handler) http.Handler {

@@ -135,41 +135,47 @@ function main() {
     throw new Error(`missing healthy e2e baseline database: ${smokeDbPath}`);
   }
 
-  run("docker", ["compose", "-f", composeFile, "stop", "proxy", "app", "worker"]);
+  let stackWasSwitched = false;
+  try {
+    run("docker", ["compose", "-f", composeFile, "stop", "proxy", "app", "worker"]);
 
-  ensureNoSeededE2eData();
-  fs.copyFileSync(smokeDbPath, e2eDbPath);
-  removeIfPresent(`${e2eDbPath}-wal`);
-  removeIfPresent(`${e2eDbPath}-shm`);
+    ensureNoSeededE2eData();
+    fs.copyFileSync(smokeDbPath, e2eDbPath);
+    removeIfPresent(`${e2eDbPath}-wal`);
+    removeIfPresent(`${e2eDbPath}-shm`);
 
-  run("go", ["run", "./cmd/e2e_seed"], {
-    DATA_PATH: e2eDbPath,
-  });
+    run("go", ["run", "./cmd/e2e_seed"], {
+      DATA_PATH: e2eDbPath,
+    });
 
-  run(
-    "docker",
-    [
-      "compose",
-      "-f",
-      composeFile,
-      "up",
-      "-d",
-      "--build",
-      "--wait",
-      "--force-recreate",
-      "app",
-      "worker",
-      "proxy",
-    ],
-    {
-      APP_ENV: "development",
-      DATA_PATH: "/app/data/e2e.db",
-      SECURE_COOKIES: "false",
-    },
-  );
-
-  run("npx", ["playwright", "test"]);
-  restoreLocalStackToStoreDb();
+    run(
+      "docker",
+      [
+        "compose",
+        "-f",
+        composeFile,
+        "up",
+        "-d",
+        "--build",
+        "--wait",
+        "--force-recreate",
+        "app",
+        "worker",
+        "proxy",
+      ],
+      {
+        APP_ENV: "development",
+        DATA_PATH: "/app/data/e2e.db",
+        SECURE_COOKIES: "false",
+      },
+    );
+    stackWasSwitched = true;
+    run("npx", ["playwright", "test"]);
+  } finally {
+    if (stackWasSwitched) {
+      restoreLocalStackToStoreDb();
+    }
+  }
 }
 
 try {

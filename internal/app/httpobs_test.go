@@ -55,14 +55,14 @@ func TestWithRequestObservabilityGeneratesRequestIDWhenMissing(t *testing.T) {
 
 func TestForwardedClientIPPrefersForwardedHeaders(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.RemoteAddr = "198.51.100.20:1234"
+	req.RemoteAddr = "172.20.0.10:1234"
 	req.Header.Set("X-Forwarded-For", "203.0.113.10, 10.0.0.1")
 	if ip := forwardedClientIP(req); ip != "203.0.113.10" {
 		t.Fatalf("expected first forwarded IP, got %q", ip)
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/", nil)
-	req.RemoteAddr = "198.51.100.20:1234"
+	req.RemoteAddr = "172.20.0.10:1234"
 	req.Header.Set("X-Real-IP", "203.0.113.20")
 	if ip := forwardedClientIP(req); ip != "203.0.113.20" {
 		t.Fatalf("expected X-Real-IP fallback, got %q", ip)
@@ -72,5 +72,10 @@ func TestForwardedClientIPPrefersForwardedHeaders(t *testing.T) {
 	req.RemoteAddr = "198.51.100.20:1234"
 	if ip := forwardedClientIP(req); ip != "198.51.100.20" {
 		t.Fatalf("expected remote addr fallback, got %q", ip)
+	}
+
+	req.Header.Set("X-Forwarded-For", "203.0.113.99")
+	if ip := forwardedClientIP(req); ip != "198.51.100.20" {
+		t.Fatalf("expected untrusted peer's spoofed header to be ignored, got %q", ip)
 	}
 }

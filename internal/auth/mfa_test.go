@@ -2,6 +2,7 @@ package auth
 
 import (
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -15,6 +16,17 @@ func TestNewRecoveryCodesDefaultCountAndFormat(t *testing.T) {
 		if !pattern.MatchString(code) {
 			t.Fatalf("unexpected recovery code format: %q", code)
 		}
+	}
+}
+
+func TestHashedRecoveryCodeCanBeConsumedWithoutStoringPlaintext(t *testing.T) {
+	hashed := HashRecoveryCode("server-secret", "ABCD-EF12")
+	if !IsHashedRecoveryCode(hashed) || strings.Contains(hashed, "ABCDEF12") {
+		t.Fatalf("expected one-way recovery code storage, got %q", hashed)
+	}
+	remaining, ok := ConsumeRecoveryCodeWithKey([]string{hashed}, "abcd ef12", "server-secret")
+	if !ok || len(remaining) != 0 {
+		t.Fatal("expected keyed recovery hash to be consumed")
 	}
 }
 

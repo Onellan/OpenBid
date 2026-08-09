@@ -499,86 +499,80 @@ func (s *SQLiteStore) ListKeywordTenderMatches(ctx context.Context, tenantID, us
 	if filter.PageSize > 100 {
 		filter.PageSize = 100
 	}
-	rows, err := s.db.QueryContext(ctx, `
-		select id, profile_id, tenant_id, user_id, tender_id, matched_keywords, match_count, refreshed_at, created_at, updated_at
-		from keyword_match_records
-		where profile_id = ? and tenant_id = ? and user_id = ?
-	`, profile.ID, profile.TenantID, profile.UserID)
+	clauses := []string{"km.profile_id = ?", "km.tenant_id = ?", "km.user_id = ?", "i.archived = 0"}
+	args := []any{profile.ID, profile.TenantID, profile.UserID}
+	if query := strings.TrimSpace(filter.Query); query != "" {
+		if len([]rune(query)) >= 3 {
+			clauses = append(clauses, "exists (select 1 from tender_search ts where ts.tender_id = t.id and tender_search match ?)")
+			args = append(args, ftsPhrase(query))
+		} else {
+			term := "%" + strings.ToLower(query) + "%"
+			clauses = append(clauses, "(lower(coalesce(json_extract(t.payload, '$.Title'), '')) like ? or lower(coalesce(json_extract(t.payload, '$.Summary'), '')) like ? or lower(coalesce(json_extract(t.payload, '$.Excerpt'), '')) like ?)")
+			args = append(args, term, term, term)
+		}
+	}
+	if filter.Source != "" {
+		clauses = append(clauses, "i.source_key = ?")
+		args = append(args, filter.Source)
+	}
+	if filter.Province != "" {
+		clauses = append(clauses, "lower(i.province) = ?")
+		args = append(args, strings.ToLower(filter.Province))
+	}
+	if filter.Status != "" {
+		clauses = append(clauses, "i.status = ?")
+		args = append(args, strings.ToLower(filter.Status))
+	}
+	if keyword := normalizeKeywordValue(filter.Keyword); keyword != "" {
+		clauses = append(clauses, "exists (select 1 from json_each(km.matched_keywords) where lower(trim(value)) = ?)")
+		args = append(args, strings.ToLower(keyword))
+	}
+	fromClause := " from keyword_match_records km join tender_filter_index i on i.tender_id = km.tender_id join tenders t on t.id = km.tender_id"
+	whereClause := " where " + strings.Join(clauses, " and ")
+	var total int
+	if err := s.db.QueryRowContext(ctx, "select count(*)"+fromClause+whereClause, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	offset := (filter.Page - 1) * filter.PageSize
+	if offset >= total {
+		return []models.KeywordTenderMatchResult{}, total, nil
+	}
+	orderClause := "i.closing_date asc, i.tender_id asc"
+	switch filter.Sort {
+	case "updated":
+		orderClause = "km.updated_at desc, i.tender_id asc"
+	case "source":
+		orderClause = "lower(i.source_key) asc, i.tender_id asc"
+	case "matches":
+		orderClause = "km.match_count desc, i.closing_date asc, i.tender_id asc"
+	}
+	queryArgs := append(append([]any{}, args...), filter.PageSize, offset)
+	rows, err := s.db.QueryContext(ctx, `select km.id, km.profile_id, km.tenant_id, km.user_id, km.tender_id,
+		km.matched_keywords, km.match_count, km.refreshed_at, km.created_at, km.updated_at, t.payload`+
+		fromClause+whereClause+" order by "+orderClause+" limit ? offset ?", queryArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer rows.Close()
-	matches := []models.KeywordTenderMatch{}
-	tenderIDs := []string{}
+	results := make([]models.KeywordTenderMatchResult, 0, filter.PageSize)
 	for rows.Next() {
-		match, err := scanKeywordTenderMatch(rows)
+		var match models.KeywordTenderMatch
+		var matchedKeywords, refreshedAt, createdAt, updatedAt, payload string
+		if err := rows.Scan(&match.ID, &match.ProfileID, &match.TenantID, &match.UserID, &match.TenderID,
+			&matchedKeywords, &match.MatchCount, &refreshedAt, &createdAt, &updatedAt, &payload); err != nil {
+			return nil, 0, err
+		}
+		match.MatchedKeywords = decodeKeywordList(matchedKeywords)
+		match.RefreshedAt = parseSQLiteTime(refreshedAt)
+		match.CreatedAt = parseSQLiteTime(createdAt)
+		match.UpdatedAt = parseSQLiteTime(updatedAt)
+		tender, err := decodeTenderPayload(payload)
 		if err != nil {
 			return nil, 0, err
 		}
-		matches = append(matches, match)
-		tenderIDs = append(tenderIDs, match.TenderID)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, 0, err
-	}
-	tenderByID, err := s.GetTendersByIDs(ctx, tenderIDs)
-	if err != nil {
-		return nil, 0, err
-	}
-	results := []models.KeywordTenderMatchResult{}
-	for _, match := range matches {
-		tender, ok := tenderByID[match.TenderID]
-		if !ok {
-			continue
-		}
-		if filter.Query != "" && !(ContainsCI(tender.Title, filter.Query) || ContainsCI(tender.Summary, filter.Query) || ContainsCI(tender.Excerpt, filter.Query)) {
-			continue
-		}
-		if filter.Source != "" && tender.SourceKey != filter.Source {
-			continue
-		}
-		if filter.Province != "" && !strings.EqualFold(tender.Province, filter.Province) {
-			continue
-		}
-		if filter.Status != "" && !strings.EqualFold(tender.Status, filter.Status) {
-			continue
-		}
-		if filter.Keyword != "" && !matchContainsKeyword(match, filter.Keyword) {
-			continue
-		}
 		results = append(results, models.KeywordTenderMatchResult{Match: match, Tender: tender})
 	}
-	sort.Slice(results, func(i, j int) bool {
-		switch filter.Sort {
-		case "updated":
-			return results[i].Match.UpdatedAt.After(results[j].Match.UpdatedAt)
-		case "source":
-			if strings.EqualFold(results[i].Tender.SourceKey, results[j].Tender.SourceKey) {
-				return results[i].Tender.ID < results[j].Tender.ID
-			}
-			return strings.ToLower(results[i].Tender.SourceKey) < strings.ToLower(results[j].Tender.SourceKey)
-		case "matches":
-			if results[i].Match.MatchCount == results[j].Match.MatchCount {
-				return results[i].Tender.ClosingDate < results[j].Tender.ClosingDate
-			}
-			return results[i].Match.MatchCount > results[j].Match.MatchCount
-		default:
-			if results[i].Tender.ClosingDate == results[j].Tender.ClosingDate {
-				return results[i].Tender.ID < results[j].Tender.ID
-			}
-			return results[i].Tender.ClosingDate < results[j].Tender.ClosingDate
-		}
-	})
-	total := len(results)
-	start := (filter.Page - 1) * filter.PageSize
-	if start > total {
-		return []models.KeywordTenderMatchResult{}, total, nil
-	}
-	end := start + filter.PageSize
-	if end > total {
-		end = total
-	}
-	return results[start:end], total, nil
+	return results, total, rows.Err()
 }
 
 func matchContainsKeyword(match models.KeywordTenderMatch, keyword string) bool {

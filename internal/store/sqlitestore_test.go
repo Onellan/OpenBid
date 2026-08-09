@@ -67,6 +67,61 @@ func TestSQLiteMigrationAndRuntimeValidation(t *testing.T) {
 	}
 }
 
+func TestSQLiteMigrationFromCurrentPredecessorDoesNotReplayLegacyBackfills(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store.db")
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`
+		create table schema_meta (key text primary key, value text not null);
+		insert into schema_meta(key, value) values('schema_version', '11');
+		create table tenders (id text primary key, payload text not null);
+		insert into tenders(id, payload) values('legacy-tender', '{"Title":"Legacy tender"}');
+		create table jobs (id text primary key, payload text not null);
+		create table job_history (id text primary key, payload text not null, archived_at text not null);
+		create table tender_dashboard_index (
+			tender_id text primary key, archived integer not null, engineering_relevant integer not null,
+			has_document integer not null, document_status text not null, status text not null, published_date text not null
+		);
+		insert into tender_dashboard_index values('legacy-tender', 1, 0, 0, '', '', '');
+		pragma user_version = 11;
+	`)
+	if closeErr := db.Close(); err == nil && closeErr != nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("version 11 to 12 migration replayed legacy data reconciliation: %v", err)
+	}
+	defer s.Close()
+	var version int
+	if err := s.db.QueryRow("pragma user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 12 {
+		t.Fatalf("expected schema version 12, got %d", version)
+	}
+	var historyTable int
+	if err := s.db.QueryRow("select count(*) from sqlite_master where type='table' and name='job_history'").Scan(&historyTable); err != nil {
+		t.Fatal(err)
+	}
+	if historyTable != 1 {
+		t.Fatal("expected prior job_history migration to remain available")
+	}
+	var archived int
+	if err := s.db.QueryRow("select archived from tender_dashboard_index where tender_id='legacy-tender'").Scan(&archived); err != nil {
+		t.Fatal(err)
+	}
+	if archived != 1 {
+		t.Fatal("expected migration 12 not to replay the legacy tender dashboard backfill")
+	}
+}
+
 func TestSQLiteBackupPreservesRecords(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -253,6 +308,45 @@ func TestSQLiteQueueWritesDeduplicate(t *testing.T) {
 	}
 	if len(jobs) != 1 {
 		t.Fatalf("expected 1 queued job, got %d", len(jobs))
+	}
+}
+
+func TestSQLiteClaimsDueJobsAndArchivesFinishedHistory(t *testing.T) {
+	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 8, 9, 10, 0, 0, 0, time.UTC)
+	if err := sqliteUpsertJSON(ctx, s.db, "jobs", "due", models.ExtractionJob{ID: "due", State: models.ExtractionQueued, CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour), NextAttemptAt: now.Add(-time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sqliteUpsertJSON(ctx, s.db, "jobs", "future", models.ExtractionJob{ID: "future", State: models.ExtractionRetry, CreatedAt: now, UpdatedAt: now, NextAttemptAt: now.Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := s.ClaimDueJobs(ctx, now, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimed) != 1 || claimed[0].ID != "due" || claimed[0].State != models.ExtractionProcessing || claimed[0].Attempts != 1 {
+		t.Fatalf("unexpected atomic claim result: %#v", claimed)
+	}
+	next, err := s.NextDueJobAt(ctx)
+	if err != nil || !next.Equal(now.Add(time.Hour)) {
+		t.Fatalf("expected future retry as next due job, got %v err=%v", next, err)
+	}
+	finished := models.ExtractionJob{ID: "finished", State: models.ExtractionCompleted, CreatedAt: now.Add(-60 * 24 * time.Hour), UpdatedAt: now.Add(-40 * 24 * time.Hour)}
+	if err := sqliteUpsertJSON(ctx, s.db, "jobs", finished.ID, finished); err != nil {
+		t.Fatal(err)
+	}
+	archived, err := s.ArchiveFinishedJobs(ctx, now.Add(-30*24*time.Hour), 10)
+	if err != nil || archived != 1 {
+		t.Fatalf("expected one archived job, got %d err=%v", archived, err)
+	}
+	var historyCount int
+	if err := s.db.QueryRowContext(ctx, "select count(*) from job_history where id='finished'").Scan(&historyCount); err != nil || historyCount != 1 {
+		t.Fatalf("expected finished job in history, count=%d err=%v", historyCount, err)
 	}
 }
 

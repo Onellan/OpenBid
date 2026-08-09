@@ -1,10 +1,14 @@
 package auth
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base32"
 	"encoding/hex"
 	"strings"
 )
+
+const recoveryHashPrefix = "rc:v1:"
 
 func NewRecoveryCodes(count int) []string {
 	if count <= 0 {
@@ -28,16 +32,37 @@ func NormalizeRecoveryCode(raw string) string {
 }
 
 func ConsumeRecoveryCode(codes []string, candidate string) ([]string, bool) {
+	return ConsumeRecoveryCodeWithKey(codes, candidate, "")
+}
+
+func HashRecoveryCode(key, code string) string {
+	normalized := NormalizeRecoveryCode(code)
+	mac := hmac.New(sha256.New, []byte(key))
+	_, _ = mac.Write([]byte(normalized))
+	return recoveryHashPrefix + hex.EncodeToString(mac.Sum(nil))
+}
+
+func IsHashedRecoveryCode(code string) bool {
+	return strings.HasPrefix(strings.TrimSpace(code), recoveryHashPrefix)
+}
+
+func ConsumeRecoveryCodeWithKey(codes []string, candidate, key string) ([]string, bool) {
 	normalizedCandidate := NormalizeRecoveryCode(candidate)
 	if normalizedCandidate == "" {
 		return codes, false
 	}
+	candidateHash := HashRecoveryCode(key, normalizedCandidate)
 	for index, code := range codes {
 		normalizedCode := NormalizeRecoveryCode(code)
-		if len(normalizedCode) != len(normalizedCandidate) {
+		candidateValue := normalizedCandidate
+		if IsHashedRecoveryCode(code) {
+			normalizedCode = strings.TrimSpace(code)
+			candidateValue = candidateHash
+		}
+		if len(normalizedCode) != len(candidateValue) {
 			continue
 		}
-		if subtleConstantStringCompare(normalizedCode, normalizedCandidate) {
+		if subtleConstantStringCompare(normalizedCode, candidateValue) {
 			remaining := append([]string{}, codes[:index]...)
 			remaining = append(remaining, codes[index+1:]...)
 			return remaining, true

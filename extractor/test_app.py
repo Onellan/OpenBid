@@ -69,6 +69,48 @@ class ExtractorHelperTests(unittest.TestCase):
             ):
                 extractor_app.validate_public_url("https://example.invalid/doc.pdf")
 
+    def test_fetch_pins_the_validated_ip(self):
+        with mock.patch.object(
+            extractor_app,
+            "resolve_public_url",
+            return_value=(
+                extractor_app.urllib.parse.urlparse("https://example.com/doc.pdf"),
+                ("203.0.113.10",),
+            ),
+        ), mock.patch.object(
+            extractor_app,
+            "_fetch_once",
+            return_value=(200, {}, b"document"),
+        ) as fetch_once:
+            self.assertEqual(extractor_app.fetch("https://example.com/doc.pdf"), b"document")
+
+        self.assertEqual(fetch_once.call_args.args[1], "203.0.113.10")
+
+    def test_fetch_rejects_private_redirect_before_connecting(self):
+        public = extractor_app.urllib.parse.urlparse("https://example.com/doc")
+        original_resolve = extractor_app.resolve_public_url
+
+        def resolve(url):
+            if url == "https://example.com/doc":
+                return public, ("203.0.113.10",)
+            return original_resolve(url)
+
+        with mock.patch.object(
+            extractor_app,
+            "resolve_public_url",
+            side_effect=resolve,
+        ), mock.patch.object(
+            extractor_app,
+            "_fetch_once",
+            return_value=(302, {"location": "http://127.0.0.1/private"}, b""),
+        ) as fetch_once:
+            with self.assertRaisesRegex(
+                ValueError, "private or local network urls are not allowed"
+            ):
+                extractor_app.fetch("https://example.com/doc")
+
+        fetch_once.assert_called_once()
+
 
 class ExtractorHTTPTests(unittest.TestCase):
     def setUp(self):

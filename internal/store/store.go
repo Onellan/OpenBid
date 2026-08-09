@@ -53,6 +53,15 @@ type JobStateCounts struct {
 	Skipped    int
 }
 
+type HomeSummary struct {
+	Dashboard         models.Dashboard
+	BookmarkCount     int
+	SavedSearchCount  int
+	KeywordSummary    models.KeywordSearchSummary
+	JobCounts         JobStateCounts
+	SourceHealthCount int
+}
+
 type JobAlertSnapshot struct {
 	Queued          int
 	Processing      int
@@ -201,6 +210,9 @@ type Store interface {
 	PruneInvalidJobs(context.Context) (int, error)
 	JobStateCounts(context.Context) (JobStateCounts, error)
 	JobAlertSnapshot(context.Context) (JobAlertSnapshot, error)
+	ClaimDueJobs(context.Context, time.Time, int) ([]models.ExtractionJob, error)
+	NextDueJobAt(context.Context) (time.Time, error)
+	ArchiveFinishedJobs(context.Context, time.Time, int) (int, error)
 	QueueJob(context.Context, models.ExtractionJob) error
 	UpdateJob(context.Context, models.ExtractionJob) error
 	DeleteJob(context.Context, string) error
@@ -218,4 +230,5 @@ type Store interface {
 
 	GetTendersByIDs(context.Context, []string) (map[string]models.Tender, error)
 	Dashboard(context.Context, string, bool, bool) (models.Dashboard, error)
+	HomeSummary(context.Context, string, string, bool, bool) (HomeSummary, error)
 }

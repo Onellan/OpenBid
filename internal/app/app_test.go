@@ -2026,8 +2026,8 @@ func TestMFASetupStoresEncryptedSecretAtRest(t *testing.T) {
 		t.Fatalf("expected 10 recovery codes, got %#v", storedUser.RecoveryCodes)
 	}
 	for _, recoveryCode := range storedUser.RecoveryCodes {
-		if !strings.HasPrefix(recoveryCode, "enc:v1:") {
-			t.Fatalf("expected encrypted recovery code marker, got %#v", storedUser.RecoveryCodes)
+		if !auth.IsHashedRecoveryCode(recoveryCode) {
+			t.Fatalf("expected one-way recovery code hash marker, got %#v", storedUser.RecoveryCodes)
 		}
 	}
 }
@@ -2060,7 +2060,7 @@ func TestLoginAcceptsRecoveryCodeAndConsumesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(updatedUser.RecoveryCodes) != 1 || updatedUser.RecoveryCodes[0] != "1234-5678" {
+	if len(updatedUser.RecoveryCodes) != 1 || !auth.IsHashedRecoveryCode(updatedUser.RecoveryCodes[0]) {
 		t.Fatalf("expected used recovery code to be consumed, got %#v", updatedUser.RecoveryCodes)
 	}
 }

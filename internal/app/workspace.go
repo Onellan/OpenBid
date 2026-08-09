@@ -326,52 +326,45 @@ func (a *App) Home(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", 303)
 		return
 	}
-	var (
-		d                 models.Dashboard
-		bookmarkCount     int
-		savedCount        int
-		keywordSummary    models.KeywordSearchSummary
-		jobCounts         store.JobStateCounts
-		sourceHealthCount int
-		wg                sync.WaitGroup
-	)
-	wg.Add(6)
-	go func() {
-		defer wg.Done()
-		d, _ = a.Store.Dashboard(r.Context(), t.ID, a.Config.LowMemoryMode, false)
-	}()
-	go func() {
-		defer wg.Done()
-		bookmarkCount, _ = a.Store.CountBookmarks(r.Context(), t.ID, u.ID)
-	}()
-	go func() {
-		defer wg.Done()
-		savedCount, _ = a.Store.CountSavedSearches(r.Context(), t.ID, u.ID)
-	}()
-	go func() {
-		defer wg.Done()
-		keywordSummary, _ = a.Store.KeywordSearchSummary(r.Context(), t.ID, u.ID)
-	}()
-	go func() {
-		defer wg.Done()
-		jobCounts, _ = a.Store.JobStateCounts(r.Context())
-	}()
-	go func() {
-		defer wg.Done()
-		sourceHealth, _ := a.Store.ListSourceHealth(r.Context())
-		sourceHealthCount = len(sourceHealth)
-	}()
-	wg.Wait()
+	cacheKey := t.ID + ":" + u.ID
+	a.homeCache.mu.Lock()
+	summary := a.homeCache.summary
+	cacheHit := a.homeCache.key == cacheKey && time.Now().Before(a.homeCache.expiresAt)
+	if !cacheHit {
+		var err error
+		summary, err = a.Store.HomeSummary(r.Context(), t.ID, u.ID, a.Config.LowMemoryMode, false)
+		if err != nil {
+			a.homeCache.mu.Unlock()
+			a.serverError(w, r, "unable to load dashboard", err)
+			return
+		}
+		a.homeCache.key = cacheKey
+		a.homeCache.summary = summary
+		a.homeCache.expiresAt = time.Now().Add(10 * time.Second)
+	}
+	a.homeCache.mu.Unlock()
 	a.render(w, r, "home.html", map[string]any{
 		"Title":             "Home",
 		"User":              u,
 		"Tenant":            t,
-		"Dashboard":         d,
-		"BookmarkCount":     bookmarkCount,
-		"SavedCount":        savedCount,
-		"KeywordSummary":    keywordSummary,
-		"QueueSummary":      queueSummaryFromCounts(jobCounts),
-		"SourceHealthCount": sourceHealthCount,
+		"Dashboard":         summary.Dashboard,
+		"BookmarkCount":     summary.BookmarkCount,
+		"SavedCount":        summary.SavedSearchCount,
+		"KeywordSummary":    summary.KeywordSummary,
+		"QueueSummary":      queueSummaryFromCounts(summary.JobCounts),
+		"SourceHealthCount": summary.SourceHealthCount,
+	})
+}
+
+func (a *App) WithHomeCacheInvalidation(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			a.homeCache.mu.Lock()
+			a.homeCache.expiresAt = time.Time{}
+			a.homeCache.key = ""
+			a.homeCache.mu.Unlock()
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

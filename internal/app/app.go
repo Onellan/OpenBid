@@ -29,6 +29,7 @@ type Config struct {
 	AppAddr, DataPath, SecretKey, ExtractorURL, TreasuryFeedURL, BackupDir, AlertWebhookURL    string
 	SecureCookies, LowMemoryMode, AnalyticsEnabled, BootstrapSyncOnStartup                     bool
 	SessionHours, WorkerSyncMinutes, WorkerLoopSeconds                                         int
+	WorkerJobConcurrency, WorkerSourceConcurrency                                              int
 	LoginRateLimitWindowSeconds, LoginRateLimitMaxAttempts                                     int
 	AlertEvalSeconds, AlertBackupMaxAgeMinutes, AlertBacklogMaxJobs, AlertBacklogMaxAgeMinutes int
 	AlertLoginThrottleThreshold, AlertExtractorFailureThreshold                                int
@@ -47,8 +48,16 @@ type App struct {
 	LoginRateLimiter *LoginRateLimiter
 	AlertNotifier    *AlertNotifier
 	sourceAdminCache sourceAdminCache
+	homeCache        homeSummaryCache
 	closeCancel      context.CancelFunc
 	bgWg             sync.WaitGroup
+}
+
+type homeSummaryCache struct {
+	mu        sync.Mutex
+	expiresAt time.Time
+	key       string
+	summary   store.HomeSummary
 }
 
 type sourceAdminSnapshot struct {
@@ -120,6 +129,12 @@ func validateConfig(cfg Config) error {
 	if cfg.WorkerLoopSeconds <= 0 {
 		return errors.New("WORKER_LOOP_SECONDS must be greater than zero")
 	}
+	if cfg.WorkerJobConcurrency < 1 || cfg.WorkerJobConcurrency > 16 {
+		return errors.New("WORKER_JOB_CONCURRENCY must be between 1 and 16")
+	}
+	if cfg.WorkerSourceConcurrency < 1 || cfg.WorkerSourceConcurrency > 8 {
+		return errors.New("WORKER_SOURCE_CONCURRENCY must be between 1 and 8")
+	}
 	if cfg.LoginRateLimitWindowSeconds <= 0 {
 		return errors.New("LOGIN_RATE_LIMIT_WINDOW_SECONDS must be greater than zero")
 	}
@@ -166,6 +181,17 @@ func (c Config) ShowDemoCredentials() bool {
 }
 
 func New() (*App, error) {
+	return newApp(true)
+}
+
+// NewWorker opens the application runtime without replaying server-owned
+// bootstrap reconciliation. In production the worker starts only after the
+// server health check has completed that reconciliation.
+func NewWorker() (*App, error) {
+	return newApp(false)
+}
+
+func newApp(reconcileStartup bool) (*App, error) {
 	cfg, err := loadConfigFromEnv()
 	if err != nil {
 		return nil, err
@@ -191,12 +217,16 @@ func New() (*App, error) {
 	}
 	a.Email = mail.NewService(st, mail.SMTPTransport{})
 	st.SetEmailSender(a.Email)
-	if err := a.seed(context.Background()); err != nil {
-		closeCancel()
-		_ = st.Close()
-		return nil, err
+	if reconcileStartup {
+		if err := a.seed(context.Background()); err != nil {
+			closeCancel()
+			_ = st.Close()
+			return nil, err
+		}
+	} else {
+		a.Sources = a.mustLoadSourceRegistry(context.Background())
 	}
-	if cfg.AppEnv == "production" {
+	if reconcileStartup && cfg.AppEnv == "production" {
 		a.bgWg.Add(1)
 		go func() {
 			defer a.bgWg.Done()
@@ -210,7 +240,7 @@ func New() (*App, error) {
 		Handler:           routes(a),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		WriteTimeout:      120 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
 	return a, nil
@@ -712,9 +742,13 @@ func (a *App) hydrateUserRecoveryCodes(ctx context.Context, user models.User) (m
 	if len(user.RecoveryCodes) == 0 {
 		return user, nil
 	}
-	decryptedCodes := make([]string, 0, len(user.RecoveryCodes))
-	legacyPlaintext := false
+	protectedCodes := make([]string, 0, len(user.RecoveryCodes))
+	needsMigration := false
 	for _, code := range user.RecoveryCodes {
+		if auth.IsHashedRecoveryCode(code) {
+			protectedCodes = append(protectedCodes, code)
+			continue
+		}
 		decryptedCode, wasLegacyPlaintext, err := auth.DecryptSensitiveValue(a.Config.SecretKey, code)
 		if err != nil {
 			return models.User{}, err
@@ -722,13 +756,12 @@ func (a *App) hydrateUserRecoveryCodes(ctx context.Context, user models.User) (m
 		if strings.TrimSpace(decryptedCode) == "" {
 			continue
 		}
-		if wasLegacyPlaintext {
-			legacyPlaintext = true
-		}
-		decryptedCodes = append(decryptedCodes, decryptedCode)
+		_ = wasLegacyPlaintext
+		needsMigration = true
+		protectedCodes = append(protectedCodes, auth.HashRecoveryCode(a.Config.SecretKey, decryptedCode))
 	}
-	user.RecoveryCodes = decryptedCodes
-	if legacyPlaintext {
+	user.RecoveryCodes = protectedCodes
+	if needsMigration {
 		if err := a.persistUser(ctx, user); err != nil {
 			return models.User{}, err
 		}
@@ -754,15 +787,15 @@ func (a *App) persistUser(ctx context.Context, user models.User) error {
 			if strings.TrimSpace(code) == "" {
 				continue
 			}
+			if auth.IsHashedRecoveryCode(code) {
+				protectedCodes = append(protectedCodes, code)
+				continue
+			}
 			decryptedCode, _, err := auth.DecryptSensitiveValue(a.Config.SecretKey, code)
 			if err != nil {
 				return err
 			}
-			protectedCode, err := auth.EncryptSensitiveValue(a.Config.SecretKey, decryptedCode)
-			if err != nil {
-				return err
-			}
-			protectedCodes = append(protectedCodes, protectedCode)
+			protectedCodes = append(protectedCodes, auth.HashRecoveryCode(a.Config.SecretKey, decryptedCode))
 		}
 		user.RecoveryCodes = protectedCodes
 	}
@@ -1101,10 +1134,18 @@ func (a *App) Login(w http.ResponseWriter, r *http.Request) {
 		a.render(w, r, "login.html", map[string]any{"Title": "Login", "Error": "Invalid credentials"})
 		return
 	}
+	if auth.PasswordNeedsRehash(u.PasswordHash) {
+		salt, hash, hashErr := auth.HashPassword(r.FormValue("password"))
+		if hashErr != nil {
+			a.serverError(w, r, "unable to upgrade password security", hashErr)
+			return
+		}
+		u.PasswordSalt, u.PasswordHash = salt, hash
+	}
 	if u.MFAEnabled {
 		mfaInput := r.FormValue("mfa_code")
 		if !auth.ValidateTOTP(u.MFASecret, mfaInput, time.Now()) {
-			remainingCodes, usedRecoveryCode := auth.ConsumeRecoveryCode(u.RecoveryCodes, mfaInput)
+			remainingCodes, usedRecoveryCode := auth.ConsumeRecoveryCodeWithKey(u.RecoveryCodes, mfaInput, a.Config.SecretKey)
 			if !usedRecoveryCode {
 				blockedNow := false
 				if a.LoginRateLimiter != nil {
@@ -1165,13 +1206,15 @@ func (a *App) RunWorker() error {
 
 func (a *App) RunWorkerContext(ctx context.Context) error {
 	return worker.Runner{
-		Store:         a.Store,
-		Sources:       a.Sources,
-		SourceLoad:    a.loadSourceRegistry,
-		Extractor:     a.Extractor,
-		SyncEvery:     time.Duration(a.Config.WorkerSyncMinutes) * time.Minute,
-		LoopEvery:     time.Duration(a.Config.WorkerLoopSeconds) * time.Second,
-		HeartbeatPath: "/tmp/openbid-worker-heartbeat",
+		Store:             a.Store,
+		Sources:           a.Sources,
+		SourceLoad:        a.loadSourceRegistry,
+		Extractor:         a.Extractor,
+		SyncEvery:         time.Duration(a.Config.WorkerSyncMinutes) * time.Minute,
+		LoopEvery:         time.Duration(a.Config.WorkerLoopSeconds) * time.Second,
+		JobConcurrency:    a.Config.WorkerJobConcurrency,
+		SourceConcurrency: a.Config.WorkerSourceConcurrency,
+		HeartbeatPath:     "/tmp/openbid-worker-heartbeat",
 	}.Run(ctx)
 }
 func init() { log.SetFlags(log.LstdFlags | log.Lshortfile) }

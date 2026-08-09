@@ -238,12 +238,27 @@ func TestProxyRequirementAllowsForwardedProductionRequests(t *testing.T) {
 	a := newTestApp(t)
 	a.Config.AppEnv = "production"
 	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	req.RemoteAddr = "172.20.0.10:1234"
 	req.Header.Set("X-Forwarded-Host", "openbid.example")
 	req.Header.Set("X-Forwarded-Proto", "https")
 	w := httptest.NewRecorder()
 	a.Server.Handler.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected forwarded production request to pass, got %d", w.Code)
+	}
+}
+
+func TestProxyRequirementRejectsSpoofedForwardingHeaders(t *testing.T) {
+	a := newTestApp(t)
+	a.Config.AppEnv = "production"
+	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	req.RemoteAddr = "198.51.100.20:1234"
+	req.Header.Set("X-Forwarded-Host", "openbid.example")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	w := httptest.NewRecorder()
+	a.Server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected spoofed forwarding headers to be rejected, got %d", w.Code)
 	}
 }
 

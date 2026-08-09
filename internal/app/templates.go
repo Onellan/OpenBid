@@ -280,5 +280,5 @@ func routes(a *App) http.Handler {
 	registerRedirect(mux, "/admin/sources/schedule", "/sources/schedule")
 	registerRedirect(mux, "/admin/sources/delete", "/sources/delete")
 	registerProtected(mux, a, a.SwitchTenant, "/tenant/switch")
-	return a.WithRequestObservability(a.WithSecurityHeaders(a.WithProxyRequirement(a.WithRecovery(mux))))
+	return a.WithRequestObservability(a.WithSecurityHeaders(a.WithProxyRequirement(a.WithHomeCacheInvalidation(a.WithRecovery(mux)))))
 }
