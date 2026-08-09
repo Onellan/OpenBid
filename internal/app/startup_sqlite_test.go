@@ -113,6 +113,17 @@ func TestStartupEnsuresBuiltInSourcesForExistingDatabase(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.UpsertSourceConfig(ctx, models.SourceConfig{
+		Key:                 "rand-water",
+		Name:                "Rand Water Available Tenders",
+		Type:                "webpage_portal",
+		FeedURL:             "https://www.randwater.co.za/availabletenders.php",
+		Enabled:             true,
+		ManualChecksEnabled: true,
+		AutoCheckEnabled:    true,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +140,7 @@ func TestStartupEnsuresBuiltInSourcesForExistingDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var sawCustom, sawTreasury, sawEskom, sawOnlineTenders, sawDurban, sawCityOfJoburg bool
+	var sawCustom, sawTreasury, sawEskom, sawOnlineTenders, sawDurban, sawCityOfJoburg, sawRandWater bool
 	for _, cfg := range configs {
 		switch cfg.Key {
 		case "municipal-feed":
@@ -144,9 +155,11 @@ func TestStartupEnsuresBuiltInSourcesForExistingDatabase(t *testing.T) {
 			sawDurban = cfg.Type == "durban_procurement_portal"
 		case "city-of-joburg":
 			sawCityOfJoburg = cfg.Type == "city_of_joburg_portal" && cfg.FeedURL == "https://joburg.org.za/work_/Pages/Work%20in%20Joburg/Tenders%20and%20Quotations/2022%20Tenders%20and%20Quotations/2022%20TENDERS/BID%20OPENING%20REGISTERS/Invitation%20to%20Bid.aspx"
+		case "rand-water":
+			sawRandWater = cfg.Type == "webpage_portal" && cfg.FeedURL == "https://bids.randwater.co.za/Public/Procurement/Bids/ViewPublishedBids.aspx"
 		}
 	}
-	if !sawCustom || !sawTreasury || !sawEskom || !sawOnlineTenders || !sawDurban || !sawCityOfJoburg {
+	if !sawCustom || !sawTreasury || !sawEskom || !sawOnlineTenders || !sawDurban || !sawCityOfJoburg || !sawRandWater {
 		t.Fatalf("expected existing and built-in sources, got %#v", configs)
 	}
 	assertDefaultSourcesPresent(t, configs)
@@ -228,6 +241,7 @@ func assertDefaultSourcesPresent(t *testing.T, configs []models.SourceConfig) {
 		"transnet",
 		"transnet-esupplier",
 		"onlinetenders",
+		"tenders-sa",
 		"durban",
 		"jhb-property-rfqs",
 		"rand-water",

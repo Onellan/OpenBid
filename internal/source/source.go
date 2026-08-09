@@ -18,6 +18,7 @@ const (
 	TypeCIDBPortal     = "cidb_portal"
 	TypeEskomPortal    = "eskom_portal"
 	TypeOnlineTenders  = "onlinetenders_portal"
+	TypeTendersSA      = "tenders_sa_portal"
 	TypeDurbanPortal   = "durban_procurement_portal"
 	TypeTransnetPortal = "transnet_portal"
 	TypeWebPagePortal  = "webpage_portal"
@@ -112,9 +113,10 @@ func DefaultConfigs(feedURL string) []models.SourceConfig {
 		defaultSourceConfig("transnet", "Transnet e-Tenders", TypeTransnetPortal, "https://transnetetenders.azurewebsites.net/Home/AdvertisedTenders"),
 		defaultSourceConfig("transnet-esupplier", "Transnet eSupplier Portal", TypeTransnetPortal, "https://esupplierportal.transnet.net/portal/advertisedTenders"),
 		defaultSourceConfig("onlinetenders", "OnlineTenders South Africa", TypeOnlineTenders, DefaultOnlineTendersPageURL),
+		defaultSourceConfig("tenders-sa", "Tenders SA", TypeTendersSA, DefaultTendersSAPageURL),
 		defaultSourceConfig("durban", "eThekwini Municipality Procurement", TypeDurbanPortal, DefaultDurbanProcurementURL),
 		defaultSourceConfig("jhb-property-rfqs", "Joburg Property Company RFQs", TypeWebPagePortal, "https://jhbproperty.co.za/supply-chain-management-scm/rfqs/"),
-		defaultSourceConfig("rand-water", "Rand Water Available Tenders", TypeWebPagePortal, "https://www.randwater.co.za/availabletenders.php"),
+		defaultSourceConfig("rand-water", "Rand Water Available Tenders", TypeWebPagePortal, "https://bids.randwater.co.za/Public/Procurement/Bids/ViewPublishedBids.aspx"),
 		defaultSourceConfig("hda", "Housing Development Agency Tenders", TypeWebPagePortal, "https://thehda.co.za/index.php/tenders"),
 		defaultSourceConfig("city-of-joburg", "City of Johannesburg Tenders", TypeCityOfJoburgPortal, DefaultCityOfJoburgPageURL),
 		defaultSourceConfig("tshipi", "Tshipi Tenders", TypeWebPagePortal, "https://www.tshipi.co.za/opportunities/tenders"),
@@ -142,7 +144,7 @@ func defaultSourceConfig(key, name, sourceType, feedURL string) models.SourceCon
 
 func IsSupportedType(sourceType string) bool {
 	switch strings.TrimSpace(sourceType) {
-	case "", TypeJSONFeed, TypeETendersPortal, TypePublicWorks, TypeCIDBPortal, TypeEskomPortal, TypeOnlineTenders, TypeDurbanPortal, TypeTransnetPortal, TypeCityOfJoburgPortal, TypeWebPagePortal:
+	case "", TypeJSONFeed, TypeETendersPortal, TypePublicWorks, TypeCIDBPortal, TypeEskomPortal, TypeOnlineTenders, TypeTendersSA, TypeDurbanPortal, TypeTransnetPortal, TypeCityOfJoburgPortal, TypeWebPagePortal:
 		return true
 	default:
 		return false
@@ -172,6 +174,8 @@ func AdapterFromConfig(cfg models.SourceConfig) (Adapter, error) {
 		return NewEskomAdapter(key, cfg.FeedURL), nil
 	case TypeOnlineTenders:
 		return NewOnlineTendersAdapter(key, cfg.FeedURL), nil
+	case TypeTendersSA:
+		return NewTendersSAAdapter(key, cfg.FeedURL), nil
 	case TypeDurbanPortal:
 		return NewDurbanAdapter(key, cfg.FeedURL), nil
 	case TypeTransnetPortal:

@@ -455,6 +455,9 @@ func shouldUpgradeDefaultSourceConfig(current, desired models.SourceConfig) bool
 	if current.Key == "city-of-joburg" && desired.Type == source.TypeCityOfJoburgPortal {
 		return current.Type == source.TypeWebPagePortal && strings.Contains(current.FeedURL, "/2022%20TENDERS/Tenders.aspx")
 	}
+	if current.Key == "rand-water" && desired.Type == source.TypeWebPagePortal {
+		return current.Type == source.TypeWebPagePortal && strings.EqualFold(strings.TrimSpace(current.FeedURL), "https://www.randwater.co.za/availabletenders.php")
+	}
 	return false
 }
 
