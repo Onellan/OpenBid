@@ -151,7 +151,7 @@ func TestProcessJobsRunsExpiredTenderCleanupMaintenanceJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(jobs) != 1 || jobs[0].State != models.ExtractionCompleted || !strings.Contains(jobs[0].ResultSummary, "Removed 1 expired tenders") {
+	if len(jobs) != 1 || jobs[0].State != models.ExtractionCompleted || !strings.Contains(jobs[0].ResultSummary, "Removed 1 expired or stale tenders") {
 		t.Fatalf("expected completed cleanup job with result summary, got %#v", jobs)
 	}
 	entries, err := s.ListAuditEntries(ctx, "tenant-1")
@@ -160,6 +160,41 @@ func TestProcessJobsRunsExpiredTenderCleanupMaintenanceJob(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].Action != "cleanup" || entries[0].Metadata["removed_count"] != "1" {
 		t.Fatalf("expected cleanup audit entry, got %#v", entries)
+	}
+}
+
+func TestAutomaticTenderCleanupRunsDaily(t *testing.T) {
+	s, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 8, 10, 8, 0, 0, 0, time.UTC)
+	if err := s.UpsertTender(ctx, models.Tender{ID: "stale-automatic", Title: "Stale", ClosingDate: "2026-12-01", CreatedAt: now.Add(-31 * 24 * time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+
+	r := Runner{Store: s, Now: func() time.Time { return now }}
+	var lastRun time.Time
+	r.runAutomaticTenderCleanup(ctx, &lastRun)
+	if _, err := s.GetTender(ctx, "stale-automatic"); err != store.ErrNotFound {
+		t.Fatalf("expected first automatic run to archive stale tender, got %v", err)
+	}
+
+	if err := s.UpsertTender(ctx, models.Tender{ID: "expired-later", Title: "Expired later", ClosingDate: "2026-08-10 08:30"}); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Hour)
+	r.runAutomaticTenderCleanup(ctx, &lastRun)
+	if _, err := s.GetTender(ctx, "expired-later"); err != nil {
+		t.Fatalf("expected cleanup not to repeat before 24 hours, got %v", err)
+	}
+
+	now = now.Add(23 * time.Hour)
+	r.runAutomaticTenderCleanup(ctx, &lastRun)
+	if _, err := s.GetTender(ctx, "expired-later"); err != store.ErrNotFound {
+		t.Fatalf("expected cleanup to repeat after 24 hours, got %v", err)
 	}
 }
 

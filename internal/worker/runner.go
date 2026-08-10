@@ -18,6 +18,8 @@ import (
 	"time"
 )
 
+const automaticTenderCleanupEvery = 24 * time.Hour
+
 type Runner struct {
 	Store                store.Store
 	Sources              source.Registry
@@ -65,11 +67,13 @@ func (r Runner) Run(ctx context.Context) error {
 	heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)
 	defer stopHeartbeat()
 	go r.runHeartbeat(heartbeatCtx)
+	var lastAutomaticTenderCleanup time.Time
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		r.processSourceChecks(ctx)
+		r.runAutomaticTenderCleanup(ctx, &lastAutomaticTenderCleanup)
 		r.processJobs(ctx)
 		r.writeHeartbeat()
 		wait := r.nextWait(ctx)
@@ -81,6 +85,20 @@ func (r Runner) Run(ctx context.Context) error {
 		case <-timer.C:
 		}
 	}
+}
+
+func (r Runner) runAutomaticTenderCleanup(ctx context.Context, lastRun *time.Time) {
+	now := r.now()
+	if !lastRun.IsZero() && now.Sub(*lastRun) < automaticTenderCleanupEvery {
+		return
+	}
+	result, err := r.Store.CleanupExpiredTenders(ctx, now)
+	if err != nil {
+		r.logKV("worker_automatic_tender_cleanup_failed", "error", err)
+		return
+	}
+	*lastRun = now
+	r.logKV("worker_automatic_tender_cleanup_completed", "removed", result.RemovedCount, "next_run", now.Add(automaticTenderCleanupEvery))
 }
 
 func (r Runner) runHeartbeat(ctx context.Context) {
@@ -369,7 +387,7 @@ func (r Runner) processExpiredTenderCleanupJob(ctx context.Context, job models.E
 	job.State = models.ExtractionCompleted
 	job.NextAttemptAt = time.Time{}
 	job.LastError = ""
-	job.ResultSummary = fmt.Sprintf("Removed %d expired tenders.", result.RemovedCount)
+	job.ResultSummary = fmt.Sprintf("Removed %d expired or stale tenders.", result.RemovedCount)
 	r.persistJobUpdate(ctx, job)
 	if strings.TrimSpace(job.TenantID) != "" {
 		metadata := map[string]string{"removed_count": strconv.Itoa(result.RemovedCount)}

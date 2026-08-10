@@ -1116,11 +1116,22 @@ func (s *SQLiteStore) UpsertTender(ctx context.Context, v models.Tender) error {
 	now := time.Now().UTC()
 	if v.ID == "" {
 		v.ID = newid()
-		v.CreatedAt = now
 	}
-	if existing, err := s.getTenderRaw(ctx, v.ID); err == nil && tenderArchived(existing) && !tenderArchived(v) {
-		v.ArchivedAt = existing.ArchivedAt
-		v.ArchiveReason = existing.ArchiveReason
+	if existing, err := s.getTenderRaw(ctx, v.ID); err == nil {
+		if !existing.CreatedAt.IsZero() {
+			v.CreatedAt = existing.CreatedAt
+		} else if v.CreatedAt.IsZero() && !existing.UpdatedAt.IsZero() {
+			// Preserve the oldest timestamp available from databases created
+			// before source tenders received a stable CreatedAt value.
+			v.CreatedAt = existing.UpdatedAt
+		}
+		if tenderArchived(existing) && !tenderArchived(v) {
+			v.ArchivedAt = existing.ArchivedAt
+			v.ArchiveReason = existing.ArchiveReason
+		}
+	}
+	if v.CreatedAt.IsZero() {
+		v.CreatedAt = now
 	}
 	v.UpdatedAt = now
 	if v.ExtractedFacts == nil {

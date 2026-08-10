@@ -811,6 +811,7 @@ func TestSQLiteCleanupExpiredTendersArchivesSafelyAndIsIdempotent(t *testing.T) 
 	inputs := []models.Tender{
 		{ID: "expired-date", Title: "Expired Date Tender", Summary: "expired cleanup target", SourceKey: "treasury", Status: "open", ClosingDate: "2026-04-10"},
 		{ID: "expired-time", Title: "Expired Time Tender", SourceKey: "treasury", Status: "open", ClosingDate: "2026-04-11 11:00"},
+		{ID: "stale-tender", Title: "Stale Tender", SourceKey: "treasury", Status: "open", ClosingDate: "2026-12-01", CreatedAt: now.Add(-31 * 24 * time.Hour)},
 		{ID: "same-day-date", Title: "Same Day Date Tender", SourceKey: "treasury", Status: "open", ClosingDate: "2026-04-11"},
 		{ID: "future-date", Title: "Future Tender", SourceKey: "treasury", Status: "open", ClosingDate: "2026-04-12"},
 		{ID: "missing-date", Title: "Missing Date Tender", SourceKey: "treasury", Status: "open"},
@@ -842,8 +843,8 @@ func TestSQLiteCleanupExpiredTendersArchivesSafelyAndIsIdempotent(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.RemovedCount != 2 || !containsString(result.RemovedTenderIDs, "expired-date") || !containsString(result.RemovedTenderIDs, "expired-time") {
-		t.Fatalf("expected two expired tenders to be removed, got %#v", result)
+	if result.RemovedCount != 3 || !containsString(result.RemovedTenderIDs, "expired-date") || !containsString(result.RemovedTenderIDs, "expired-time") || !containsString(result.RemovedTenderIDs, "stale-tender") {
+		t.Fatalf("expected expired and stale tenders to be removed, got %#v", result)
 	}
 	if _, err := s.GetTender(ctx, "expired-date"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected archived tender to be hidden from GetTender, got %v", err)
@@ -904,6 +905,29 @@ func TestSQLiteCleanupExpiredTendersArchivesSafelyAndIsIdempotent(t *testing.T) 
 	}
 	if repeated.RemovedCount != 0 || len(repeated.RemovedTenderIDs) != 0 {
 		t.Fatalf("expected repeated cleanup to be idempotent, got %#v", repeated)
+	}
+}
+
+func TestSQLiteUpsertTenderPreservesStableCreatedAt(t *testing.T) {
+	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	createdAt := time.Now().UTC().Add(-10 * 24 * time.Hour)
+	if err := s.UpsertTender(ctx, models.Tender{ID: "stable-created-at", Title: "First", CreatedAt: createdAt}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertTender(ctx, models.Tender{ID: "stable-created-at", Title: "Refreshed"}); err != nil {
+		t.Fatal(err)
+	}
+	tender, err := s.GetTender(ctx, "stable-created-at")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tender.CreatedAt.Equal(createdAt) {
+		t.Fatalf("expected CreatedAt to remain %s, got %s", createdAt, tender.CreatedAt)
 	}
 }
 
