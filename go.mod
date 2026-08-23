@@ -2,9 +2,9 @@ module openbid
 
 go 1.26.5
 
-require modernc.org/sqlite v1.56.0
+require modernc.org/sqlite v1.57.0
 
-require golang.org/x/crypto v0.54.0
+require golang.org/x/crypto v0.55.0
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
