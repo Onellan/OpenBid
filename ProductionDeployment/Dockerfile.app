@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM golang:1.26.5-alpine3.23@sha256:622e56dbc11a8cfe87cafa2331e9a201877271cbff918af53d3be315f3da88cc AS build
+FROM golang:1.27.1-alpine3.23@sha256:0908ac9b9319e09d7c238aabe914e0395c51d63c4e3d0ae8c554fda9158a5769 AS build
 ARG VERSION=dev
 ARG VCS_REF=local
 ARG BUILD_DATE=unknown
@@ -19,7 +19,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/openbid-sqlite-check ./cmd/sqlite_check && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/openbid-sqlite-backup ./cmd/sqlite_backup && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/openbid-worker-health ./cmd/worker_health
-FROM alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
+FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 ARG VERSION=dev
 ARG VCS_REF=local
 ARG BUILD_DATE=unknown
